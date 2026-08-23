@@ -1,0 +1,3 @@
+import { z } from 'zod';
+export const signupSchema = z.object({ email: z.string().email().max(254), password: z.string().min(12).max(128), businessName: z.string().min(2).max(100), publicSlug: z.string().regex(/^[a-z0-9-]{3,60}$/), advanceAmountPaise: z.number().int().positive(), totalAmountPaise: z.number().int().positive(), terms: z.string().max(10000).default('') }).strict().refine((v) => v.totalAmountPaise >= v.advanceAmountPaise, { message: 'Total must be at least the advance amount' });
+export const loginSchema = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(128) }).strict();

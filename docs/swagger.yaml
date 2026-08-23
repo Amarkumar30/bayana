@@ -1,0 +1,21 @@
+openapi: 3.0.3
+info: { title: Bayana API, version: 1.0.0 }
+servers: [{ url: /api/v1 }]
+paths:
+  /public/vendors/{publicSlug}:
+    get: { summary: Get public vendor profile and display prices, responses: { '200': { description: Vendor profile }, '404': { description: Vendor unavailable } } }
+  /public/vendors/{publicSlug}/availability:
+    get: { summary: Get public booking availability for a month, parameters: [{ name: month, in: query, required: true, schema: { type: string, example: '2026-09' } }], responses: { '200': { description: Date states } } }
+  /auth/signup:
+    post: { summary: Register a vendor, responses: { '201': { description: Created }, '422': { description: Invalid input }, '409': { description: Duplicate vendor } } }
+  /auth/login:
+    post: { summary: Vendor login, responses: { '200': { description: Authenticated }, '401': { description: Invalid credentials } } }
+  /public/vendors/{publicSlug}/bookings:
+    post: { summary: Create pending booking and Razorpay order, parameters: [{ name: publicSlug, in: path, required: true, schema: { type: string } }], responses: { '201': { description: Order created }, '409': { description: Date unavailable }, '422': { description: Invalid input } } }
+  /public/bookings/{bookingId}/confirm-payment:
+    post: { summary: Verify payment and atomically confirm booking, responses: { '200': { description: Confirmed }, '409': { description: Date taken } } }
+  /vendors/{vendorId}/bookings:
+    get: { summary: List own bookings, security: [{ bearerAuth: [] }], responses: { '200': { description: Bookings }, '401': { description: Unauthorized } } }
+  /payments/razorpay/webhook:
+    post: { summary: Razorpay signed captured-payment webhook, responses: { '204': { description: Processed }, '401': { description: Invalid signature }, '422': { description: Invalid payload } } }
+components: { securitySchemes: { bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT } } }

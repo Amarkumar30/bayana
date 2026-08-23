@@ -1,0 +1,2 @@
+/** Produces the immutable price-and-terms snapshot stored with a confirmed booking. @param {object} booking Confirmed booking including vendor. @returns {object} Contract database payload. */
+export function generateContract(booking) { return { bookingId: booking.id, businessName: booking.vendor.businessName, clientName: booking.clientName, eventDate: booking.eventDate, advanceAmountPaise: booking.advanceAmountPaise, totalAmountPaise: booking.totalAmountPaise, terms: booking.vendor.terms, acceptedAt: booking.contractAcceptedAt }; }
