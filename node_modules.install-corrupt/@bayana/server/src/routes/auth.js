@@ -1,0 +1,11 @@
+import { Router } from 'express';
+import { loginSchema, signupSchema } from '../schemas/auth.js';
+import { validate } from '../middleware/validate.js';
+import { loginVendor, registerVendor, rotateRefreshToken } from '../services/authService.js';
+import { logger } from '../lib/logger.js';
+const router = Router(); const cookieOptions = { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/api/v1/auth' };
+router.post('/signup', validate(signupSchema), async (req, res, next) => { try { const vendor = await registerVendor(req.body); const tokens = await loginVendor({ email: req.body.email, password: req.body.password }); res.cookie('refreshToken', tokens.refreshToken, cookieOptions).status(201).json({ vendor, accessToken: tokens.accessToken }); } catch (e) { next(e); } });
+router.post('/login', validate(loginSchema), async (req, res, next) => { try { const result = await loginVendor(req.body); res.cookie('refreshToken', result.refreshToken, cookieOptions).json({ vendor: result.vendor, accessToken: result.accessToken }); } catch (e) { logger.warn({ email: req.body.email }, 'Failed authentication attempt'); next(e); } });
+router.post('/refresh', async (req, res, next) => { try { const result = await rotateRefreshToken(req.cookies.refreshToken); res.cookie('refreshToken', result.refreshToken, cookieOptions).json({ accessToken: result.accessToken }); } catch (e) { next(e); } });
+router.post('/logout', (_req, res) => res.clearCookie('refreshToken', cookieOptions).status(204).end());
+export default router;
