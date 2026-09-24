@@ -3,6 +3,9 @@ datasource db { provider = "postgresql"; url = env("DATABASE_URL") }
 
 enum BookingStatus { pending_payment confirmed cancelled expired }
 enum PaymentStatus { created paid failed refunded }
+enum ClientStatus { new contacted proposal_sent booked completed }
+enum ProposalStatus { draft sent accepted declined }
+enum InvoiceStatus { draft sent paid partially_paid overdue cancelled }
 
 model Vendor {
   id String @id @default(cuid())
@@ -11,17 +14,110 @@ model Vendor {
   businessName String @map("business_name")
   serviceType String @default("Wedding services") @map("service_type")
   location String?
+  phone String?
+  logoUrl String? @map("logo_url")
   publicSlug String @unique @map("public_slug")
   advanceAmountPaise Decimal @db.Decimal(12, 0) @map("advance_amount_paise")
   totalAmountPaise Decimal @db.Decimal(12, 0) @map("total_amount_paise")
   terms String @default("")
+  clients Client[]
   bookings Booking[]
   blockedDates BlockedDate[]
   bookingHistory BookingHistory[]
   refreshTokens RefreshToken[]
+  proposals Proposal[]
+  invoices Invoice[]
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
   @@map("vendors")
+}
+
+model Client {
+  id String @id @default(cuid())
+  vendorId String @map("vendor_id")
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  name String
+  email String
+  phone String?
+  eventDate DateTime? @db.Date @map("event_date")
+  eventType String? @map("event_type")
+  notes String?
+  status ClientStatus @default(new)
+  proposals Proposal[]
+  invoices Invoice[]
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@map("clients")
+}
+
+model Proposal {
+  id String @id @default(cuid())
+  vendorId String @map("vendor_id")
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  clientId String @map("client_id")
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  title String
+  lineItems Json @map("line_items")
+  subtotalPaise Decimal @db.Decimal(12, 0) @map("subtotal_paise")
+  gstPercent Decimal @db.Decimal(5, 2) @default(0) @map("gst_percent")
+  totalPaise Decimal @db.Decimal(12, 0) @map("total_paise")
+  notes String?
+  status ProposalStatus @default(draft)
+  publicToken String @unique @map("public_token")
+  acceptedAt DateTime? @map("accepted_at")
+  sentAt DateTime? @map("sent_at")
+  validUntil DateTime? @db.Date @map("valid_until")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@map("proposals")
+}
+
+model Contract {
+  id String @id @default(cuid())
+  bookingId String? @unique @map("booking_id")
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  vendorId String @map("vendor_id")
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  clientId String? @map("client_id")
+  client Client? @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  businessName String @map("business_name")
+  clientName String @map("client_name")
+  eventDate DateTime @db.Date @map("event_date")
+  advanceAmountPaise Decimal @db.Decimal(12, 0) @map("advance_amount_paise")
+  totalAmountPaise Decimal @db.Decimal(12, 0) @map("total_amount_paise")
+  terms String
+  publicToken String @unique @map("public_token")
+  acceptedAt DateTime? @map("accepted_at")
+  signedByName String? @map("signed_by_name")
+  createdAt DateTime @default(now()) @map("created_at")
+  @@map("contracts")
+}
+
+model Invoice {
+  id String @id @default(cuid())
+  vendorId String @map("vendor_id")
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  clientId String @map("client_id")
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  invoiceNumber String @map("invoice_number")
+  lineItems Json @map("line_items")
+  subtotalPaise Decimal @db.Decimal(12, 0) @map("subtotal_paise")
+  gstPercent Decimal @db.Decimal(5, 2) @default(18) @map("gst_percent")
+  gstAmountPaise Decimal @db.Decimal(12, 0) @map("gst_amount_paise")
+  totalPaise Decimal @db.Decimal(12, 0) @map("total_paise")
+  paidPaise Decimal @db.Decimal(12, 0) @default(0) @map("paid_paise")
+  notes String?
+  dueDate DateTime? @db.Date @map("due_date")
+  status InvoiceStatus @default(draft)
+  publicToken String @unique @map("public_token")
+  sentAt DateTime? @map("sent_at")
+  paidAt DateTime? @map("paid_at")
+  razorpayOrderId String? @unique @map("razorpay_order_id")
+  razorpayPaymentId String? @unique @map("razorpay_payment_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@unique([vendorId, invoiceNumber])
+  @@map("invoices")
 }
 
 model BlockedDate {
@@ -54,21 +150,6 @@ model Booking {
   updatedAt DateTime @updatedAt @map("updated_at")
   @@index([vendorId, eventDate])
   @@map("bookings")
-}
-
-model Contract {
-  id String @id @default(cuid())
-  bookingId String @unique @map("booking_id")
-  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Restrict)
-  businessName String @map("business_name")
-  clientName String @map("client_name")
-  eventDate DateTime @db.Date @map("event_date")
-  advanceAmountPaise Decimal @db.Decimal(12, 0) @map("advance_amount_paise")
-  totalAmountPaise Decimal @db.Decimal(12, 0) @map("total_amount_paise")
-  terms String
-  acceptedAt DateTime @map("accepted_at")
-  createdAt DateTime @default(now()) @map("created_at")
-  @@map("contracts")
 }
 
 model BookingHistory {
