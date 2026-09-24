@@ -1,21 +1,273 @@
 openapi: 3.0.3
-info: { title: Bayana API, version: 1.0.0 }
-servers: [{ url: /api/v1 }]
+info:
+  title: Bayana API
+  version: 1.1.0
+  description: Client Relationship Management & Booking API for Indian Creative Professionals
+servers:
+  - url: /api/v1
 paths:
-  /public/vendors/{publicSlug}:
-    get: { summary: Get public vendor profile and display prices, responses: { '200': { description: Vendor profile }, '404': { description: Vendor unavailable } } }
-  /public/vendors/{publicSlug}/availability:
-    get: { summary: Get public booking availability for a month, parameters: [{ name: month, in: query, required: true, schema: { type: string, example: '2026-09' } }], responses: { '200': { description: Date states } } }
   /auth/signup:
-    post: { summary: Register a vendor, responses: { '201': { description: Created }, '422': { description: Invalid input }, '409': { description: Duplicate vendor } } }
+    post:
+      summary: Register a vendor
+      responses:
+        '201': { description: Created }
+        '409': { description: Duplicate vendor }
+        '422': { description: Invalid input }
   /auth/login:
-    post: { summary: Vendor login, responses: { '200': { description: Authenticated }, '401': { description: Invalid credentials } } }
+    post:
+      summary: Vendor login
+      responses:
+        '200': { description: Authenticated }
+        '401': { description: Invalid credentials }
+  /auth/refresh:
+    post:
+      summary: Rotate and refresh access token
+      responses:
+        '200': { description: Refreshed }
+        '401': { description: Unauthorized }
+  /auth/logout:
+    post:
+      summary: Clear authentication session
+      responses:
+        '204': { description: Logged out }
+
+  /public/vendors/{publicSlug}:
+    get:
+      summary: Get public vendor profile and display prices
+      responses:
+        '200': { description: Vendor profile }
+        '404': { description: Vendor unavailable }
+  /public/vendors/{publicSlug}/availability:
+    get:
+      summary: Get public booking availability for a month
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema: { type: string, example: '2027-01' }
+      responses:
+        '200': { description: Date states }
   /public/vendors/{publicSlug}/bookings:
-    post: { summary: Create pending booking and Razorpay order, parameters: [{ name: publicSlug, in: path, required: true, schema: { type: string } }], responses: { '201': { description: Order created }, '409': { description: Date unavailable }, '422': { description: Invalid input } } }
+    post:
+      summary: Create pending booking and Razorpay order
+      responses:
+        '201': { description: Order created }
+        '409': { description: Date unavailable }
+        '422': { description: Invalid input }
   /public/bookings/{bookingId}/confirm-payment:
-    post: { summary: Verify payment and atomically confirm booking, responses: { '200': { description: Confirmed }, '409': { description: Date taken } } }
+    post:
+      summary: Verify payment and atomically confirm booking
+      responses:
+        '200': { description: Confirmed }
+        '409': { description: Date taken }
+
+  /vendors/{vendorId}/profile:
+    get:
+      summary: Get vendor business profile and branding
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Profile }
+    patch:
+      summary: Update vendor business profile, branding, and pricing
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Updated }
+  /vendors/{vendorId}/dashboard:
+    get:
+      summary: Get vendor dashboard statistics and recent activity
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Dashboard stats }
   /vendors/{vendorId}/bookings:
-    get: { summary: List own bookings, security: [{ bearerAuth: [] }], responses: { '200': { description: Bookings }, '401': { description: Unauthorized } } }
+    get:
+      summary: List vendor bookings
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Bookings }
+
+  /vendors/{vendorId}/clients:
+    get:
+      summary: List clients for vendor
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Client list }
+    post:
+      summary: Create a new client lead
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Created }
+  /vendors/{vendorId}/clients/{clientId}:
+    get:
+      summary: Get client details
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Client }
+    patch:
+      summary: Update client details or pipeline status
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Updated }
+    delete:
+      summary: Delete client
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Deleted }
+
+  /vendors/{vendorId}/proposals:
+    get:
+      summary: List vendor proposals
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Proposals }
+    post:
+      summary: Create proposal with line items
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Created }
+  /vendors/{vendorId}/proposals/{proposalId}:
+    get:
+      summary: Get proposal details
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Proposal }
+    patch:
+      summary: Update draft proposal
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Updated }
+    delete:
+      summary: Delete draft proposal
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Deleted }
+  /vendors/{vendorId}/proposals/{proposalId}/send:
+    post:
+      summary: Send proposal link via email to client
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Sent }
+
+  /public/proposals/{token}:
+    get:
+      summary: Public client portal view for proposal
+      responses:
+        '200': { description: Public proposal }
+        '404': { description: Not found }
+  /public/proposals/{token}/accept:
+    post:
+      summary: Client accepts proposal
+      responses:
+        '200': { description: Accepted }
+
+  /vendors/{vendorId}/contracts:
+    get:
+      summary: List vendor contracts
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Contracts }
+    post:
+      summary: Create standalone contract agreement
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Created }
+  /vendors/{vendorId}/contracts/{contractId}:
+    get:
+      summary: Get contract details
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Contract }
+    delete:
+      summary: Delete unsigned contract
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Deleted }
+  /vendors/{vendorId}/contracts/{contractId}/send:
+    post:
+      summary: Send contract signing link via email to client
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Sent }
+
+  /public/contracts/{token}:
+    get:
+      summary: Public client portal view for contract agreement
+      responses:
+        '200': { description: Public contract }
+        '404': { description: Not found }
+  /public/contracts/{token}/sign:
+    post:
+      summary: Client electronically signs contract
+      responses:
+        '200': { description: Signed }
+
+  /vendors/{vendorId}/invoices:
+    get:
+      summary: List vendor invoices
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Invoices }
+    post:
+      summary: Create invoice with GST
+      security: [{ bearerAuth: [] }]
+      responses:
+        '201': { description: Created }
+  /vendors/{vendorId}/invoices/{invoiceId}:
+    get:
+      summary: Get invoice details
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Invoice }
+    patch:
+      summary: Update draft invoice
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Updated }
+    delete:
+      summary: Delete draft invoice
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Deleted }
+  /vendors/{vendorId}/invoices/{invoiceId}/send:
+    post:
+      summary: Send invoice payment link via email to client
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Sent }
+  /vendors/{vendorId}/invoices/{invoiceId}/mark-paid:
+    post:
+      summary: Manually mark invoice as paid
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: Marked paid }
+
+  /public/invoices/{token}:
+    get:
+      summary: Public client portal payment page for invoice
+      responses:
+        '200': { description: Public invoice }
+        '404': { description: Not found }
+  /public/invoices/{token}/order:
+    post:
+      summary: Create Razorpay order for online invoice payment
+      responses:
+        '201': { description: Order created }
+  /public/invoices/{token}/confirm-payment:
+    post:
+      summary: Confirm and verify Razorpay online invoice payment
+      responses:
+        '200': { description: Payment confirmed }
+
   /payments/razorpay/webhook:
-    post: { summary: Razorpay signed captured-payment webhook, responses: { '204': { description: Processed }, '401': { description: Invalid signature }, '422': { description: Invalid payload } } }
-components: { securitySchemes: { bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT } } }
+    post:
+      summary: Razorpay signed captured-payment webhook
+      responses:
+        '204': { description: Processed }
+        '401': { description: Invalid signature }
+        '422': { description: Invalid payload }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
