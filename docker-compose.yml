@@ -1,0 +1,13 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bayana
+      POSTGRES_PASSWORD: bayana
+      POSTGRES_DB: bayana
+    # Host port 5432 is occupied by another local PostgreSQL instance.
+    # Keep PostgreSQL on 5432 inside Docker, but expose this project on 5433.
+    ports: ["5433:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+volumes:
+  postgres_data:

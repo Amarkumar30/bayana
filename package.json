@@ -1,0 +1,6 @@
+{
+  "name": "bayana",
+  "private": true,
+  "packageManager": "pnpm@10.13.1",
+  "scripts": { "dev": "pnpm --parallel --filter @bayana/api --filter @bayana/web dev", "build": "pnpm -r build", "test": "pnpm --filter @bayana/api test", "lint": "pnpm -r lint", "typecheck": "pnpm -r typecheck" }
+}
