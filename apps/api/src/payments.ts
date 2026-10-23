@@ -6,7 +6,7 @@ import { config } from "./config.js";
 import { transition } from "./booking-service.js";
 
 const provider = () => {
-  if (config.PAYMENT_MODE !== "razorpay") throw Object.assign(new Error("Online advance payment is not enabled"), { status: 503, code: "PAYMENTS_NOT_CONFIGURED" });
+  if (config.PAYMENT_MODE === "disabled") throw Object.assign(new Error("Online advance payment is not enabled"), { status: 503, code: "PAYMENTS_NOT_CONFIGURED" });
   if (!config.RAZORPAY_KEY_ID || !config.RAZORPAY_KEY_SECRET) throw Object.assign(new Error("Payments are not configured"), { status: 503, code: "PAYMENTS_NOT_CONFIGURED" });
   return new Razorpay({ key_id: config.RAZORPAY_KEY_ID, key_secret: config.RAZORPAY_KEY_SECRET });
 };

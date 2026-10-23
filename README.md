@@ -50,3 +50,7 @@ pnpm typecheck
 pnpm test
 pnpm build
 ```
+
+## Commands
+
+Use `pnpm.cmd` from PowerShell. `pnpm.cmd db:up` starts PostgreSQL; `pnpm.cmd db:migrate` applies development migrations; `pnpm.cmd db:migrate:test` creates and migrates the isolated `_test` database; `pnpm.cmd db:migrate:status` prints the migration ledger; and `pnpm.cmd seed:dev` loads the development-only sample. `pnpm.cmd test`, `test:unit`, `test:integration`, `typecheck`, `lint`, and `build` run the matching quality checks.
