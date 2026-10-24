@@ -104,3 +104,14 @@
 - db:migrate prints pending migrations first, then refuses unless the database name matches NODE_ENV (_dev, _test, neither in production). The refusal includes PowerShell-safe backup and restore steps.
 - Tests: env messages (API and web), the database-name guard, and setup:env never overwriting. Gates all exit 0. Playwright was not re-run (only env-schema changed on the web side).
 - User state (from doctor): apps/api/.env points at "bayana" and lacks DATABASE_URL_TEST, apps/web/.env.local is missing, and port 4000 is in use. No migrations were applied.
+
+## Phase 4 vendor setup - 2026-10-24
+
+- Branch phase-4-vendor-setup from fix-local-setup. Migration 012 only expands: vendor min_notice_minutes and max_advance_days, service terms_template and cancellation_tiers, a NOT VALID fixed-advance-within-price check, and an availability_overrides table copied from availability_exceptions (now unused).
+- @bayana/shared now has zod. Slug: 3-40 characters, larger reserved list. Advance: round half up, never above price. Tier and terms-template validation, IANA time helpers (formatter cached), and the service, availability and profile schemas.
+- vendor-routes.ts: one requireVendor ownership check covers profile, booking window, checklist, services CRUD and reorder, rules (PUT and POST), overrides, blocked periods, publish and unpublish. public-routes.ts: unknown and unpublished slugs give a byte-identical 404, and contact details appear only when the vendor opts in.
+- Slot engine: overrides (whole-day block clears, open adds, partial block cuts), notice in minutes, per-vendor window. A single loader is shared by the public routes and createHold.
+- UI: working /onboarding wizard, /dashboard/services and /dashboard/availability; the overview shows the 3-step checklist; the blocked-period timezone bug is fixed.
+- Tests: 70 unit (including 300 seeded property runs and DST cases for Kolkata, London and New York), 47 integration (A vs B on every vendor route, enforced by reading the router's route table), and 123 Playwright, all green twice.
+- Fixed: zod versions differed (3.24 vs 3.25), which broke instanceof ZodError and returned 500s; all packages are now on ^3.25.76.
+- Next: Phase 5 booking engine. Decided: a bayana_app role plus a trigger on booking_events, and renaming columns to the spec's starts_at/ends_at/block_* after a backup.

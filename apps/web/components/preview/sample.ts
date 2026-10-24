@@ -13,12 +13,6 @@ export const sampleBookings = [
   { id: "7f3c2a10-0006-4000-8000-000000000006", customer: "Arjun Nair", service: "Portrait session · 90 min", date: "Thu, 29 Oct", time: "16:00", status: "expired", total: 800000, paid: 0 }
 ] as const;
 
-export const sampleServices = [
-  { name: "Portrait session", duration: 90, price: 800000, advance: "25%", active: true },
-  { name: "Bridal makeup trial", duration: 120, price: 450000, advance: "30%", active: true },
-  { name: "Event coverage · full day", duration: 480, price: 3500000, advance: "₹10,000 fixed", active: false }
-];
-
 export const sampleCustomers = [
   { name: "Ananya Iyer", email: "ananya@example.in", bookings: 3, spent: 1185000, last: "2 Nov" },
   { name: "Rohit Malhotra", email: "rohit.m@example.in", bookings: 1, spent: 0, last: "2 Nov" },
