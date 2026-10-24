@@ -1,102 +1,95 @@
-# Bayana Phase 0 Audit
+# Bayana Phase 0 Audit (re-run)
 
-Status: VERIFIED findings are backed by command output or a real `_test` API request; SUSPECTED findings are source-only. Audit date: 2026-10-23.
+Audit date: 2026-10-24. Branch `phase-0-audit`, created from `aa51855` with the uncommitted phase 2â€“5 work still in the working tree. It replaces the 2026-10-23 audit; that version is in git history. The audit compares the code against `docs/SPEC.md` Â§4, Â§8, Â§10, Â§11 and Â§12. **VERIFIED** means backed by command output or real HTTP calls against `bayana_test`. **SOURCE** means read from code only.
 
-## Git and inventory
+## 1. Inventory
 
-- VERIFIED: branch `main`, tracking `origin/main`; HEAD `defc0df Initial commit of Bayana project`; no uncommitted files at audit start. There is one commit, not fifteen.
-- VERIFIED: workspace packages are `@bayana/api`, `@bayana/web`, and `@bayana/shared`. Root scripts: `dev`, `build`, `test`, `lint`, `typecheck`; API: `dev`, `build`, `start`, `migrate`, `seed`, `test`, `lint`, `typecheck`; web/shared: `build`, `lint`, `typecheck` as applicable.
-- VERIFIED: API environment variables read: `NODE_ENV`, `PORT`, `WEB_ORIGIN`, `DATABASE_URL`, `HOLD_MINUTES`, `MIN_ADVANCE_PAISE`, `PAYMENT_MODE`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, `SMTP_URL`, `EMAIL_FROM`, `SESSION_SECRET` (`apps/api/src/config.ts:4-10`). API `.env`: all are present except the three Razorpay credentials. No web `.env*` file exists.
-- VERIFIED: migrations `001_init.sql`, `002_auth_payments.sql`, `003_universal_booking.sql`; `schema_migrations(name, applied_at)` stores names only—no checksum (`apps/api/src/migrate.ts:4-13`). Live DB records all three. Live tables/columns, constraints, and indexes match the three migration files; no migration/schema mismatch was observed.
-- VERIFIED: `photographer` occurrences: `apps/api/src/server.ts` 47; `booking-service.ts` 13; `seed.ts` 8; `auth.ts` 3; `migrate.ts` 1; SQL 001/002/003: 7/3/19; web route/layout/styles files: 2/3/5 and remaining named route files 1 each. Core model remains photography-named.
+- Workspace packages: `@bayana/api` (Express 5, pg, argon2, zod, razorpay, nodemailer), `@bayana/web` (Next 15.3, React 19) and `@bayana/shared` (zod-free helpers). There is no timezone library: the slot engine uses `Intl`.
+- Root scripts: `dev`, `db:up`, `db:migrate[:test|:status]`, `seed:dev`, `build`, `test` (unit, then integration), `lint`, `typecheck`. `lint` is only `tsc --noEmit`; no linter is installed.
+- API test scripts use cmd-only `set X=..&&` syntax and hardcode `localhost:5433`/`localhost:2525` (`apps/api/package.json`). They run on Windows but not on Linux CI.
+- Git: 2 commits (`defc0df`, `aa51855`). The 42 changed or untracked paths are phase 2â€“5 work that was never committed. That includes migrations 005â€“010 and `backups/*.dump`, which is untracked and not ignored.
+- Applied migrations (VERIFIED, `schema_migrations`):
+  - `bayana` (dev) has **001â€“008** applied.
+  - `bayana_test` has **001â€“010** applied.
+  - 004â€“008 are therefore applied too and must also be treated as immutable, not just 001â€“003.
 
-## Route inventory
+**Schema from 001â€“003.**
+- `photographers`: slug citext unique, bigint `base_price_paise`, advance type and value.
+- Per-day `availability`.
+- `bookings`: status CHECK, `total_paise` and `advance_paise` with advance â‰¤ total, unique `idempotency_key`, and a partial unique index of one active booking per day.
+- `booking_events`, `payments` (bigint amount, unique order id), `webhook_events` (PK provider event id), and `ledger_entries`, kept append-only by a trigger.
+- 002 added `users` (citext unique email, role), `auth_otps` (role-bound, `code_hash`), `auth_sessions` (`token_hash` unique) and `audit_logs`.
+- 003 added vendor profile and policy columns, `services`, `availability_slots`, booking snapshot columns, and a per-slot unique index.
 
-| API route | Auth/validation | Web caller |
+**Changes in 004â€“010.**
+- Migration checksums.
+- Password, `otp_challenges` and `auth_tickets`.
+- Rename to `vendors` and `VENDOR`.
+- Categories.
+- Service buffers and advance rule.
+- Availability rules, exceptions and blocked periods.
+- UTC ranges plus the btree_gist exclusion constraint.
+- 009 drops the legacy day and slot indexes.
+- `PENDING`, `access_token_hash` and `email_outbox`.
+
+## 2. Sign-in bug (VERIFIED)
+
+**Setup.** The API ran from the current tree on port 4100 with `NODE_ENV=test` against `bayana_test`, using throwaway secrets. Scripts were in the scratchpad, not the repo.
+
+**Scenario A (fresh vendor):** signup â†’ logout â†’ `login/password` 200 â†’ `login/otp/verify` 200. **This works.**
+
+**Scenario C/D (vendor verified earlier, before passwords existed):** this is a `users` row with role VENDOR and a NULL `password_hash`. All vendors created through the 002 OTP-only flow are in this state, and migration 005 added `password_hash` with no backfill or claim path.
+- `POST /v1/auth/login/password` â†’ **401 `{"error":{"code":"INVALID_CREDENTIALS","message":"Invalid email or password"}}`**
+- The UI's "Forgot password?" calls `POST /v1/auth/password/forgot` â†’ **404 `{"error":{"code":"NOT_FOUND","message":"Not found"}}`**
+- The OTP path (`login/otp/verify`) returns 200, but the UI hides it behind "Use email code".
+
+**Root cause**
+1. `apps/api/src/auth.ts:46` rejects every user whose `password_hash` is NULL. Nothing gives these vendors a way to set a password.
+2. `apps/web/app/auth/page.tsx:6` calls `/v1/auth/password/{forgot,verify,reset}`, but those routes are not registered in `apps/api/src/server.ts:44-52`.
+
+**Earlier cause.** The 2026-10-23 audit traced the bug to a 60 s cooldown that counted consumed OTPs. That is fixed at `auth.ts:23`, which now filters on `consumed_at IS NULL`.
+
+**Also observed**
+- **CRITICAL:** `login/password` returns the argon2 `password_hash` in its JSON body. `auth.ts:46` spreads it into `user`, and `server.ts:47` sends it.
+- Re-running "Create account" for an existing email silently replaces the password (201) and does not revoke existing sessions (`server.ts:46`, ON CONFLICT DO UPDATE).
+- The 11th OTP in an hour for one email, across all purposes, returns 429 `OTP_RATE_LIMITED` "Please wait before requesting another code" (`auth.ts:24-26`). This is by design.
+
+## 3. Requirement groups
+
+| Group | Status | Evidence |
 |---|---|---|
-| POST `/v1/payments/razorpay/webhook` | raw Razorpay signature | none (provider) |
-| GET `/health` | none | none |
-| POST `/v1/auth/request-otp` | email, role | `/auth`, `/[slug]/book` |
-| POST `/v1/auth/verify-otp` | email, role, 6 digits | `/auth`, `/[slug]/book` |
-| POST `/v1/auth/logout` | session optional | none |
-| GET `/v1/me` | session | none |
-| GET `/v1/photographers/:slug` | public published profile | `/[slug]`, `/[slug]/book` |
-| POST/PATCH `/v1/photographers`, `/me` | photographer session | no caller |
-| POST `/v1/bookings` | client session, booking Zod body + idempotency header | `/[slug]/book` |
-| GET `/v1/bookings/:id` | client or owner session | `/booking/[id]` |
-| GET `/v1/dashboard` | photographer session | `/dashboard` |
-| POST/PATCH `/v1/services`, `/v1/services/:id` | photographer session | no caller |
-| POST `/v1/photographers/me/publish` | photographer session | no caller |
-| GET `/v1/client/bookings` | client session | `/my-bookings` |
-| PUT `/v1/availability/:date` | photographer session; body Zod | `/dashboard` |
+| AU | **FAIL** | Hash leak (`auth.ts:46`, `server.ts:47`). AU-02 fails for legacy vendors (Â§2). AU-07 reset is NOT BUILT; the UI calls missing routes. AU-08 and AU-10 are NOT BUILT. AU-09 has only a global 300/15 min limit plus OTP caps, with nothing per endpoint on `login/password`. AU-01, AU-03 and AU-05 (purpose column, atomic attempts â‰¤5, 10 min, single use, 60 s cooldown) and AU-06 cookie flags are implemented, but no HTTP-level tests cover them. |
+| VN | **PARTIAL** | VN-02: slug is 3â€“30 chars with a reserved list (`shared/src/index.ts:1-4`); the spec says 3â€“40. VN-03: published-only queries return the same 404 body (`server.ts:54`). VN-05: contact fields are excluded from the public select. Publish checks the legacy `availability` table rather than `availability_rules` (`server.ts:75`), so a TIMED-only vendor with weekly rules cannot publish. VN-04 and VN-06 are NOT BUILT. Nothing in this group is tested over HTTP. |
+| SV | **PARTIAL** | SV-01 and SV-02: Zod plus DB CHECKs, integer round-half-up (`shared/src/index.ts:23`), with unit tests. A FIXED advance above the price is not rejected at create or update (`server.ts:72-73`); it only fails at publish, or with a 500 at hold time. SV-03 (cancellation tiers) and SV-04 are NOT BUILT. |
+| AV | **PARTIAL** | Rules, exceptions and blocked periods exist (008), and DST unit tests exist. Overlapping weekly windows are not rejected (`server.ts:32`). Notice and window are hardcoded at 2 h / 90 d (`server.ts:33`, `booking-service.ts:24`). Public slots ignore PENDING bookings (`server.ts:33`) while holds count them (`booking-service.ts:20`). |
+| BK | **FAIL** | BK-07: status is written outside `transitionBooking` at `booking-service.ts:35`, `booking-service.ts:59` and `server.ts:68`. `transitionBooking` (`booking-service.ts:7-12`) takes no row lock (no FOR UPDATE) and has no `PENDING` entry, so PENDING bookings can never be confirmed or cancelled. BK-04: the constraint exists, but 23P01 is not mapped to `SLOT_TAKEN` and becomes a 500. BK-06: snapshots exist but there is no terms hash. BK-01, BK-02, BK-05 and BK-08 are implemented (token is 32 random bytes, stored hashed, wrong token gets 404). |
+| PY | **FAIL** | PY-03: there is no checkout-signature verify route. PY-04: the webhook uses the raw body, timing-safe HMAC and event-id dedup, but a mismatch throws a 409, which rolls back the dedup row instead of flagging (`payments.ts:33`). PY-05: zero-advance bookings are inserted as CONFIRMED with no payment row (`booking-service.ts:44`). PY-06 is NOT BUILT. PY-01 lacks `LIVE_PAYMENTS_ACK` (`config.ts:22-26`). `any` appears at `payments.ts:13` and `payments.ts:25`. |
+| CT | **NOT BUILT** | Only vendor-level free-text terms, a JSON `terms_snapshot` and `terms_accepted_at` exist. There is no template, no variables, no SHA-256 hash, and no acceptance evidence (IP, user agent, email). |
+| NT | **FAIL** | NT-01: the `email_outbox` rows (`booking-service.ts:51-52`) are never sent. `processEmailOutbox` (`email.ts:4`) has no caller, and neither does `sweepExpiredBookings`. OTP mail is sent synchronously inside the DB transaction (`auth.ts:30`), so an SMTP failure fails the request. NT-02 is partial and NT-03 is NOT BUILT. |
 
-VERIFIED: web routes are `/`, `/auth`, `/dashboard`, `/my-bookings`, `/booking/[id]`, `/[slug]`, and `/[slug]/book`. No web calls to nonexistent routes were found. The profile, service, publish, logout, and `/me` APIs have no UI caller.
+## 4. Specific checks
 
-## Baseline
-
-| Command | Result |
+| Check | Result |
 |---|---|
-| `pnpm.cmd --filter @bayana/api migrate` | PASS (0); live ledger already contained all migrations |
-| `pnpm.cmd typecheck` | PASS (0) |
-| `pnpm.cmd lint` | PASS (0) |
-| `pnpm.cmd test` | PASS (0); one file, three money tests only |
-| `pnpm.cmd build` | PASS (0); API compiled and Next production compilation completed |
+| DB-level overlap guard | **YES.** `bookings_no_overlapping_active_periods` EXCLUDE USING gist (`010_customer_booking.sql:8-9`), with the vendor row locked FOR UPDATE (`booking-service.ts:30`). Gap: legacy active bookings with a NULL `occupied_range` lost their day guard when 009 dropped the old indexes. |
+| Status changed in more than one place | **YES.** There are 4 UPDATE sites (above), plus initial INSERTs with CONFIRMED or PENDING (`booking-service.ts:47`). |
+| Money in integer paise | **YES.** Every money column is `bigint` `*_paise`; rupee strings are parsed exactly (`shared/src/index.ts:5`). |
+| Sessions and OTPs hashed | **YES.** Sessions use SHA-256(secret:token) (`auth.ts:7`). OTPs use HMAC(pepper, code) (`auth.ts:8`), but the hash is not bound to email or purpose as SPEC Â§12.2 requires. `OTP_PEPPER` falls back to `SESSION_SECRET` outside production (`config.ts:22`). |
+| Hardcoded secrets | **None found.** `.env` is gitignored. The test fixture `rzp_live_secret_value` is fake. |
+| Hardcoded localhost | **YES.** `?? "http://localhost:4000"` appears in 7 web files (for example `apps/web/app/auth/page.tsx:4`). `WEB_ORIGIN` defaults to localhost (`config.ts:7`). Test scripts point at a localhost DB and SMTP, which is acceptable for tests. |
+| Local disk writes | **None.** The only `fs` use is `migrate.ts:1`, which reads only. |
+| Other | `server.ts` is a single 34 KB file of one-line handlers. Errors carrying a status but no code return `INTERNAL_ERROR` with a 4xx. 20 tests in total, with no HTTP-level auth, booking or payment tests. |
 
-Docker PostgreSQL was already running. A separate `bayana_test` database was created and migrated for authentication requests; production data was not used for tests.
+## 5. Recommendations
 
-## Sign-in reproduction and root cause
-
-VERIFIED against API at `localhost:4002`, test DB, and a temporary local SMTP sink:
-
-1. Fresh photographer OTP request: `202 {"ok":true}`. Verification: `200`, session cookie present. `/v1/me`: `200`. `/v1/dashboard`: `404` because no profile exists. Logout: `204`; session row was revoked.
-2. Immediate request for a second photographer OTP after logout: `429`. The verified OTP row was consumed and no active session remained.
-3. After the 60-second window, the same existing photographer requested and verified a new OTP: `202`, then `200`; cookie again present. Therefore persistent “cannot sign in again” is **not reproduced**; the immediate post-verification/re-login failure is reproduced.
-
-**CONFIRMED root cause:** `requestOtp` cooldown includes consumed OTP rows: `apps/api/src/auth.ts:12` selects rows created in the last 60 seconds without `consumed_at IS NULL`. `verifyOtp` consumes the OTP at line 25. A user who logs out immediately after verification cannot request another code for up to 60 seconds. API presents this as a generic `429` (the Express request client did not expose the JSON response body), while the UI is built to display it.
-
-Candidates: existing-email OTP rejection RULED OUT (same vendor re-login succeeds after cooldown); auth page register-only RULED OUT (same `/auth` request/verify flow works); cookie/CORS RULED OUT for localhost (Set-Cookie present and `/v1/me` succeeds); user insert conflict RULED OUT for same role; missing profile CONFIRMED as a separate dashboard `404`, not auth failure; stale cooldown CONFIRMED.
-
-Customer-role collision probe is BLOCKED/INCONCLUSIVE: temporary SMTP capture did not reliably associate later generated codes with recipient. A direct known-row probe reached `429` due to test contamination. It must be rerun from a clean test database with a deterministic OTP helper in the test harness.
-
-## AGENTS.md section 6 invariants
-
-| Invariant | Status | Evidence |
+| Area | Call | Reason |
 |---|---|---|
-| case-insensitive one user/email | PASS | `users.email citext UNIQUE`, `002_auth_payments.sql` |
-| vendor password signup/sign-in | FAIL | OTP-only UI/API, `auth.ts:9-29`, `/auth/page.tsx:5` |
-| customer OTP-only | PASS | booking page requests CLIENT OTP |
-| OTP purpose/HMAC/atomic attempts | FAIL | role not purpose; SHA-256 not HMAC; attempts update not atomic condition, `auth.ts:6-25` |
-| OTP expiry/single-use/cooldown | PASS | `auth.ts:12-25`; cooldown defect above |
-| argon2id passwords | FAIL | no password storage/dependency |
-| session token/cookie/revocation | PASS | `auth.ts:27-35`, `server.ts:24,30` |
-| non-enumerating auth responses | FAIL | role conflict returns 409, `auth.ts:29` |
-| server computes start/end + timezone library | FAIL | client supplies starts_at; no ends_at/timezone library, `booking-service.ts:11-31` |
-| exclusion constraint overlaps | FAIL | only unique indexes, `001_init.sql`, `003_universal_booking.sql` |
-| sole transition function | FAIL | `booking-service.ts:18` directly expires holds with `UPDATE bookings`, bypassing `transition` and a booking event |
-| booking snapshots include service/price/duration/advance/terms | FAIL | no advance-rule or terms text snapshot, `003`, `booking-service.ts:31` |
-| payment verified before confirmation | PASS | webhook transaction in `payments.ts:23-35` |
-| published privacy/unguessable booking access | FAIL | booking UUID authorization is authenticated-only but no access token; public contact opt-in absent |
-
-## Defects
-
-### Critical
-
-- VERIFIED — `apps/api/src/auth.ts:12`, `requestOtp`: consumed OTP blocks a new login for 60 seconds. Required fix: cooldown only active/unconsumed requests, with a focused logout/relogin test.
-- VERIFIED — `apps/api/src/auth.ts:9-29`, `apps/web/app/auth/page.tsx:5`: vendor authentication has no password despite the required invariant. Required fix: phased credential schema and argon2id flow; prove registration and both sign-in methods.
-
-### High
-
-- VERIFIED — `apps/api/src/config.ts:7`, `payments.ts:9`: accepted payment modes are `disabled|razorpay`, not `disabled|test|live`; no key-mode validation. Required fix: explicit modes and startup checks.
-- VERIFIED — `apps/api/src/server.ts:44`: committed `console.log`, no structured request logging/redaction.
-- VERIFIED — `apps/api/src/server.ts:44` and catch blocks: inconsistent error shape; several handlers return strings such as `{error:"..."}` rather than the mandated object.
-- SUSPECTED — slot concurrency permits interval overlap because only identical starts are unique; prove with concurrent different-start requests after interval scheduling is implemented.
-
-### Medium/Low
-
-- VERIFIED — service/profile/publish APIs are unreachable from web UI (route inventory above).
-- VERIFIED — no auth, booking, payment, privacy, or database integration tests exist; only `apps/api/test/money.test.ts` runs.
-- VERIFIED — migration tracking has no checksums (`migrate.ts:4-13`).
-
-## Phase order
-
-The planned order should change: Phase 1 must repair and test vendor authentication/session semantics before onboarding, availability, or payments. Add an isolated API integration-test harness first so OTP, cooldown, role collision, and cookies can be tested deterministically.
+| Auth | REFACTOR | The primitives are sound (argon2id, HMAC OTP, hashed sessions). Fix the hash leak, add the reset and claim-password flow, revoke sessions on credential change, and add HTTP tests. |
+| Vendor profile and public page | KEEP | It mostly meets the spec. Fix the publish availability check and the slug length. |
+| Services | KEEP | Validation and money math are correct. Add a FIXED â‰¤ price check and cancellation tiers. |
+| Availability engine | REFACTOR | The engine is reasonable. Unify the busy-period query, make notice and window configurable, reject overlapping rules, and consider a timezone library. |
+| Booking | REFACTOR | Keep the exclusion constraint and the snapshots. Make `transitionBooking` the only status writer, with FOR UPDATE and the full Â§10 state table. |
+| Payments | REWRITE | The verify route, late-payment handling and mismatch flagging are missing, and the module is untyped. It is small enough to redo against Â§11. |
+| Contract and terms | REWRITE | Effectively not built. It needs template, hash and evidence tables. |
+| Notifications | REFACTOR | The outbox table is right, but it needs a worker or tick, and OTP mail has to come out of the transaction. |
+| API structure | REFACTOR | Split `server.ts` into route modules and a central typed error helper so reviews and tests are practical. |
