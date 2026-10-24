@@ -2,12 +2,15 @@
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { CalendarX2, ChevronDown, FileText } from "lucide-react";
-import { describeRefund, tiersInWords } from "@bayana/shared";
+import { CalendarX2, ChevronDown, Download, FileText } from "lucide-react";
+import { describeRefund, formatINR, paiseFromRupees, tiersInWords } from "@bayana/shared";
+import { env } from "@/env";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, EmptyState, LoadingState, Money, Notice, Skeleton, StatusBadge } from "@/components/ui/display";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { Field, Input, Select } from "@/components/ui/field";
+import { PaymentPanel } from "@/components/booking/payment-panel";
 import { HoldCountdown } from "@/components/booking/countdown";
 import { formatDate, formatDateTime, formatTime } from "@/components/booking/time";
 import { tokenHeaders, type BookingView } from "@/components/booking/types";
@@ -18,7 +21,10 @@ const headline: Record<string, string> = {
   CANCELLED: "Booking cancelled", EXPIRED: "This hold has expired", EXPIRED_PAID: "Payment arrived after the hold expired"
 };
 const stepLabel: Record<string, string> = { HELD: "Time held for 15 minutes", PENDING: "Terms agreed", CONFIRMED: "Booking confirmed", COMPLETED: "Completed", CANCELLED: "Cancelled", EXPIRED: "Hold expired", EXPIRED_PAID: "Paid after expiry" };
-const paymentLabel: Record<string, string> = { CREATED: "Started, not paid", CAPTURED: "Paid", REFUNDED: "Refunded" };
+const paymentLabel: Record<string, string> = { created: "Started, not paid", authorized: "Authorised, confirming", failed: "Did not go through", captured: "Paid", refunded: "Refunded", partially_refunded: "Partly refunded" };
+const refundLabel: Record<string, string> = { pending: "Refund on its way", processed: "Refunded", failed: "Refund failed; we're looking into it", manual: "To be returned by the business directly" };
+const methodLabel: Record<string, string> = { card: "card", upi: "UPI", netbanking: "net banking", wallet: "wallet", cash: "cash", bank_transfer: "bank transfer", other: "other" };
+const paymentTitle = (payment: BookingView["payments"][number]) => `${payment.kind === "advance" ? "Advance" : "Balance"} · ${payment.provider === "offline" ? "paid to the business" : "paid online"}${payment.method ? ` (${methodLabel[payment.method] ?? payment.method})` : ""}`;
 
 export function BookingSkeleton() {
   return <LoadingState label="Loading your booking…" className="grid gap-4"><Skeleton className="h-6 w-28" /><Skeleton className="h-10 w-3/4" /><Skeleton className="h-40 rounded-card" /><Skeleton className="h-32 rounded-card" /></LoadingState>;
@@ -47,7 +53,7 @@ export function BookingPage() {
         <h1 className="text-2xl sm:text-4xl">{headline[view.status] ?? "Your booking"}</h1>
         <p className="text-muted">{view.service_name} · {formatDateTime(view.starts_at, view.timezone)} ({view.timezone})</p>
       </div>
-      <StatusHelp view={view} finishHref={finishHref} onExpire={expire} />
+      <StatusHelp view={view} token={token} finishHref={finishHref} onExpire={expire} onPaid={setView} />
 
       <Card><CardHeader title="Payment summary" />
         <dl className="grid gap-2 text-sm">
@@ -74,19 +80,28 @@ export function BookingPage() {
 
       <section aria-labelledby="payments" className="grid gap-3"><h2 id="payments" className="text-lg">Payment history</h2>
         {view.payments.length === 0 ? <Notice tone="info">{view.payments_enabled ? "No payments yet. Your advance will appear here once it's verified." : `No payments yet. Online payment isn't switched on for ${view.vendor.display_name}; they will arrange the advance with you directly.`}</Notice> :
-          <ul className="grid divide-y divide-border rounded-card bg-surface ring-1 ring-border/70">{view.payments.map(payment => <li key={payment.id} className="flex items-center justify-between gap-3 px-4 py-3 text-sm"><span className="grid"><span className="font-medium">Advance · {paymentLabel[payment.status] ?? payment.status}</span><span className="text-muted">{formatDateTime(payment.created_at, view.timezone)}</span></span><Money paise={payment.amount_paise} size="sm" /></li>)}</ul>}
+          <ul className="grid divide-y divide-border rounded-card bg-surface ring-1 ring-border/70">{view.payments.map(payment => <li key={payment.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"><span className="grid min-w-0"><span className="font-medium">{paymentTitle(payment)}</span><span className="text-muted">{paymentLabel[payment.status] ?? payment.status} · {formatDateTime(payment.verified_at ?? payment.created_at, view.timezone)}</span>{payment.note && <span className="text-muted">Note: {payment.note}</span>}</span><span className="flex items-center gap-1"><Money paise={payment.amount_paise} size="sm" />{payment.receipt && <Button asChild size="icon" variant="ghost"><a href={`${env.NEXT_PUBLIC_API_URL}/v1/bookings/${view.id}/receipts/${payment.id}${token ? `?t=${encodeURIComponent(token)}` : ""}`} aria-label={`Download receipt for ${formatINR(payment.amount_paise)}`} rel="noreferrer"><Download aria-hidden /></a></Button>}</span></li>)}</ul>}
+        {view.refunds.length > 0 && <ul className="grid gap-1 text-sm">{view.refunds.map(refund => <li key={refund.id} className="flex flex-wrap justify-between gap-2 rounded-input bg-surface-muted px-4 py-2"><span>{refundLabel[refund.status] ?? refund.status}</span><Money paise={refund.amount_paise} size="sm" /></li>)}</ul>}
       </section>
 
       {view.viewer === "customer" && (view.can_cancel ? <CancelCard view={view} token={token} onCancelled={setView} /> : null)}
+      {view.viewer === "vendor" && ["PENDING", "CONFIRMED", "COMPLETED"].includes(view.status) && view.balance_due_paise > 0 && <OfflinePaymentForm view={view} onRecorded={() => void load()} />}
     </div>
   );
 }
 
-function StatusHelp({ view, finishHref, onExpire }: { view: BookingView; finishHref: string; onExpire: () => void }) {
+function StatusHelp({ view, token, finishHref, onExpire, onPaid }: { view: BookingView; token: string | null; finishHref: string; onExpire: () => void; onPaid: (view: BookingView) => void }) {
   if (view.status === "HELD" && view.hold_expires_at) return (
     <div className="grid gap-3"><HoldCountdown until={view.hold_expires_at} onExpire={onExpire} /><Button asChild size="lg"><Link href={finishHref}>Read the terms and finish</Link></Button></div>
   );
   if (view.status === "PENDING" && !view.payments_enabled) return <Notice tone="info">{view.vendor.display_name} has your request and will contact you to arrange the advance.{view.hold_expires_at ? ` Your time is reserved until ${formatDate(view.hold_expires_at, view.timezone)}, ${formatTime(view.hold_expires_at, view.timezone)}.` : ""}</Notice>;
+  if (view.status === "PENDING" && view.can_pay && view.viewer === "customer") return (
+    <Card className="grid gap-3">
+      {view.hold_expires_at && <HoldCountdown until={view.hold_expires_at} onExpire={onExpire} />}
+      <p className="text-sm text-muted">Pay the {formatINR(view.advance_paise - view.paid_paise)} advance to confirm. It is confirmed only once the payment is verified.</p>
+      <PaymentPanel bookingId={view.id} token={token} amountPaise={view.advance_paise - view.paid_paise} businessName={view.vendor.display_name} onSettled={onPaid} />
+    </Card>
+  );
   if (view.status === "PENDING") return <Notice tone="warning">Waiting for the payment to be verified. This page updates by itself.</Notice>;
   if (view.status === "EXPIRED") return <Notice tone="warning">The time was released because the booking wasn't finished in time. Nothing was charged. <Link href={`/${view.vendor.slug}/book`}>Book again</Link>.</Notice>;
   return null;
@@ -111,6 +126,40 @@ function CancelCard({ view, token, onCancelled }: { view: BookingView; token: st
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><DialogClose asChild><Button variant="secondary">Keep my booking</Button></DialogClose><Button variant="danger" loading={busy} loadingText="Cancelling…" onClick={() => void cancel()}>Yes, cancel</Button></div>
         </DialogContent>
       </Dialog>
+    </Card>
+  );
+}
+
+/** The vendor records money received outside Bayana (PY-10). The API keeps an audit row and tags the ledger entry offline. */
+function OfflinePaymentForm({ view, onRecorded }: { view: BookingView; onRecorded: () => void }) {
+  const advanceDue = view.status === "PENDING" ? Math.max(0, view.advance_paise - view.paid_paise) : 0;
+  const [kind, setKind] = useState<"advance" | "balance">(advanceDue > 0 ? "advance" : "balance");
+  const [rupees, setRupees] = useState(((advanceDue || view.balance_due_paise) / 100).toFixed(2)); const [method, setMethod] = useState("upi"); const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [done, setDone] = useState("");
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault(); setError(""); setDone("");
+    let amount: number;
+    try { amount = paiseFromRupees(rupees.trim()); } catch { setError("Enter the amount in rupees, for example 2000 or 2000.50."); return; }
+    if (amount <= 0 || amount > view.balance_due_paise) { setError(`Enter an amount up to the balance due (${formatINR(view.balance_due_paise)}).`); return; }
+    if (note.trim().length < 3) { setError("Add a short note, for example who paid and how."); return; }
+    setBusy(true);
+    try { const result = await api<{ confirmed: boolean }>(`/v1/vendor/bookings/${view.id}/offline-payments`, { body: { kind, amount_paise: amount, method, note: note.trim() } }); setDone(result.confirmed ? "Recorded. The booking is now confirmed." : "Recorded."); setNote(""); onRecorded(); }
+    catch (failure) { setError(humanMessage(failure)); } finally { setBusy(false); }
+  };
+  return (
+    <Card className="grid gap-3">
+      <CardHeader title="Record a payment received offline" description="Cash, or UPI or a bank transfer straight to you. The customer sees it and gets a receipt." />
+      <form onSubmit={submit} noValidate className="grid gap-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="For">{p => <Select {...p} value={kind} onChange={event => setKind(event.target.value as "advance" | "balance")}><option value="advance">Advance</option><option value="balance">Balance</option></Select>}</Field>
+          <Field label="Amount (₹)">{p => <Input {...p} inputMode="decimal" value={rupees} onChange={event => setRupees(event.target.value)} />}</Field>
+        </div>
+        <Field label="Paid by">{p => <Select {...p} value={method} onChange={event => setMethod(event.target.value)}><option value="upi">UPI</option><option value="cash">Cash</option><option value="bank_transfer">Bank transfer</option><option value="other">Other</option></Select>}</Field>
+        <Field label="Note" hint="Required. For example: UPI ref 4411, paid by Asha.">{p => <Input {...p} value={note} maxLength={500} onChange={event => setNote(event.target.value)} />}</Field>
+        {error && <Notice tone="danger">{error}</Notice>}
+        {done && <Notice tone="success">{done}</Notice>}
+        <Button loading={busy} loadingText="Recording…">Record payment</Button>
+      </form>
     </Card>
   );
 }

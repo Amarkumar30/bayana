@@ -89,6 +89,16 @@ describe("ownership: vendor A can never read or change vendor B's data", () => {
     expect((await call(fresh, "POST", "/v1/vendor/me", { business_name: "Copycat", slug: old, city: "Delhi" })).body).toMatchObject({ error: { code: "SLUG_TAKEN" } });
     b.slug = renamed;
   });
+  it("cannot record a payment on another vendor's booking (PY-10)", async () => {
+    check("POST", "/bookings/:id/offline-payments");
+    const vendorB = (await pool.query<{ id: string }>("SELECT id FROM vendors WHERE slug=$1", [b.slug])).rows[0].id;
+    const bookingId = randomUUID(), start = new Date(Date.now() + 30 * 86_400_000);
+    await pool.query("INSERT INTO bookings(id,vendor_id,event_date,client_name,client_email,client_phone,status,total_paise,advance_paise,hold_expires_at,idempotency_key,starts_at,ends_at,block_start,block_end,terms_accepted_at) VALUES($1,$2,$3,'Customer','c@example.test','','PENDING',800000,200000,now()+interval '1 day',$4,$5,$6,$5,$6,now())", [bookingId, vendorB, start.toISOString().slice(0, 10), randomUUID(), start, new Date(start.getTime() + 3_600_000)]);
+    const body = { kind: "advance", amount_paise: 200000, method: "cash", note: "Paid in cash at the studio" };
+    expect((await call(a.cookie, "POST", `/v1/vendor/bookings/${bookingId}/offline-payments`, body)).body).toEqual({ error: { code: "NOT_FOUND", message: "Booking not found", details: {} } });
+    expect((await pool.query("SELECT count(*)::int AS n FROM payments WHERE booking_id=$1", [bookingId])).rows[0].n).toBe(0);
+    expect((await call(b.cookie, "POST", `/v1/vendor/bookings/${bookingId}/offline-payments`, body)).status).toBe(201);
+  });
   it("refuses signed-out callers and customer accounts on every route", async () => {
     const client = await account("CLIENT");
     for (const layer of vendorRouter.stack) {

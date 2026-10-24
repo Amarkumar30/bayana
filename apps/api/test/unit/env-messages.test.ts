@@ -33,8 +33,8 @@ describe("API env messages", () => {
     expect(messageOf(rest)).toContain("SESSION_SECRET: is missing; set it to a random value of at least 32 characters (pnpm.cmd setup:env generates one)");
   });
   it("never prints secret values, even when they are the invalid ones", () => {
-    const message = messageOf({ ...base, PAYMENT_MODE: "disabled", RAZORPAY_KEY_SECRET: secret, RAZORPAY_WEBHOOK_SECRET: "short", DATABASE_URL: `postgres://u:${secret}@db/x_test` });
-    expect(message).toContain("RAZORPAY_KEY_SECRET"); expect(message).toContain("RAZORPAY_WEBHOOK_SECRET"); expect(message).toContain("DATABASE_URL");
+    const message = messageOf({ ...base, PAYMENT_MODE: "test", RAZORPAY_KEY_ID: secret, RAZORPAY_WEBHOOK_SECRET: "short", DATABASE_URL: `postgres://u:${secret}@db/x_test` });
+    expect(message).toContain("RAZORPAY_KEY_ID"); expect(message).toContain("RAZORPAY_KEY_SECRET"); expect(message).toContain("RAZORPAY_WEBHOOK_SECRET"); expect(message).toContain("DATABASE_URL");
     expect(message).not.toContain(secret); expect(message).not.toContain("short\n");
   });
   it("uses the file name it is given", () => expect(messageOf({}, "/srv/app/.env")).toContain("Edit /srv/app/.env (compare with /srv/app/.env.example)"));

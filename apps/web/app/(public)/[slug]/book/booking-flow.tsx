@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, CalendarCheck, CheckCircle2, ChevronDown, Lock, Mail } from "lucide-react";
 import { formatINR, tiersInWords } from "@bayana/shared";
@@ -9,7 +9,8 @@ import { Card, EmptyState, LoadingState, Money, Notice, Skeleton, Stepper } from
 import { Checkbox, Field, Input, Textarea } from "@/components/ui/field";
 import { HoldCountdown } from "@/components/booking/countdown";
 import { dateLabel, formatDate, formatDateTime, formatTime, localDateKey, viewerTimezone } from "@/components/booking/time";
-import { bookingPageHref, tokenHeaders, type BookingView, type Checkout } from "@/components/booking/types";
+import { PaymentPanel } from "@/components/booking/payment-panel";
+import { bookingPageHref, tokenHeaders, type BookingView } from "@/components/booking/types";
 import { ApiError, api, humanMessage } from "@/lib/api";
 import type { PublicService, PublicVendor } from "@/lib/public-vendor";
 import { cn } from "@/lib/utils";
@@ -17,7 +18,7 @@ import { cn } from "@/lib/utils";
 const steps = ["Service", "Time", "Details", "Verify", "Review and agree", "Pay"];
 type Slot = { startsAt: string; endsAt: string };
 type Hold = { id: string; token: string | null; holdExpiresAt: string };
-type Accepted = { booking: { id: string; status: string; hold_expires_at: string | null }; checkout: Checkout | null };
+type Accepted = { booking: { id: string; status: string; hold_expires_at: string | null; advance_paise: string } };
 const STRIP_DAYS = 14;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const monthOf = (date: string) => date.slice(0, 7);
@@ -25,7 +26,7 @@ const nextMonth = (month: string) => { const [year, value] = month.split("-").ma
 
 /** SPEC 5.5 booking flow: service, time, details, email code (creates the 15-minute hold), terms, payment. */
 export function BookingFlow() {
-  const { slug } = useParams<{ slug: string }>(); const search = useSearchParams(); const router = useRouter();
+  const { slug } = useParams<{ slug: string }>(); const search = useSearchParams();
   const [vendor, setVendor] = useState<PublicVendor>(); const [loadError, setLoadError] = useState("");
   const [step, setStep] = useState(0); const [message, setMessage] = useState("");
   const [serviceId, setServiceId] = useState(search.get("service") ?? "");
@@ -80,7 +81,7 @@ export function BookingFlow() {
       </div>
       <Stepper steps={steps} current={step} />
       {service && step > 0 && step < 5 && <Summary service={service} timezone={vendor.timezone} startsAt={slotStart} />}
-      {hold && step === 4 && !holdExpired && hold.holdExpiresAt && <HoldCountdown until={hold.holdExpiresAt} onExpire={markExpired} />}
+      {hold && (step === 4 || step === 5 && vendor.payments_enabled && accepted?.booking.status === "PENDING") && !holdExpired && hold.holdExpiresAt && <HoldCountdown until={hold.holdExpiresAt} onExpire={markExpired} />}
       {message && <Notice tone="danger">{message}</Notice>}
 
       {step === 0 && <ServiceStep services={vendor.services} selected={serviceId} onSelect={id => { setServiceId(id); setSlotStart(""); go(1); }} />}
@@ -90,7 +91,7 @@ export function BookingFlow() {
       {step === 4 && hold && (holdExpired
         ? <Card className="grid gap-3"><h2 className="text-lg">Your hold ran out</h2><p className="text-sm text-muted">The 15 minutes passed, so the time was released for others. Nothing was charged.</p><Button onClick={() => restartFromTime("")}>Choose a time again</Button></Card>
         : <ReviewStep hold={hold} onHoldInfo={learnHoldExpiry} onExpired={markExpired} onAccepted={result => { setAccepted(result); go(5); }} />)}
-      {step === 5 && accepted && hold && <PayStep vendor={vendor} email={details.email || "your verified email"} accepted={accepted} onDone={() => router.push(bookingPageHref(hold.id, hold.token))} bookingHref={bookingPageHref(hold.id, hold.token)} />}
+      {step === 5 && accepted && hold && <PayStep vendor={vendor} email={details.email || "your verified email"} accepted={accepted} bookingId={hold.id} token={hold.token} bookingHref={bookingPageHref(hold.id, hold.token)} />}
     </div>
   );
 }
@@ -259,39 +260,24 @@ function ReviewStep({ hold, onHoldInfo, onExpired, onAccepted }: { hold: Hold; o
   );
 }
 
-declare global { interface Window { Razorpay?: new (options: Record<string, unknown>) => { open: () => void } } }
-const loadCheckout = () => new Promise<void>((resolve, reject) => {
-  if (window.Razorpay) return resolve();
-  const script = document.createElement("script"); script.src = "https://checkout.razorpay.com/v1/checkout.js"; script.onload = () => resolve(); script.onerror = () => reject(new Error("Checkout did not load")); document.body.append(script);
-});
-
-function PayStep({ vendor, email, accepted, bookingHref, onDone }: { vendor: PublicVendor; email: string; accepted: Accepted; bookingHref: string; onDone: () => void }) {
-  const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
-  const { booking, checkout } = accepted;
+function PayStep({ vendor, email, accepted, bookingId, token, bookingHref }: { vendor: PublicVendor; email: string; accepted: Accepted; bookingId: string; token: string | null; bookingHref: string }) {
+  const [booking, setBooking] = useState(accepted.booking);
   if (booking.status === "CONFIRMED") return (
-    <Card className="grid justify-items-center gap-3 py-8 text-center"><CheckCircle2 className="size-12 text-success" aria-hidden /><h2 className="text-2xl">You're booked</h2><p className="max-w-sm text-sm text-muted">No advance is needed. A confirmation is on its way to {email}.</p><Button asChild><Link href={bookingHref}>View your booking</Link></Button></Card>
+    <Card className="grid justify-items-center gap-3 py-8 text-center"><CheckCircle2 className="size-12 text-success" aria-hidden /><h2 className="text-2xl">You're booked</h2><p className="max-w-sm text-sm text-muted">{Number(booking.advance_paise) > 0 ? "Your advance is verified." : "No advance is needed."} A confirmation is on its way to {email}.</p><Button asChild><Link href={bookingHref}>View your booking</Link></Button></Card>
   );
-  if (!checkout) return (
+  if (booking.status === "EXPIRED_PAID") return <Notice tone="warning">Your payment arrived after the time was taken by someone else, so we are refunding it in full. <Link href={bookingHref}>View your booking</Link>.</Notice>;
+  if (!vendor.payments_enabled) return (
     <Card className="grid gap-4">
       <div className="flex items-start gap-3"><CalendarCheck className="mt-0.5 size-6 shrink-0 text-primary" aria-hidden /><div className="grid gap-1"><h2 className="text-lg">Request sent to {vendor.display_name}</h2><p className="text-sm text-muted">Online payment isn't switched on for {vendor.display_name} yet, so nothing has been charged. They will contact you at {email} to arrange the advance.</p></div></div>
       {booking.hold_expires_at && <Notice tone="info">Your time is reserved until {formatDate(booking.hold_expires_at, vendor.timezone)}, {formatTime(booking.hold_expires_at, vendor.timezone)}. It is confirmed once {vendor.display_name} records your advance.</Notice>}
       <Button asChild size="lg" block><Link href={bookingHref}>View your booking</Link></Button>
     </Card>
   );
-  const pay = async () => {
-    setBusy(true); setError("");
-    try {
-      await loadCheckout();
-      if (!window.Razorpay) throw new Error("Checkout unavailable");
-      new window.Razorpay({ key: checkout.key_id, order_id: checkout.order_id, amount: checkout.amount_paise, currency: checkout.currency, name: vendor.display_name, prefill: { email }, handler: onDone, modal: { ondismiss: () => setBusy(false) } }).open();
-    } catch { setError("The payment window could not open. Check your connection and try again."); setBusy(false); }
-  };
   return (
     <Card className="grid gap-4">
-      <h2 className="text-lg">Pay the advance</h2>
-      <p className="text-sm text-muted">You pay <strong className="text-ink">{formatINR(checkout.amount_paise)}</strong> now through Razorpay. Your booking is confirmed only after Razorpay's verified notice reaches us, usually within seconds.</p>
-      {error && <Notice tone="danger">{error}</Notice>}
-      <Button size="lg" block loading={busy} loadingText="Opening secure payment…" onClick={() => void pay()}>Pay {formatINR(checkout.amount_paise)}</Button>
+      <div className="grid gap-1"><h2 className="text-lg">Pay the advance</h2><p className="text-sm text-muted">Pay <strong className="text-ink">{formatINR(Number(booking.advance_paise))}</strong> now to confirm. The rest is due later, as agreed. Your booking is confirmed only once the payment is verified.</p></div>
+      <PaymentPanel bookingId={bookingId} token={token} amountPaise={Number(booking.advance_paise)} businessName={vendor.display_name} email={email.includes("@") ? email : undefined} onSettled={view => setBooking(current => ({ ...current, status: view.status, hold_expires_at: view.hold_expires_at }))} />
+      <Button asChild variant="ghost" size="sm" className="w-fit"><Link href={bookingHref}>Pay later from your booking page (while the time is held)</Link></Button>
     </Card>
   );
 }

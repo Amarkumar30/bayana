@@ -129,7 +129,7 @@ describe("cancellation with a refund preview", () => {
     expect((await call("POST", `/v1/bookings/${h.id}/cancel`, { token: h.token, body: {} })).status).toBe(409); // a hold just lapses
     await call("POST", `/v1/bookings/${h.id}/accept`, { cookie: h.cookie, body: { terms_hash: preview.sha256, accepted: true } });
     // An offline advance of Rs 200 recorded against the booking; 10 days out the 48-hour tier refunds 50%.
-    await pool.query("INSERT INTO ledger_entries(id,booking_id,kind,amount_paise,actor,reason) VALUES($1,$2,'PAYMENT',-20000,'vendor','offline advance')", [randomUUID(), h.id]);
+    expect((await call("POST", `/v1/vendor/bookings/${h.id}/offline-payments`, { cookie: v.ownerCookie, body: { kind: "balance", amount_paise: 20000, method: "upi", note: "UPI to the studio's own account" } })).status).toBe(201);
     await pool.query("UPDATE services SET cancellation_tiers='[]' WHERE id=$1", [v.serviceId]); // later edits do not apply
     const view = await call("GET", `/v1/bookings/${h.id}`, { token: h.token });
     expect(view.body).toMatchObject({ can_cancel: true, paid_paise: 20000, balance_due_paise: 80000, refund_preview: { refund_paise: 10000, refund_percent: 50, paid_paise: 20000 } });
@@ -137,6 +137,8 @@ describe("cancellation with a refund preview", () => {
     expect(cancelled.body).toMatchObject({ status: "CANCELLED", can_cancel: false });
     const event = (await pool.query("SELECT actor,reason,meta FROM booking_events WHERE booking_id=$1 AND to_status='CANCELLED'", [h.id])).rows[0];
     expect(event).toMatchObject({ actor: "customer", reason: "Plans changed", meta: { refund_paise: 10000, refund_percent: 50 } });
+    // Money paid offline is refunded by the vendor directly, so the refund row is "manual", for the previewed amount.
+    expect((await pool.query("SELECT status,amount_paise::int AS amount FROM refunds WHERE booking_id=$1", [h.id])).rows).toEqual([{ status: "manual", amount: 10000 }]);
     expect((await call("POST", `/v1/bookings/${h.id}/cancel`, { token: h.token, body: {} })).status).toBe(409);
   });
 });

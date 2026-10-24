@@ -6,14 +6,15 @@ export type BookingView = {
   vendor: { slug: string; display_name: string }; client_name: string;
   total_paise: number; advance_paise: number; paid_paise: number; balance_due_paise: number; payments_enabled: boolean; viewer: "customer" | "vendor";
   timeline: { to_status: string; created_at: string }[];
-  payments: { id: string; status: string; amount_paise: string; created_at: string }[];
+  payments: { id: string; provider: "razorpay" | "offline"; kind: "advance" | "balance"; status: string; amount_paise: number; method: string | null; note: string | null; created_at: string; verified_at: string | null; receipt: boolean }[];
+  refunds: { id: string; payment_id: string; amount_paise: number; status: "pending" | "processed" | "failed" | "manual"; reason: string; created_at: string }[];
+  can_pay: boolean;
   contract: { body: string; sha256: string; accepted_at: string } | null;
   contract_preview: { body: string; sha256: string } | null;
   cancellation_tiers: CancellationTier[];
   can_cancel: boolean;
   refund_preview: { refund_paise: number; refund_percent: number; paid_paise: number } | null;
 };
-export type Checkout = { key_id: string; order_id: string; amount_paise: number; currency: string };
-/** The private link header: the token never goes into a URL the API logs. */
+/** The private link travels in a header; only receipt downloads (plain links) put it in the query string, which the API never logs. */
 export const tokenHeaders = (token?: string | null): Record<string, string> => token ? { "X-Booking-Token": token } : {};
 export const bookingPageHref = (id: string, token?: string | null) => `/b/${id}${token ? `?t=${encodeURIComponent(token)}` : ""}`;

@@ -2,13 +2,13 @@ import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import { config } from "./config.js";
-import { pool, transaction } from "./database.js";
+import { pool } from "./database.js";
 import { currentUser, type SessionUser } from "./auth.js";
 import { authRouter, cookieToken } from "./auth-routes.js";
 import { bookingRouter, customerBookings } from "./booking-routes.js";
 import { publicRouter } from "./public-routes.js";
 import { vendorRouter } from "./vendor-routes.js";
-import { captureFromWebhook, verifyWebhook } from "./payments.js";
+import { processWebhookEvent, receiveWebhook } from "./payments/webhooks.js";
 import helmet from "helmet";
 import { log, requestId } from "./logger.js";
 import { errorBody, errorHandler, notFoundHandler } from "./errors.js";
@@ -22,7 +22,16 @@ app.set("trust proxy", config.TRUST_PROXY);
 app.use((req, res, next) => { res.locals.requestId = requestId(); res.setHeader("x-request-id", res.locals.requestId); next(); });
 app.use(helmet());
 app.use(cors({ origin: config.WEB_ORIGINS, credentials: true }));
-app.post("/v1/payments/razorpay/webhook", express.raw({ type: "application/json" }), async (req, res, next) => { try { const raw = req.body as Buffer; if (!verifyWebhook(raw, req.header("x-razorpay-signature"))) return res.status(400).json({ error: { code: "INVALID_WEBHOOK_SIGNATURE", message: "Invalid webhook signature", details: {} } }); const payload: unknown = JSON.parse(raw.toString("utf8")); const eventId = req.header("x-razorpay-event-id"); if (!eventId) return res.status(400).json({ error: { code: "MISSING_WEBHOOK_ID", message: "Missing webhook id", details: {} } }); await transaction(async db => { const inserted = await db.query("INSERT INTO webhook_events(provider_event_id,payload) VALUES($1,$2) ON CONFLICT DO NOTHING RETURNING provider_event_id", [eventId, payload]); if (inserted.rowCount) await captureFromWebhook(db, payload); }); res.status(204).end(); } catch (errorValue) { next(errorValue); } });
+// Razorpay webhooks need the raw body for the signature, so this route is mounted before express.json (SPEC 11.3).
+app.post("/webhooks/razorpay", express.raw({ type: "*/*", limit: "1mb" }), async (req, res, next) => {
+  try {
+    const result = await receiveWebhook(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), req.header("x-razorpay-signature"), req.header("x-razorpay-event-id"));
+    res.status(result.status).json(result.body);
+    // Answer first (Razorpay waits 5 seconds at most), then apply the event.
+    const eventId = result.process;
+    if (eventId) setImmediate(() => { processWebhookEvent(eventId).catch(error => log("error", "webhook.processing_crashed", { eventId, err: error instanceof Error ? error.message : String(error) })); });
+  } catch (errorValue) { next(errorValue); }
+});
 app.use(express.json({ limit: "32kb" }));
 app.use(rateLimit({ windowMs: 15 * 60_000, limit: 300, standardHeaders: "draft-8", legacyHeaders: false }));
 app.get("/health", (_req, res) => res.json({ ok: true }));

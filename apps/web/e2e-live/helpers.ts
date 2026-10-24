@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
 
 const api = () => process.env.E2E_API_URL ?? "http://127.0.0.1:4100";
+/**
+ * Every simulated visitor gets its own client address (the live API trusts one proxy hop, as on Render). Otherwise every
+ * run shares 127.0.0.1 and the per-IP hourly OTP cap, which lives in the database, trips after a few runs.
+ */
+export const freshIp = () => `10.${Math.floor(Math.random() * 250) + 1}.${Math.floor(Math.random() * 250) + 1}.${Math.floor(Math.random() * 250) + 1}`;
 const mailpit = () => process.env.E2E_MAILPIT_URL ?? "http://127.0.0.1:8025";
 
 /** The newest Bayana code sent to an address, read from Mailpit's API (subject "Your Bayana code: 123456"). */
@@ -21,7 +26,7 @@ export async function codeFor(email: string, after = 0): Promise<string> {
 }
 
 async function call(path: string, body: unknown, cookie?: string, method = "POST") {
-  const response = await fetch(`${api()}${path}`, { method, headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) });
+  const response = await fetch(`${api()}${path}`, { method, headers: { "content-type": "application/json", "x-forwarded-for": freshIp(), ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) });
   if (!response.ok) throw new Error(`${method} ${path} -> ${response.status} ${await response.text()}`);
   return response;
 }

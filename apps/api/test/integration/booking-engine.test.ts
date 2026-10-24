@@ -96,7 +96,7 @@ describe("hold creation", () => {
     const vendor = await bookableVendor();
     const first = await hold(holdInput(vendor, await client()));
     await pool.query("UPDATE bookings SET hold_expires_at=now()-interval '1 minute' WHERE id=$1", [first.id]);
-    await pool.query("INSERT INTO payments(id,booking_id,provider_order_id,status,amount_paise) VALUES($1,$2,$3,'CAPTURED',20000)", [randomUUID(), first.id, `order_${randomUUID()}`]);
+    await pool.query("INSERT INTO payments(id,booking_id,provider,provider_order_id,provider_payment_id,status,amount_paise,verified_at) VALUES($1,$2,'razorpay',$3,$4,'captured',20000,now())", [randomUUID(), first.id, `order_${randomUUID()}`, `pay_${randomUUID()}`]);
     await expect(hold(holdInput(vendor, await client()))).rejects.toMatchObject({ code: "SLOT_TAKEN", status: 409 });
   });
 
@@ -135,8 +135,13 @@ describe("transitionBooking (SPEC 10)", () => {
     const booking = await accepted(holdInput(await bookableVendor(), await client()));
     await expect(transaction(db => transitionBooking(db, booking.id, "COMPLETED", "vendor", "done"))).rejects.toMatchObject({ code: "INVALID_TRANSITION", status: 409 });
     await expect(transaction(db => transitionBooking(db, booking.id, "CONFIRMED", "vendor", "no proof"))).rejects.toMatchObject({ code: "INVALID_TRANSITION" });
+    // PY-05: a claim of payment is not enough; CONFIRMED needs a verified payment row of this booking.
+    await expect(transaction(db => transitionBooking(db, booking.id, "CONFIRMED", "vendor", "says paid", { payment_row_id: randomUUID() }))).rejects.toMatchObject({ code: "INVALID_TRANSITION" });
+    const owner = (await pool.query<{ owner_user_id: string }>("SELECT v.owner_user_id FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.id=$1", [booking.id])).rows[0].owner_user_id;
+    const paymentRow = randomUUID();
+    await pool.query("INSERT INTO payments(id,booking_id,provider,status,amount_paise,verified_at,method,note,recorded_by) VALUES($1,$2,'offline','captured',20000,now(),'cash','paid at the studio',$3)", [paymentRow, booking.id, owner]);
     await expect(transaction(db => transitionBooking(db, booking.id, "EXPIRED", "system", "early"))).rejects.toMatchObject({ code: "INVALID_TRANSITION" });
-    const confirmed = await transaction(db => transitionBooking(db, booking.id, "CONFIRMED", "vendor", "offline advance recorded", { offline_advance: true }));
+    const confirmed = await transaction(db => transitionBooking(db, booking.id, "CONFIRMED", "vendor", "offline advance recorded", { payment_row_id: paymentRow }));
     expect(confirmed.status).toBe("CONFIRMED");
     // CONFIRMED -> COMPLETED only after the booking has ended.
     await expect(transaction(db => transitionBooking(db, booking.id, "COMPLETED", "vendor", "done"))).rejects.toMatchObject({ code: "INVALID_TRANSITION" });

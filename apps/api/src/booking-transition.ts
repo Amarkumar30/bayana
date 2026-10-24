@@ -12,6 +12,8 @@ type Guard = (booking: Locked, meta: Meta, db: PoolClient) => Promise<string | n
 const holdLive = (booking: Locked) => booking.hold_expires_at && booking.hold_expires_at > new Date() ? null : "The hold has expired";
 const holdOver = (booking: Locked) => booking.hold_expires_at && booking.hold_expires_at < new Date() ? null : "The hold has not expired yet";
 const hasReason = (_booking: Locked, meta: Meta) => typeof meta.reason === "string" && meta.reason.trim() ? null : "A reason is required";
+/** PY-05: confirmation needs a verified payment row of this booking (online captured, or offline recorded by the vendor). */
+const paidBy = async (booking: Locked, meta: Meta, db: PoolClient) => typeof meta.payment_row_id === "string" && (await db.query("SELECT 1 FROM payments WHERE id=$1 AND booking_id=$2 AND status IN ('captured','partially_refunded') AND verified_at IS NOT NULL", [meta.payment_row_id, booking.id])).rowCount ? null : "No verified payment is recorded for this booking";
 
 /** SPEC 10 state table. EXPIRED_PAID is a legacy state (payment after expiry) that can only be cancelled. */
 const transitions: Record<BookingStatus, Partial<Record<BookingStatus, Guard>>> = {
@@ -21,8 +23,8 @@ const transitions: Record<BookingStatus, Partial<Record<BookingStatus, Guard>>> 
   },
   PENDING: {
     // Verified payment, an offline advance recorded by the vendor, or nothing to pay.
-    CONFIRMED: (booking, meta) => Number(booking.advance_paise) === 0 || typeof meta.payment_id === "string" || meta.offline_advance === true ? null : "No verified advance",
-    EXPIRED: async (booking, _meta, db) => holdOver(booking) ?? ((await db.query("SELECT 1 FROM payments WHERE booking_id=$1 AND status='CAPTURED'", [booking.id])).rowCount ? "A verified payment exists" : null),
+    CONFIRMED: (booking, meta, db) => Number(booking.advance_paise) === 0 ? null : paidBy(booking, meta, db),
+    EXPIRED: async (booking, _meta, db) => holdOver(booking) ?? ((await db.query("SELECT 1 FROM payments WHERE booking_id=$1 AND status='captured'", [booking.id])).rowCount ? "A verified payment exists" : null),
     CANCELLED: hasReason
   },
   CONFIRMED: {
@@ -30,7 +32,9 @@ const transitions: Record<BookingStatus, Partial<Record<BookingStatus, Guard>>> 
     CANCELLED: hasReason
   },
   EXPIRED_PAID: { CANCELLED: hasReason },
-  COMPLETED: {}, CANCELLED: {}, EXPIRED: {}
+  // A payment that lands after the hold expired (SPEC 11.4): re-claim the slot (the exclusion constraint is the guard), or park it for a refund.
+  EXPIRED: { CONFIRMED: paidBy, EXPIRED_PAID: paidBy },
+  COMPLETED: {}, CANCELLED: {}
 };
 
 /**
@@ -66,7 +70,7 @@ export async function expireOverdueHolds(db: PoolClient, vendorId: string | null
   let expired = 0;
   for (const { id } of due.rows) {
     // A pending booking with a verified payment is left for payment reconciliation instead of being expired.
-    const paid = await db.query("SELECT 1 FROM payments WHERE booking_id=$1 AND status='CAPTURED'", [id]);
+    const paid = await db.query("SELECT 1 FROM payments WHERE booking_id=$1 AND status='captured'", [id]);
     if (paid.rowCount) continue;
     await transitionBooking(db, id, "EXPIRED", "system", "hold expired");
     expired++;

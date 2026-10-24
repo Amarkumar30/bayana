@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
-import { chooseTimeAndDetails, codeFor, publishedVendor } from "./helpers";
+import { chooseTimeAndDetails, codeFor, freshIp, publishedVendor } from "./helpers";
 
 // Real browser, real API, real database (*_test), real email (Mailpit). Payments are disabled, as in local and beta.
+test.skip(process.env.E2E_PAYMENTS === "fake", "runs in the payments-disabled pass");
 
 test("a stranger books from the public page to the private booking link, on a phone", async ({ page }) => {
   const vendor = await publishedVendor();
@@ -49,7 +50,7 @@ test("a stranger books from the public page to the private booking link, on a ph
 
   // The private link works in a fresh browser with no session (token only); a tampered token does not.
   const url = page.url();
-  const stranger = await page.context().browser()!.newContext({ viewport: { width: 375, height: 812 } });
+  const stranger = await page.context().browser()!.newContext({ viewport: { width: 375, height: 812 }, extraHTTPHeaders: { "x-forwarded-for": freshIp() } });
   const other = await stranger.newPage();
   await other.goto(url);
   await expect(other.getByRole("heading", { level: 1, name: "Request received" })).toBeVisible();
@@ -60,7 +61,7 @@ test("a stranger books from the public page to the private booking link, on a ph
 
 test("two phones race for the same time: exactly one holds it, the other is told kindly and sent back to pick again", async ({ browser }) => {
   const vendor = await publishedVendor("Race Studio");
-  const contexts = await Promise.all([0, 1].map(() => browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, timezoneId: "Asia/Kolkata", locale: "en-IN" })));
+  const contexts = await Promise.all([0, 1].map(() => browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, timezoneId: "Asia/Kolkata", locale: "en-IN", extraHTTPHeaders: { "x-forwarded-for": freshIp() } })));
   const pages = await Promise.all(contexts.map(context => context.newPage()));
   const emails = pages.map(() => `e2e-racer-${randomUUID().slice(0, 8)}@example.test`);
   const asked = Date.now() - 1000;

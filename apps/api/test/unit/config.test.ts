@@ -35,7 +35,18 @@ describe("configuration", () => {
     expect(() => loadConfig({ ...base, ...live })).toThrow("LIVE_PAYMENTS_ACK");
     expect(() => loadConfig({ ...production, ...live })).toThrow("LIVE_PAYMENTS_ACK");
   });
-  it("aborts on a key and mode mismatch", () => expect(() => loadConfig({ ...base, PAYMENT_MODE: "test", RAZORPAY_KEY_ID: "rzp_live_x", RAZORPAY_KEY_SECRET: "s", RAZORPAY_WEBHOOK_SECRET: "w".repeat(16) })).toThrow("test key"));
+  it("aborts on a key and mode mismatch (PY-01)", () => {
+    expect(() => loadConfig({ ...base, PAYMENT_MODE: "test", RAZORPAY_KEY_ID: "rzp_live_x", RAZORPAY_KEY_SECRET: "s", RAZORPAY_WEBHOOK_SECRET: "w".repeat(16) })).toThrow("is a live key");
+    // A live key is refused even while payments are disabled, so a copied production file can never sit in a dev .env unnoticed.
+    expect(() => loadConfig({ ...base, PAYMENT_MODE: "disabled", RAZORPAY_KEY_ID: "rzp_live_x", RAZORPAY_KEY_SECRET: "s" })).toThrow("is a live key");
+    expect(() => loadConfig({ ...base, PAYMENT_MODE: "test", RAZORPAY_KEY_ID: "key_without_prefix", RAZORPAY_KEY_SECRET: "s" })).toThrow("must start with rzp_test_ or rzp_live_");
+    expect(() => loadConfig({ ...base, PAYMENT_MODE: "test", RAZORPAY_KEY_ID: "rzp_test_x" })).toThrow("RAZORPAY_KEY_SECRET: is required when PAYMENT_MODE=test");
+  });
+  it("lets test keys stay in the file while payments are disabled, and allows test mode before the webhook secret exists", () => {
+    expect(loadConfig({ ...base, PAYMENT_MODE: "disabled", RAZORPAY_KEY_ID: "rzp_test_x", RAZORPAY_KEY_SECRET: "s" }).PAYMENT_MODE).toBe("disabled");
+    expect(loadConfig({ ...base, PAYMENT_MODE: "test", RAZORPAY_KEY_ID: "rzp_test_x", RAZORPAY_KEY_SECRET: "s" }).PAYMENT_MODE).toBe("test");
+  });
+  it("allows the fake payment provider only under test", () => expect(() => loadConfig({ ...base, PAYMENT_PROVIDER: "fake" })).toThrow("fake only when NODE_ENV=test"));
   it("uses DATABASE_URL_TEST in test mode and requires a _test name", () => {
     const test = { ...base, NODE_ENV: "test", EMAIL_TRANSPORT: "capture" };
     expect(() => loadConfig(test)).toThrow("DATABASE_URL_TEST");

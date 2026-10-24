@@ -5,8 +5,9 @@ import { config } from "./config.js";
 import { slotsForDate } from "./availability.js";
 import { expireOverdueHolds, lockVendorSchedule, recordCreated, transitionBooking } from "./booking-transition.js";
 import { loadContract } from "./contract.js";
+import { paymentsEnabled } from "./payments/runtime.js";
+import { enqueueEmail } from "./email.js";
 import { AppError } from "./errors.js";
-import { createCheckoutOrder } from "./payments.js";
 import { loadSlotEngineInput } from "./slot-data.js";
 
 export { transitionBooking } from "./booking-transition.js";
@@ -53,7 +54,7 @@ export async function createHold(db: PoolClient, input: HoldInput) {
   }
   await recordCreated(db, id, "HELD", "client", "slot held");
   // The first WEB_ORIGINS entry is the canonical public site used in emailed links.
-  await db.query("INSERT INTO email_outbox(id,booking_id,recipient,subject,text_body) VALUES($1,$2,$3,$4,$5)", [randomUUID(), id, input.email, "Your time is held for 15 minutes", `We are holding ${service.name} for you while you review the terms.\nContinue or view your booking: ${bookingLink(id, accessToken)}`]);
+  await enqueueEmail(db, { bookingId: id, to: input.email, subject: "Your time is held for 15 minutes", text: `We are holding ${service.name} for you while you review the terms.\nContinue or view your booking: ${bookingLink(id, accessToken)}` });
   // The raw token is returned once, to the customer who created the hold; only its hash is stored.
   return { ...(await db.query(`SELECT ${bookingView} FROM bookings WHERE id=$1`, [id])).rows[0], access_token: accessToken };
 }
@@ -70,7 +71,7 @@ export async function acceptTerms(db: PoolClient, input: Acceptance) {
   const booking = found.rows[0];
   const signed = await db.query<{ sha256: string }>("SELECT sha256 FROM booking_contracts WHERE booking_id=$1", [input.bookingId]);
   // A repeated click after success returns the current state instead of failing.
-  if (signed.rowCount && signed.rows[0].sha256 === input.termsHash) return { booking: await bookingRow(db, input.bookingId), checkout: null };
+  if (signed.rowCount && signed.rows[0].sha256 === input.termsHash) return { booking: await bookingRow(db, input.bookingId) };
   if (booking.status === "EXPIRED" || booking.status === "HELD" && (!booking.hold_expires_at || booking.hold_expires_at <= new Date())) throw new AppError(409, "HOLD_EXPIRED", "Your hold has expired");
   if (booking.status !== "HELD") throw new AppError(409, "INVALID_TRANSITION", "This booking has already moved on");
   const contract = await loadContract(db, input.bookingId);
@@ -78,17 +79,15 @@ export async function acceptTerms(db: PoolClient, input: Acceptance) {
   await db.query("INSERT INTO booking_contracts(booking_id,body,sha256,accepted_email,ip,user_agent) VALUES($1,$2,$3,$4,$5,$6)", [input.bookingId, contract.text, contract.sha256, input.email, input.ip.slice(0, 100), input.userAgent.slice(0, 1000)]);
   const advance = Number(booking.advance_paise);
   // Without online payments the booking waits (PENDING) for the vendor to record an offline advance, so the hold lengthens.
-  const awaitsOffline = advance > 0 && config.PAYMENT_MODE === "disabled";
+  const awaitsOffline = advance > 0 && !paymentsEnabled();
   await db.query(`UPDATE bookings SET terms_accepted_at=now()${awaitsOffline ? ", hold_expires_at=now()+make_interval(hours => $2)" : ""} WHERE id=$1`, awaitsOffline ? [input.bookingId, config.REQUEST_HOLD_HOURS] : [input.bookingId]);
-  let checkout = null;
-  if (advance === 0 || awaitsOffline) await transitionBooking(db, input.bookingId, "PENDING", "client", advance === 0 ? "terms accepted, nothing to pay" : "terms accepted, advance to be arranged offline", { terms_sha256: contract.sha256 });
-  else checkout = await createCheckoutOrder(db, await bookingRow(db, input.bookingId));
+  await transitionBooking(db, input.bookingId, "PENDING", "client", advance === 0 ? "terms accepted, nothing to pay" : awaitsOffline ? "terms accepted, advance to be arranged offline" : "terms accepted, advance to be paid online", { terms_sha256: contract.sha256 });
   if (advance === 0) await transitionBooking(db, input.bookingId, "CONFIRMED", "system", "no advance required");
   const status = (await bookingRow(db, input.bookingId)).status as string;
-  const message = status === "CONFIRMED" ? "Your booking is confirmed." : awaitsOffline ? "Request received. The business will contact you to arrange the advance." : "Complete the advance payment to confirm your booking.";
-  await db.query("INSERT INTO email_outbox(id,booking_id,recipient,subject,text_body) VALUES($1,$2,$3,$4,$5)", [randomUUID(), input.bookingId, booking.client_email, `Booking ${status.toLowerCase()}: ${booking.service_name}`, `${message}\nYou agreed to the booking terms (reference ${contract.sha256.slice(0, 12)}). Use the link in your first email to view your booking.`]);
-  if (booking.owner_email) await db.query("INSERT INTO email_outbox(id,booking_id,recipient,subject,text_body) VALUES($1,$2,$3,$4,$5)", [randomUUID(), input.bookingId, booking.owner_email, "New booking request", `${booking.client_name} booked ${booking.service_name}.`]);
-  return { booking: await bookingRow(db, input.bookingId), checkout };
+  const message = status === "CONFIRMED" ? "Your booking is confirmed." : awaitsOffline ? "Request received. The business will contact you to arrange the advance." : "Pay the advance from your booking page to confirm it. The time stays held for 15 minutes.";
+  await enqueueEmail(db, { bookingId: input.bookingId, to: booking.client_email, subject: `Booking ${status.toLowerCase()}: ${booking.service_name}`, text: `${message}\nYou agreed to the booking terms (reference ${contract.sha256.slice(0, 12)}). Use the link in your first email to view your booking.` });
+  if (booking.owner_email) await enqueueEmail(db, { bookingId: input.bookingId, to: booking.owner_email, subject: "New booking request", text: `${booking.client_name} booked ${booking.service_name}.` });
+  return { booking: await bookingRow(db, input.bookingId) };
 }
 const bookingRow = async (db: PoolClient, id: string) => (await db.query(`SELECT ${bookingView} FROM bookings WHERE id=$1`, [id])).rows[0] as Record<string, unknown> & { id: string; status: string };
 

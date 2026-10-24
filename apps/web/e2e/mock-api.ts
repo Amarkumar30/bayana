@@ -65,7 +65,7 @@ function publicRoute(route: Route, path: string) {
   if (path === `/v1/bookings/${SAMPLE_BOOKING_ID}`) return route.fulfill({ json: {
     id: SAMPLE_BOOKING_ID, status: "PENDING", service_name: "Portrait session", duration_minutes: 90, starts_at: `${isoDay(9)}T04:30:00.000Z`, ends_at: `${isoDay(9)}T06:00:00.000Z`, hold_expires_at: `${isoDay(2)}T04:30:00.000Z`, timezone: "Asia/Kolkata",
     vendor: { slug: "studio-sunday", display_name: "Studio Sunday" }, client_name: "Asha Rao", total_paise: 800000, advance_paise: 200000, paid_paise: 0, balance_due_paise: 800000, payments_enabled: false, viewer: "customer",
-    timeline: [{ to_status: "HELD", created_at: `${isoDay(0)}T05:00:00.000Z` }, { to_status: "PENDING", created_at: `${isoDay(0)}T05:04:00.000Z` }], payments: [],
+    timeline: [{ to_status: "HELD", created_at: `${isoDay(0)}T05:00:00.000Z` }, { to_status: "PENDING", created_at: `${isoDay(0)}T05:04:00.000Z` }], payments: [], refunds: [], can_pay: false,
     contract: { body: ["Booking", "Business: Studio Sunday", "Service: Portrait session", "", "Booking terms", "Advance confirms your date."].join("\n"), sha256: "a".repeat(64), accepted_at: `${isoDay(0)}T05:04:00.000Z` }, contract_preview: null,
     cancellation_tiers: [{ min_hours_before: 168, refund_percent: 100 }, { min_hours_before: 48, refund_percent: 50 }], can_cancel: true, refund_preview: { refund_paise: 0, refund_percent: 100, paid_paise: 0 }
   } });

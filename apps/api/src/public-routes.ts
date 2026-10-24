@@ -3,7 +3,7 @@ import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { advancePaise } from "@bayana/shared";
 import { monthSummary, slotsForDate } from "./availability.js";
-import { config } from "./config.js";
+import { paymentsEnabled } from "./payments/runtime.js";
 import { pool } from "./database.js";
 import { AppError } from "./errors.js";
 import { loadSlotEngineInput } from "./slot-data.js";
@@ -30,7 +30,7 @@ publicRouter.get("/:slug", limit(120), handle(async (req, res) => {
     pool.query("SELECT v.slug::text AS canonical_slug,v.slug::text AS slug,v.display_name,v.city,v.bio,v.service_area,v.timezone,v.terms,v.cancellation_policy,v.rescheduling_policy,v.phone_required,CASE WHEN v.public_contact_email THEN v.contact_email::text END AS contact_email,CASE WHEN v.public_contact_phone THEN v.contact_phone END AS contact_phone,COALESCE(array_agg(c.label ORDER BY c.label) FILTER (WHERE c.slug IS NOT NULL),'{}') AS categories FROM vendors v LEFT JOIN vendor_categories vc ON vc.vendor_id=v.id LEFT JOIN categories c ON c.slug=vc.category_slug WHERE v.id=$1 GROUP BY v.id", [id]),
     pool.query<{ price_paise: string; advance_type: "NONE" | "PERCENT" | "FIXED"; advance_value: number }>("SELECT id,name,description,price_paise,duration_minutes,booking_mode,advance_type,advance_value,customer_details_prompt,cancellation_tiers FROM services WHERE vendor_id=$1 AND active ORDER BY sort_order,created_at", [id])
   ]);
-  res.json({ ...vendor.rows[0], payments_enabled: config.PAYMENT_MODE !== "disabled", services: services.rows.map(service => { const price = Number(service.price_paise); const advance = advancePaise(price, service.advance_type, service.advance_value); return { ...service, advance_paise: advance, remaining_paise: price - advance }; }) });
+  res.json({ ...vendor.rows[0], payments_enabled: paymentsEnabled(), services: services.rows.map(service => { const price = Number(service.price_paise); const advance = advancePaise(price, service.advance_type, service.advance_value); return { ...service, advance_paise: advance, remaining_paise: price - advance }; }) });
 }));
 publicRouter.get("/:slug/availability/month", limit(60), handle(async (req, res) => {
   const query = z.object({ service_id: z.string().uuid(), month }).parse(req.query);

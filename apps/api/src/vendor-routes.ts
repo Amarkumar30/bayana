@@ -11,6 +11,7 @@ import { cookieToken } from "./auth-routes.js";
 import { pool, transaction } from "./database.js";
 import { expireOverdueHolds, lockVendorSchedule } from "./booking-transition.js";
 import { AppError } from "./errors.js";
+import { recordOfflinePayment } from "./payments/service.js";
 
 export type VendorRow = { id: string; slug: string; owner_user_id: string; published: boolean; timezone: string };
 const notFound = (what: string) => new AppError(404, "NOT_FOUND", `${what} not found`);
@@ -207,6 +208,15 @@ vendorRouter.delete("/availability/blocked-periods/:id", requireVendor, handle(a
   const result = await pool.query("DELETE FROM blocked_periods WHERE id=$1 AND vendor_id=$2 RETURNING id", [uuidParam(req.params.id, "Blocked period"), vendorOf(res).id]);
   if (!result.rowCount) throw notFound("Blocked period");
   res.status(204).end();
+}));
+
+// ---- Offline payments (PY-10) -------------------------------------------------------------------------------
+const offlinePaymentSchema = z.object({ kind: z.enum(["advance", "balance"]), amount_paise: z.number().int().positive().max(100_000_000), method: z.enum(["cash", "upi", "bank_transfer", "other"]), note: z.string().trim().min(3, "Add a short note, for example who paid and how.").max(500) }).strict();
+/** The vendor records money received outside Bayana (cash, UPI to their own account). Audited, tagged offline in the ledger. */
+vendorRouter.post("/bookings/:id/offline-payments", requireVendor, handle(async (req, res) => {
+  const body = offlinePaymentSchema.parse(req.body);
+  const result = await recordOfflinePayment({ vendorId: vendorOf(res).id, userId: userOf(res).id, bookingId: uuidParam(req.params.id, "Booking"), kind: body.kind, amountPaise: body.amount_paise, method: body.method, note: body.note });
+  res.status(201).json(result);
 }));
 
 // ---- Publishing ---------------------------------------------------------------------------------------------
