@@ -9,7 +9,7 @@ import { EmptyState, LoadingState, Money, Skeleton, StatusBadge } from "@/compon
 const api=env.NEXT_PUBLIC_API_URL;
 type ClientBooking={id:string;event_date:string;status:string;display_name:string;balance_due_paise:string|number};
 export default function MyBookings(){const[data,setData]=useState<{bookings:ClientBooking[]}>();const[error,setError]=useState("");useEffect(()=>{fetch(`${api}/v1/client/bookings`,{credentials:"include"}).then(async r=>{if(!r.ok)throw new Error("Sign in to view your bookings.");setData(await r.json())}).catch(e=>setError(e.message))},[]);
-  if(error)return <EmptyState icon={<CalendarDays/>} title={error} description="Use the email you booked with. We'll send you a one-time code." action={<Button asChild><Link href="/auth?role=client">Client sign in</Link></Button>}/>;
+  if(error)return <EmptyState icon={<CalendarDays/>} title={error} description="Use the email you booked with. We'll send you a one-time code." action={<Button asChild><Link href="/login?next=/my-bookings">Client sign in</Link></Button>}/>;
   if(!data)return <LoadingState label="Loading bookings…" className="grid gap-3"><Skeleton className="h-9 w-48"/>{[0,1,2].map(i=><Skeleton key={i} className="h-20 rounded-card"/>)}</LoadingState>;
   return <div><PageHeader eyebrow="Client account" title="Your bookings"/>
     {data.bookings.length===0?<EmptyState icon={<CalendarDays/>} title="You have no bookings yet" description="When you book a service through a Bayana link, it will appear here."/>:

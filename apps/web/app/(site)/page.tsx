@@ -25,7 +25,7 @@ export default function Home() {
           <p className="max-w-xl text-lg text-muted">Bayana gives independent professionals in India one link where clients choose a service, pick a time, accept your terms and pay an advance, all before you lift a finger.</p>
           <div className="flex flex-col gap-3 sm:flex-row">
             <Button asChild size="lg"><Link href="/dashboard">Set up your page</Link></Button>
-            <Button asChild size="lg" variant="secondary"><Link href="/auth?next=/dashboard">Sign in to your workspace</Link></Button>
+            <Button asChild size="lg" variant="secondary"><Link href="/login?next=/dashboard">Sign in to your workspace</Link></Button>
           </div>
         </div>
         <Card className="relative grid gap-5 p-5 sm:p-6" aria-label="Example booking summary">

@@ -20,7 +20,7 @@ for (const route of [...routes, ...states]) {
   });
 }
 
-for (const route of ["/design", "/", "/auth", "/dashboard", "/dashboard/bookings", "/b/x"]) {
+for (const route of ["/design", "/", "/login", "/signup", "/forgot", "/dashboard", "/dashboard/bookings", "/b/x"]) {
   test(`${route} renders without console errors or hydration mismatches`, async ({ page }) => {
     const errors: string[] = [];
     page.on("console", message => { if (message.type() === "error") errors.push(message.text().slice(0, 300)); });
@@ -35,7 +35,7 @@ for (const route of ["/design", "/", "/auth", "/dashboard", "/dashboard/bookings
 
 test("primary actions meet the 44px touch target on phones", async ({ page }, info) => {
   test.skip(info.project.name !== "mobile-375", "touch targets are a phone concern");
-  for (const route of ["/", "/auth", "/dashboard/bookings", "/design"]) {
+  for (const route of ["/", "/login", "/signup", "/dashboard/bookings", "/design"]) {
     await mockApi(page); await page.goto(route);
     // A switch's target is its whole labelled row (the <label for> toggles it), so measure that row instead of the 28px track.
     const small = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>("main button, main a[class*='min-h'], main input:not([type=checkbox]):not([type=hidden]), main select")]

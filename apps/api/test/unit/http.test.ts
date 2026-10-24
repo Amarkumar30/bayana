@@ -40,7 +40,7 @@ describe("central error handler", () => {
     expect(await response.json()).toEqual({ error: { code: "NOT_FOUND", message: "Not found", details: {} } });
   });
   it("maps Zod failures to 400 VALIDATION_ERROR", async () => {
-    const response = await fetch(`${real.url}/v1/auth/signup/start`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "not-an-email" }) });
+    const response = await fetch(`${real.url}/v1/auth/otp/request`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "not-an-email", purpose: "signup" }) });
     expect(response.status).toBe(400);
     const body = await response.json();
     expect(body).toEqual(errorShape);

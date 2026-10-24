@@ -30,5 +30,7 @@ export function errorHandler(errorValue: unknown, req: Request, res: Response, _
   // The stack is logged server-side only for unexpected failures; clients never receive it.
   if (status >= 500) log("error", "request.failed", { ...fields, err: errorValue instanceof Error ? { name: errorValue.name, message: errorValue.message, stack: errorValue.stack } : String(errorValue) });
   else log("warn", "request.rejected", fields);
+  const retryAfter = body.error.details.retryAfterSeconds;
+  if (status === 429 && typeof retryAfter === "number") res.set("Retry-After", String(retryAfter));
   res.status(status).json(body);
 }
