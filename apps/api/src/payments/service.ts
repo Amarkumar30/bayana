@@ -3,7 +3,8 @@ import type { Pool, PoolClient } from "pg";
 import { formatINR } from "@bayana/shared";
 import { lockVendorSchedule, transitionBooking } from "../booking-transition.js";
 import { pool, transaction } from "../database.js";
-import { enqueueEmail } from "../email.js";
+import { bookingFacts, notifyConfirmed, notifyRefundIssued, notifyReview } from "../notifications/booking-mail.js";
+import { enqueue, PRIORITY } from "../notifications/outbox.js";
 import { AppError } from "../errors.js";
 import { log } from "../logger.js";
 import type { ProviderPayment, ProviderRefund } from "./provider.js";
@@ -71,6 +72,7 @@ export async function verifyCheckout(bookingId: string, input: { orderId: string
 async function flagMismatch(bookingId: string | null, source: string, payment: ProviderPayment, problem: string) {
   log("warn", "payment.mismatch", { bookingId, source, problem, providerPaymentId: payment.id, providerOrderId: payment.order_id });
   if (bookingId) await audit(pool, "payment.mismatch_review", bookingId, { source, problem, provider_payment_id: payment.id, provider_order_id: payment.order_id, amount: payment.amount, currency: payment.currency });
+  await notifyReview(pool, `Payment not applied: ${problem}`, bookingId, [`Source ${source}`, `Razorpay payment ${payment.id}`, `Order ${payment.order_id}`, `Amount ${payment.amount} ${payment.currency}`], `mismatch:${payment.id}`);
 }
 
 /** A failed or authorized-only attempt on an open order; a captured order is never moved back. */
@@ -104,7 +106,7 @@ export async function applyCapturedPayment(orderId: string, payment: ProviderPay
     const meta = { payment_row_id: row.id, provider_payment_id: payment.id, source };
     if (row.booking_status === "PENDING") {
       await transitionBooking(db, row.booking_id, "CONFIRMED", "razorpay", `advance verified (${source})`, meta);
-      await enqueueEmail(db, { bookingId: row.booking_id, to: row.client_email, subject: `Booking confirmed: ${row.service_name}`, text: `We received your advance of ${formatINR(Number(row.amount_paise))}. Your booking is confirmed.` });
+      await notifyConfirmed(db, row.booking_id);
       return { outcome: "confirmed", bookingId: row.booking_id };
     }
     if (row.booking_status === "EXPIRED") {
@@ -116,7 +118,7 @@ export async function applyCapturedPayment(orderId: string, payment: ProviderPay
         try {
           await transitionBooking(db, row.booking_id, "CONFIRMED", "razorpay", "late payment, slot re-claimed", { ...meta, late: true });
           await db.query("RELEASE SAVEPOINT reclaim");
-          await enqueueEmail(db, { bookingId: row.booking_id, to: row.client_email, subject: `Booking confirmed: ${row.service_name}`, text: `Your payment arrived after the hold ended, and the time was still free, so your booking is confirmed.` });
+          await notifyConfirmed(db, row.booking_id);
           return { outcome: "reclaimed", bookingId: row.booking_id };
         } catch (error) {
           if ((error as { code?: string }).code !== "23P01") throw error;
@@ -128,7 +130,7 @@ export async function applyCapturedPayment(orderId: string, payment: ProviderPay
     // Late with the slot gone, or money for a booking that is no longer waiting for it: refund in full and flag for review.
     const refundIds = await createRefundRows(db, row.booking_id, Number(row.amount_paise), "Paid after the booking could no longer be held; refunded in full", [row.id]);
     await audit(db, "payment.auto_refund_review", row.booking_id, { provider_payment_id: payment.id, booking_status: row.booking_status, amount_paise: Number(row.amount_paise) });
-    await enqueueEmail(db, { bookingId: row.booking_id, to: row.client_email, subject: "Your payment is being refunded", text: `Your payment of ${formatINR(Number(row.amount_paise))} reached us after the time was no longer available, so we are refunding it in full. Refunds usually reach you in 5 to 7 working days.` });
+    await notifyReview(db, "A late payment found its time taken and is being refunded in full", row.booking_id, [`Razorpay payment ${payment.id}`, `Amount ${formatINR(Number(row.amount_paise))}`, `Booking status was ${row.booking_status}`], `late:${payment.id}`);
     return { outcome: "refund_pending", bookingId: row.booking_id, refundIds };
   });
   if (result.outcome === "mismatch") await flagMismatch(result.bookingId, source, payment, result.problem ?? "mismatch");
@@ -158,7 +160,8 @@ export async function recordOfflinePayment(input: { vendorId: string; userId: st
       await audit(db, "booking.manual_confirmation", input.bookingId, { payment_id: paymentId }, input.userId);
       confirmed = true;
     }
-    await enqueueEmail(db, { bookingId: input.bookingId, to: booking.client_email, subject: confirmed ? `Booking confirmed: ${booking.service_name}` : `Payment recorded: ${booking.service_name}`, text: `The business recorded your ${input.kind} payment of ${formatINR(input.amountPaise)}.${confirmed ? " Your booking is confirmed." : ""}` });
+    const { facts } = await bookingFacts(db, input.bookingId);
+    await enqueue(db, "payment_recorded", booking.client_email, { ...facts, amountPaise: input.amountPaise, kind: input.kind, confirmed }, { bookingId: input.bookingId, priority: PRIORITY.urgent, dedupeKey: `payment:${paymentId}`, senderName: facts.businessName });
     return { payment_id: paymentId, confirmed };
   });
 }
@@ -203,6 +206,7 @@ export async function issueRefund(refundId: string) {
       const message = error instanceof Error ? error.message : "Refund failed";
       await db.query("UPDATE refunds SET status='failed',error=$2 WHERE id=$1", [refundId, message.slice(0, 500)]);
       await audit(db, "refund.failed_review", refund.booking_id, { refund_id: refundId, error: message.slice(0, 200) });
+      await notifyReview(db, "A refund could not be issued", refund.booking_id, [`Refund ${refundId}`, `Amount ${formatINR(Number(refund.amount_paise))}`, `Error: ${message.slice(0, 200)}`], `refund-failed:${refundId}`);
       log("error", "refund.failed", { refundId, bookingId: refund.booking_id, err: message.slice(0, 200) });
     }
   });
@@ -215,6 +219,7 @@ export async function applyRefundProcessed(db: PoolClient, refundId: string) {
   const refund = updated.rows[0];
   await db.query("INSERT INTO ledger_entries(id,booking_id,payment_id,refund_id,kind,amount_paise,actor,reason,channel) VALUES($1,$2,$3,$4,'REFUND',$5,'razorpay','refund processed','razorpay')", [randomUUID(), refund.booking_id, refund.payment_id, refundId, Number(refund.amount_paise)]);
   await db.query(`UPDATE payments p SET status = CASE WHEN (SELECT SUM(amount_paise) FROM refunds WHERE payment_id=p.id AND status='processed') >= p.amount_paise THEN 'refunded' ELSE 'partially_refunded' END, updated_at=now() WHERE p.id=$1`, [refund.payment_id]);
+  await notifyRefundIssued(db, refundId);
   return true;
 }
 
@@ -231,7 +236,10 @@ export async function applyProviderRefund(entity: ProviderRefund, status: "proce
     if (status === "processed") await applyRefundProcessed(db, refundId);
     else {
       const failed = await db.query("UPDATE refunds SET status='failed',error='Razorpay reported the refund failed' WHERE id=$1 AND status='pending' RETURNING id", [refundId]);
-      if (failed.rowCount) await audit(db, "refund.failed_review", payment.rows[0].booking_id, { refund_id: refundId, provider_refund_id: entity.id });
+      if (failed.rowCount) {
+        await audit(db, "refund.failed_review", payment.rows[0].booking_id, { refund_id: refundId, provider_refund_id: entity.id });
+        await notifyReview(db, "Razorpay reported a refund failed", payment.rows[0].booking_id, [`Refund ${entity.id}`, `Amount ${formatINR(entity.amount)}`], `refund-failed:${entity.id}`);
+      }
     }
   });
 }

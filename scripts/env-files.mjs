@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 export const envFiles = [
-  { app: "api", example: "apps/api/.env.example", target: "apps/api/.env", generated: ["SESSION_SECRET", "OTP_PEPPER"], checker: "apps/api/src/check-env.ts" },
+  { app: "api", example: "apps/api/.env.example", target: "apps/api/.env", generated: ["SESSION_SECRET", "OTP_PEPPER", "TICK_SECRET"], checker: "apps/api/src/check-env.ts" },
   { app: "web", example: "apps/web/.env.example", target: "apps/web/.env.local", generated: [], checker: "apps/web/scripts/check-env.ts" }
 ];
 

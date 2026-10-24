@@ -10,6 +10,7 @@ import { publicRouter } from "./public-routes.js";
 import { vendorRouter } from "./vendor-routes.js";
 import { processWebhookEvent, receiveWebhook } from "./payments/webhooks.js";
 import helmet from "helmet";
+import { runNightly, runTick, tickAuthorized } from "./jobs.js";
 import { log, requestId } from "./logger.js";
 import { errorBody, errorHandler, notFoundHandler } from "./errors.js";
 
@@ -41,6 +42,18 @@ app.use("/v1/auth", authRouter);
 app.use("/v1/vendors", publicRouter);
 app.use("/v1/vendor", vendorRouter);
 app.use("/v1/bookings", bookingRouter);
+
+// Scheduled jobs (SPEC 15.3), called by GitHub Actions with Authorization: Bearer <TICK_SECRET>.
+app.post("/internal/jobs/:kind", async (req, res, next) => {
+  try {
+    const kind = req.params.kind;
+    if (kind !== "tick" && kind !== "nightly") return notFoundHandler(req, res);
+    if (!config.TICK_SECRET) return res.status(503).json(errorBody("JOBS_NOT_CONFIGURED", "TICK_SECRET is not set"));
+    if (!tickAuthorized(req.header("authorization"))) return res.status(401).json(errorBody("AUTHENTICATION_REQUIRED", "A valid job secret is required"));
+    const result = kind === "tick" ? await runTick() : await runNightly();
+    res.status(result.ok ? 200 : 500).json(result);
+  } catch (errorValue) { next(errorValue); }
+});
 
 app.get("/v1/client/bookings", async (req, res, next) => { try { const user = await requireUser(req, res, "CLIENT"); if (!user) return; res.json({ bookings: await customerBookings(user) }); } catch (errorValue) { next(errorValue); } });
 app.use(notFoundHandler);

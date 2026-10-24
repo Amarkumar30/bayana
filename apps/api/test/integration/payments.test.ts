@@ -236,7 +236,8 @@ describe("late payment after the hold expired (PY-06)", () => {
     expect(await status(other.id)).toBe("PENDING");
     expect((await pool.query("SELECT status,amount_paise::int AS amount,provider_refund_id IS NOT NULL AS sent FROM refunds WHERE booking_id=$1", [late.id])).rows).toEqual([{ status: "processed", amount: 20000, sent: true }]);
     expect([...fake.refunds.values()].map(refund => refund.amount)).toEqual([20000]);
-    expect((await pool.query("SELECT 1 FROM email_outbox WHERE booking_id=$1 AND subject='Your payment is being refunded'", [late.id])).rowCount).toBe(1);
+    expect((await pool.query("SELECT 1 FROM email_outbox WHERE booking_id=$1 AND template='refund_issued'", [late.id])).rowCount).toBe(1);
+    expect((await pool.query("SELECT 1 FROM email_outbox WHERE booking_id=$1 AND template='payment_review'", [late.id])).rowCount).toBe(1);
     expect((await pool.query("SELECT 1 FROM audit_logs WHERE resource_id=$1 AND action='payment.auto_refund_review'", [late.id])).rowCount).toBe(1);
   });
 });

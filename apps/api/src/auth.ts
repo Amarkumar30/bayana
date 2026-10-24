@@ -2,7 +2,7 @@ import { createHash, createHmac, randomBytes, randomInt, randomUUID, timingSafeE
 import argon2 from "argon2";
 import type { Pool, PoolClient } from "pg";
 import { config } from "./config.js";
-import { sendEmail } from "./email.js";
+import { enqueue, PRIORITY } from "./notifications/outbox.js";
 import { AppError } from "./errors.js";
 import { log } from "./logger.js";
 
@@ -57,11 +57,13 @@ export async function createOtp(db: Pool | PoolClient, emailAddress: string, pur
   return code;
 }
 
-/** Sent after the HTTP response so SMTP latency never differs between known and unknown emails. Failures are logged, not swallowed silently. */
-export function dispatchOtpEmail(to: string, code: string, purpose: Purpose) {
+/**
+ * Queues the code email (priority 0) in the caller's transaction. The route sends it right after the HTTP response
+ * (kickUrgent), so SMTP latency never differs between known and unknown emails, and an SMTP outage only delays it.
+ */
+export async function queueOtpEmail(db: PoolClient, to: string, code: string, purpose: Purpose) {
   const action = purpose === "signup" ? "finish creating your account" : purpose === "reset" ? "reset your password" : purpose === "booking_verify" ? "confirm your booking email" : "sign in";
-  void sendEmail({ from: config.EMAIL_FROM ?? "", to, subject: `Your Bayana code: ${code}`, text: `Use ${code} to ${action}. It expires in ${OTP_TTL_MINUTES} minutes. If you did not ask for it, you can ignore this email.`, html: `<p>Use <strong>${code}</strong> to ${action}.</p><p>It expires in ${OTP_TTL_MINUTES} minutes. If you did not ask for it, you can ignore this email.</p>` })
-    .catch(error => log("error", "otp.email_failed", { purpose, err: error instanceof Error ? error.message : String(error) }));
+  await enqueue(db, "otp", to, { code, action, minutes: OTP_TTL_MINUTES }, { priority: PRIORITY.urgent });
 }
 
 /**

@@ -10,6 +10,8 @@ import { config } from "./config.js";
 import { loadContract, parseSnapshot } from "./contract.js";
 import { pool, transaction } from "./database.js";
 import { AppError } from "./errors.js";
+import { notifyCancelled } from "./notifications/booking-mail.js";
+import { kickUrgent } from "./notifications/outbox.js";
 import { receiptData, receiptPdf } from "./payments/receipt.js";
 import { paymentsEnabled } from "./payments/runtime.js";
 import { createPaymentOrder, createRefundRows, issueRefund, paidSql, verifyCheckout } from "./payments/service.js";
@@ -41,6 +43,7 @@ bookingRouter.post("/", handle(async (req, res) => {
   if (!key || !z.string().uuid().safeParse(key).success) throw new AppError(400, "VALID_IDEMPOTENCY_KEY_REQUIRED", "A valid idempotency key is required");
   const booking = await transaction(db => createHold(db, { slug: body.slug, date: body.date, name: body.name, email: user.email, clientUserId: user.id, phone: body.phone, notes: body.notes, referral: body.referral, serviceId: body.service_id, startsAt: body.starts_at, key }));
   res.status(201).json({ booking });
+  kickUrgent();
 }));
 
 bookingRouter.get("/:id", handle(async (req, res) => {
@@ -57,6 +60,7 @@ bookingRouter.post("/:id/accept", handle(async (req, res) => {
   const email = access.user?.role === "CLIENT" ? access.user.email : owner.rows[0].client_email;
   const result = await transaction(db => acceptTerms(db, { bookingId: access.id, termsHash: body.terms_hash, email, ip: req.ip ?? "", userAgent: req.header("user-agent") ?? "" }));
   res.json(result);
+  kickUrgent();
 }));
 
 bookingRouter.post("/:id/cancel", handle(async (req, res) => {
@@ -70,10 +74,13 @@ bookingRouter.post("/:id/cancel", handle(async (req, res) => {
   const preview = view.refund_preview;
   const pending = await transaction(async db => {
     await transitionBooking(db, access.id, "CANCELLED", "customer", body.reason || "cancelled by customer", { refund_paise: preview.refund_paise, refund_percent: preview.refund_percent, paid_paise: preview.paid_paise });
-    return preview.refund_paise > 0 ? createRefundRows(db, access.id, preview.refund_paise, `Customer cancelled: ${preview.refund_percent}% of the advance per the agreed tiers`) : [];
+    const online = preview.refund_paise > 0 ? await createRefundRows(db, access.id, preview.refund_paise, `Customer cancelled: ${preview.refund_percent}% of the advance per the agreed tiers`) : [];
+    await notifyCancelled(db, access.id, { cancelledBy: "customer", reason: body.reason || "No reason given", refundPaise: preview.refund_paise, refundManual: preview.refund_paise > 0 && online.length === 0 });
+    return online;
   });
   for (const refundId of pending) await issueRefund(refundId);
   res.json(await bookingView(access.id, access.isVendor));
+  kickUrgent();
 }));
 
 // ---- Payments (SPEC 11.2) -------------------------------------------------------------------------------------------
@@ -90,6 +97,7 @@ bookingRouter.post("/:id/payment-verify", handle(async (req, res) => {
   const result = await verifyCheckout(access.id, { orderId: body.razorpay_order_id, paymentId: body.razorpay_payment_id, signature: body.razorpay_signature });
   // Authorized but not captured does not confirm; the payment.captured webhook (or a later verify) finishes it.
   res.status(result.outcome === "authorized" || result.outcome === "pending" ? 202 : 200).json({ outcome: result.outcome, booking: await bookingView(access.id, false) });
+  kickUrgent();
 }));
 bookingRouter.get("/:id/receipts/:paymentId", handle(async (req, res) => {
   const access = await bookingAccess(req);

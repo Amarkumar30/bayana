@@ -101,7 +101,7 @@ describe("pnpm.cmd setup:env", () => {
   it("creates missing files, generates secrets without printing them", () => {
     const root = sandbox(); const result = run(root);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("CREATED  apps/api/.env from apps/api/.env.example (generated random SESSION_SECRET and OTP_PEPPER)");
+    expect(result.stdout).toContain("CREATED  apps/api/.env from apps/api/.env.example (generated random SESSION_SECRET, OTP_PEPPER and TICK_SECRET)");
     expect(result.stdout).toContain("CREATED  apps/web/.env.local from apps/web/.env.example");
     const api = readFileSync(path.join(root, "apps/api/.env"), "utf8");
     const sessionSecret = /^SESSION_SECRET=(.+)$/m.exec(api)?.[1] ?? "";

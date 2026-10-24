@@ -25,7 +25,7 @@ for (const entry of envFiles) {
   try {
     // "wx" fails if the file appeared since the check above, so an existing file can never be overwritten.
     writeFileSync(target, content, { flag: "wx" });
-    console.log(`CREATED  ${entry.target} from ${entry.example}${generated.length ? ` (generated random ${generated.join(" and ")})` : ""}`);
+    console.log(`CREATED  ${entry.target} from ${entry.example}${generated.length ? ` (generated random ${generated.length > 1 ? `${generated.slice(0, -1).join(", ")} and ${generated.at(-1)}` : generated[0]})` : ""}`);
   } catch (error) {
     if (error && error.code === "EEXIST") { console.log(`KEPT     ${entry.target} already exists; not changed`); continue; }
     throw error;

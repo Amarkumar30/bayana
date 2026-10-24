@@ -4,8 +4,9 @@ import { z } from "zod";
 import { config } from "./config.js";
 import { pool, transaction } from "./database.js";
 import { AppError, errorBody } from "./errors.js";
+import { kickUrgent } from "./notifications/outbox.js";
 import {
-  checkOtp, consumeOtp, createOtp, currentUser, dispatchOtpEmail, event, findUserByEmail, hashPassword, invalidCredentials, invalidOtp, listSessions,
+  checkOtp, consumeOtp, createOtp, currentUser, queueOtpEmail, event, findUserByEmail, hashPassword, invalidCredentials, invalidOtp, listSessions,
   normalizeEmail, revokeAllSessions, revokeSessionById, revokeSessionToken, sessionCookieName, startSession, validatePassword, verifyPassword, type PublicUser
 } from "./auth.js";
 
@@ -49,9 +50,12 @@ export const authRouter = Router();
 authRouter.post("/otp/request", ...guard(20, 5), async (req, res, next) => {
   try {
     const body = schemas.otpRequest.parse(req.body);
-    const result = await transaction(async db => ({ code: await createOtp(db, body.email, body.purpose, req.ip), user: await findUserByEmail(db, body.email) }));
+    await transaction(async db => {
+      const code = await createOtp(db, body.email, body.purpose, req.ip);
+      if (body.purpose === "signup" || await findUserByEmail(db, body.email)) await queueOtpEmail(db, body.email, code, body.purpose);
+    });
     res.status(202).json({ ok: true });
-    if (body.purpose === "signup" || result.user) dispatchOtpEmail(body.email, result.code, body.purpose);
+    kickUrgent();
   } catch (error) { next(error); }
 });
 
@@ -152,7 +156,7 @@ authRouter.delete("/sessions/:id", perIp(60), async (req, res, next) => {
 
 /** Customer booking verification: unchanged behaviour (verified email gets a CLIENT account and session), now on otp_codes. */
 authRouter.post("/booking/otp/request", ...guard(20, 5), async (req, res, next) => {
-  try { const body = schemas.bookingOtpRequest.parse(req.body); const code = await transaction(db => createOtp(db, body.email, "booking_verify", req.ip)); res.status(202).json({ ok: true }); dispatchOtpEmail(body.email, code, "booking_verify"); } catch (error) { next(error); }
+  try { const body = schemas.bookingOtpRequest.parse(req.body); await transaction(async db => queueOtpEmail(db, body.email, await createOtp(db, body.email, "booking_verify", req.ip), "booking_verify")); res.status(202).json({ ok: true }); kickUrgent(); } catch (error) { next(error); }
 });
 authRouter.post("/booking/otp/verify", ...guard(20, 10), async (req, res, next) => {
   try {

@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config.js";
 
 const base = { NODE_ENV: "development", WEB_ORIGINS: "http://localhost:3000", DATABASE_URL: "postgres://user:password@localhost:5432/bayana_dev", SESSION_SECRET: "a".repeat(32), EMAIL_TRANSPORT: "log" };
-const production = { ...base, NODE_ENV: "production", EMAIL_TRANSPORT: "smtp", SMTP_URL: "smtp://mail.example.test:587", EMAIL_FROM: "Bayana <hello@example.test>", OTP_PEPPER: "p".repeat(32), DATABASE_URL_DIRECT: "postgres://user:password@db.example.test:5432/bayana" };
+const production = { ...base, NODE_ENV: "production", EMAIL_TRANSPORT: "smtp", SMTP_URL: "smtp://mail.example.test:587", EMAIL_FROM: "Bayana <hello@example.test>", OTP_PEPPER: "p".repeat(32), DATABASE_URL_DIRECT: "postgres://user:password@db.example.test:5432/bayana", TICK_SECRET: "t".repeat(32) };
 
 describe("configuration", () => {
   it("defaults payments to disabled", () => expect(loadConfig(base).PAYMENT_MODE).toBe("disabled"));
@@ -24,8 +24,10 @@ describe("configuration", () => {
     expect(message).not.toContain(secretish);
     expect(message).not.toContain("not a url");
   });
-  it("requires an OTP pepper and a direct database URL in production", () => {
+  it("requires an OTP pepper, a direct database URL and a job secret in production", () => {
     expect(() => loadConfig({ ...production, OTP_PEPPER: "" })).toThrow("OTP_PEPPER");
+    expect(() => loadConfig({ ...production, TICK_SECRET: "" })).toThrow("TICK_SECRET: is required in production");
+    expect(() => loadConfig({ ...production, TICK_SECRET: "short" })).toThrow("TICK_SECRET");
     expect(() => loadConfig({ ...production, DATABASE_URL_DIRECT: "" })).toThrow("DATABASE_URL_DIRECT");
     expect(loadConfig(production).DATABASE_URL_DIRECT).toBe(production.DATABASE_URL_DIRECT);
   });

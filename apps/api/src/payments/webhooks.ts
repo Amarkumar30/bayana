@@ -1,4 +1,5 @@
 import { pool } from "../database.js";
+import { kickUrgent } from "../notifications/outbox.js";
 import { log } from "../logger.js";
 import type { ProviderPayment, ProviderRefund } from "./provider.js";
 import { paymentProvider, paymentsEnabled } from "./runtime.js";
@@ -41,8 +42,9 @@ export async function processWebhookEvent(eventId: string) {
         const result = await applyCapturedPayment(payment.order_id, { ...payment, status: "captured" }, "webhook");
         if (result.outcome === "mismatch") return void await finish(`Not applied: ${result.problem}`, true);
         await finish(null);
-        // Something may have been waiting for this payment (refund events delivered first).
-        await processPendingWebhooks(eventId);
+        // Refund events delivered before this payment were waiting for it.
+        await processPendingWebhooks({ paymentId: payment.id, exceptEventId: eventId });
+        kickUrgent();
         return;
       }
       case "payment.authorized": case "payment.failed":
@@ -51,6 +53,7 @@ export async function processWebhookEvent(eventId: string) {
       case "refund.processed": case "refund.failed":
         if (!refund?.id || !refund.payment_id) return void await finish("Event has no refund entity", true);
         await applyProviderRefund(refund, event.payload.event === "refund.processed" ? "processed" : "failed");
+        kickUrgent();
         return void await finish(null);
       default: return void await finish(null);
     }
@@ -62,8 +65,9 @@ export async function processWebhookEvent(eventId: string) {
   }
 }
 
-/** Retries events still waiting (for example a refund delivered before its payment). Safe to run late or twice. */
-export async function processPendingWebhooks(exceptEventId?: string) {
-  const pending = await pool.query<{ event_id: string }>("SELECT event_id FROM webhook_events WHERE processed_at IS NULL AND needs_review=false AND event_id IS DISTINCT FROM $1 ORDER BY received_at LIMIT 100", [exceptEventId ?? null]);
+/** Retries events still waiting (for example a refund delivered before its payment): all of them, or those for one payment. */
+export async function processPendingWebhooks(options: { paymentId?: string; exceptEventId?: string } = {}) {
+  const pending = await pool.query<{ event_id: string }>(`SELECT event_id FROM webhook_events WHERE processed_at IS NULL AND needs_review=false AND event_id IS DISTINCT FROM $1
+    AND ($2::text IS NULL OR payload #>> '{payload,refund,entity,payment_id}' = $2 OR payload #>> '{payload,payment,entity,id}' = $2) ORDER BY received_at LIMIT 100`, [options.exceptEventId ?? null, options.paymentId ?? null]);
   for (const row of pending.rows) await processWebhookEvent(row.event_id);
 }

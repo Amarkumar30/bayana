@@ -14,6 +14,8 @@
   --primary-foreground: #ffffff;
   --primary-soft: #eceafd;
   --accent: #d97706;
+  /* Brand mark colour from public/brand (the logo files); used only by the mark, never for text. */
+  --brand-saffron: #d97a00;
   --accent-soft: #fef3c7;
   --accent-ink: #92400e;
   --success: #15803d;
