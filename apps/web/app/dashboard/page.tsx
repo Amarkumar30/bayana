@@ -1,6 +1,7 @@
 "use client";
+import { env } from "../../env";
 import { FormEvent, useEffect, useState } from "react";
-const api = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:4000";
+const api = env.NEXT_PUBLIC_API_URL;
 type Service={id:string;name:string;description:string;price_paise:string;duration_minutes:number;booking_mode:"TIMED"|"FULL_DAY";advance_type:"NONE"|"PERCENT"|"FIXED";advance_value:number;active:boolean};
 type Profile={slug:string;business_name:string;description:string;city:string;service_area:string|null;timezone:string;terms:string;cancellation_policy:string;rescheduling_policy:string;phone_required:boolean;published:boolean;services:Service[]};
 const request=(path:string,method:string,body?:object)=>fetch(`${api}${path}`,{method,credentials:"include",headers:{"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined});

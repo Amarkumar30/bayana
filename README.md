@@ -1,56 +1,53 @@
 # Bayana
 
-Bayana is a Phase-1 SaaS booking and advance-payment platform for photographers in India. A photographer publishes a public page; a client reserves a full-day date by paying an advance; both parties can see the remaining balance.
+Bayana is an advance-booking platform for independent service providers. A vendor publishes a page at `bayana.in/<slug>`; a customer picks a service and time, verifies their email, accepts the terms and pays an advance; both sides see the booking and payment state. The full specification is in `docs/SPEC.md`, and current defects are in `docs/AUDIT.md`.
 
 ## Run locally (Windows / PowerShell)
 
-You need Node 22+, pnpm 10+, and Docker Desktop. Node and pnpm are already installed on this machine; Docker Desktop is the missing prerequisite.
+You need Node 22, pnpm 10 (`corepack enable`), Git and Docker Desktop. Keep the repository outside OneDrive (for example `C:\dev\bayana`); synced folders cause EPERM/EBUSY errors and slow builds.
 
-1. Install and open [Docker Desktop](https://www.docker.com/products/docker-desktop/). Finish setup and wait until the engine says it is running.
-2. Open PowerShell in this project folder and create the API environment file:
+1. Start PostgreSQL 16 and Mailpit. A fresh volume creates `bayana_dev` and `bayana_test` automatically through `docker/postgres/init`:
+
+   ```powershell
+   pnpm.cmd db:up
+   ```
+
+2. Create the environment files and fill in the values (`.env.example` lists names only; see SPEC Appendix A). Never commit them.
 
    ```powershell
    Copy-Item .env.example apps/api/.env
+   Copy-Item apps/web/.env.example apps/web/.env.local
    ```
 
-3. Start PostgreSQL:
+   Locally: `DATABASE_URL` points at `bayana_dev` and `DATABASE_URL_TEST` at `bayana_test`, both on port 5433. `WEB_ORIGINS` and `NEXT_PUBLIC_SITE_URL` are `http://localhost:3000`, and `NEXT_PUBLIC_API_URL` is `http://localhost:4000`. Set `SMTP_URL` to `smtp://localhost:1025` (Mailpit) and `PAYMENT_MODE` to `disabled`.
+
+3. Install, create any missing databases, migrate and seed (the seed runs only when `NODE_ENV=development`):
 
    ```powershell
-   docker compose up -d
+   pnpm.cmd install
+   pnpm.cmd db:create
+   pnpm.cmd db:migrate
+   pnpm.cmd seed:dev
    ```
 
-4. Install dependencies and prepare the local database:
+4. Run the web app (port 3000) and the API (port 4000) together with `pnpm.cmd dev`. `http://localhost:4000/ready` checks the database. Mail you send is viewable at `http://localhost:8025`.
 
-   ```powershell
-   pnpm install
-   pnpm --filter @bayana/api migrate
-   pnpm --filter @bayana/api seed
-   ```
-
-5. Start the web app and API together:
-
-   ```powershell
-   pnpm dev
-   ```
-
-6. Open `http://localhost:3000` for the landing page, `http://localhost:3000/rahul-photography` for the client flow, and `http://localhost:3000/dashboard` for the photographer demo. `http://localhost:4000/health` verifies the API/database connection.
-
-To test locally, create a booking hold and use **Demo: simulate successful payment**. This only works with `PAYMENT_MODE=mock`. Stop everything with `Ctrl+C`, then `docker compose down`.
-
-## Production deployment
-
-Use a managed PostgreSQL 16 service, a persistent/always-on Node API service, and deploy the Next.js application separately. Set `WEB_ORIGIN`, `DATABASE_URL`, `API_ORIGIN`/`NEXT_PUBLIC_API_ORIGIN`, and production secrets. Run `pnpm --filter @bayana/api migrate` exactly once against the production database before releasing the API.
-
-Do **not** use `PAYMENT_MODE=mock` in production. Razorpay order creation, raw-body webhook HMAC verification, refunds, Route transfers, email OTP, authenticated dashboards, rate limiting, background jobs, observability, and legal pages are deliberately documented follow-up work—not safe to claim as implemented.
-
-## Quality commands
-
-```powershell
-pnpm typecheck
-pnpm test
-pnpm build
-```
+Stop with `Ctrl+C`, then `docker compose stop`. Never use `docker compose down -v`, because it deletes the database volume.
 
 ## Commands
 
-Use `pnpm.cmd` from PowerShell. `pnpm.cmd db:up` starts PostgreSQL; `pnpm.cmd db:migrate` applies development migrations; `pnpm.cmd db:migrate:test` creates and migrates the isolated `_test` database; `pnpm.cmd db:migrate:status` prints the migration ledger; and `pnpm.cmd seed:dev` loads the development-only sample. `pnpm.cmd test`, `test:unit`, `test:integration`, `typecheck`, `lint`, and `build` run the matching quality checks.
+| Command | What it does |
+|---|---|
+| `pnpm.cmd db:up` | Starts PostgreSQL and Mailpit |
+| `pnpm.cmd db:create` | Creates the databases named by `DATABASE_URL` and `DATABASE_URL_TEST` if missing. Never drops anything |
+| `pnpm.cmd db:migrate` | Applies pending migrations over `DATABASE_URL_DIRECT` (falls back to `DATABASE_URL` outside production) |
+| `pnpm.cmd db:migrate:test` | Creates and migrates the `_test` database |
+| `pnpm.cmd db:migrate:status` | Prints the migration ledger with checksums |
+| `pnpm.cmd seed:dev` | Loads development-only sample data |
+| `pnpm.cmd typecheck` / `lint` / `test` / `build` | Quality gates. Run all four before every commit; CI runs the same |
+
+Tests refuse to run unless `NODE_ENV=test` and `DATABASE_URL_TEST` names a database ending in `_test`. Migrations are forward-only, and an edited applied migration fails the runner.
+
+## Deployment
+
+Nothing is deployed yet. `apps/api/Dockerfile` builds a non-root production image from the repository root (`docker build -f apps/api/Dockerfile .`). The API must start with `NODE_ENV=production`, and production requires `WEB_ORIGINS`, `DATABASE_URL`, `DATABASE_URL_DIRECT`, `SESSION_SECRET`, `OTP_PEPPER`, `SMTP_URL` and `EMAIL_FROM`. `PAYMENT_MODE=live` is refused unless `LIVE_PAYMENTS_ACK=yes` is also set in production.

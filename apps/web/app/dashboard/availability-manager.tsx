@@ -1,6 +1,7 @@
 "use client";
+import { env } from "../../env";
 import { FormEvent, useEffect, useState } from "react";
-const api = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:4000";
+const api = env.NEXT_PUBLIC_API_URL;
 type Rule = { id: string; weekday: number; start_time: string; end_time: string };
 type Period = { id: string; starts_at: string; ends_at: string; reason: string };
 type Booking = { id: string; status: string; starts_at_utc: string; ends_at_utc: string };

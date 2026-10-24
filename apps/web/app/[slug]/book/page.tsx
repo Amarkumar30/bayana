@@ -1,7 +1,8 @@
 "use client";
+import { env } from "../../../env";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
-const api = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:4000";
+const api = env.NEXT_PUBLIC_API_URL;
 type Service = { id: string; name: string };
 type Vendor = { display_name: string; timezone: string; phone_required: boolean; services: Service[] };
 type Day = { date: string; available: boolean };

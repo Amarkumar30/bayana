@@ -8,8 +8,8 @@ Advance-booking SaaS for independent service providers in India. Vendor page at 
 ## Commands (Windows PowerShell, always `pnpm.cmd`)
 - `pnpm.cmd dev` runs web (3000) and API (4000)
 - `pnpm.cmd typecheck`, `pnpm.cmd lint`, `pnpm.cmd test`, `pnpm.cmd build`
-- `pnpm.cmd db:migrate`, `pnpm.cmd db:seed` (development only)
-- Database: `docker compose up -d db` (Postgres 16; `bayana_dev` and `bayana_test`)
+- `pnpm.cmd db:create`, `pnpm.cmd db:migrate`, `pnpm.cmd db:migrate:test`, `pnpm.cmd seed:dev` (development only)
+- Database and mail: `pnpm.cmd db:up` (Postgres 16 on host port 5433 with `bayana_dev` and `bayana_test`; Mailpit SMTP 1025, UI 8025)
 Verify these script names in the package.json files; correct this file if they differ.
 
 ## Where things are

@@ -6,3 +6,5 @@ dist
 coverage
 *.tsbuildinfo
 backups/
+.env.local
+.env.*.local

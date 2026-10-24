@@ -1,4 +1,18 @@
-import { readFile,readdir } from "node:fs/promises";import { pool } from "./database.js";import { log } from "./logger.js";import { assertAppliedChecksum, migrationChecksum } from "./migration-checksums.js";
-const directory=new URL("../sql/",import.meta.url);
-export async function migrate(statusOnly=false){const client=await pool.connect();try{await client.query("SELECT pg_advisory_lock(4815162342)");await client.query("CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())");await client.query("ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum text");const files=(await readdir(directory)).filter(n=>/^\d+_.+\.sql$/.test(n)).sort();for(const name of files){const sql=await readFile(new URL(name,directory),"utf8"),hash=migrationChecksum(sql),found=await client.query<{checksum:string|null}>("SELECT checksum FROM schema_migrations WHERE name=$1",[name]);if(found.rowCount){assertAppliedChecksum(name,found.rows[0].checksum,sql);if(!found.rows[0].checksum){await client.query("UPDATE schema_migrations SET checksum=$2 WHERE name=$1",[name,hash]);log("warn","migration.checksum_backfilled",{name});}continue}if(statusOnly)continue;await client.query("BEGIN");try{await client.query(sql);await client.query("INSERT INTO schema_migrations(name,checksum) VALUES($1,$2)",[name,hash]);await client.query("COMMIT");log("info","migration.applied",{name});}catch(error){await client.query("ROLLBACK");throw error}}return (await client.query("SELECT name,checksum,applied_at FROM schema_migrations ORDER BY name")).rows}finally{await client.query("SELECT pg_advisory_unlock(4815162342)").catch(()=>undefined);client.release();}}
-try{const rows=await migrate(process.argv.includes("--status"));if(process.argv.includes("--status"))process.stdout.write(`${JSON.stringify(rows)}\n`)}finally{await pool.end()}
+import { Client } from "pg";
+import { config } from "./config.js";
+import { assertTestDatabase } from "./database.js";
+import { loadMigrationFiles, runMigrations } from "./migration-runner.js";
+
+// Migrations use the direct (unpooled) connection; advisory locks do not survive a transaction-mode pooler.
+if (config.NODE_ENV === "test") assertTestDatabase(config.DATABASE_URL_DIRECT);
+const statusOnly = process.argv.includes("--status");
+const client = new Client({ connectionString: config.DATABASE_URL_DIRECT });
+await client.connect();
+try {
+  await client.query("SELECT pg_advisory_lock(4815162342)");
+  const rows = await runMigrations(client, await loadMigrationFiles(new URL("../sql/", import.meta.url)), { statusOnly });
+  if (statusOnly) process.stdout.write(`${JSON.stringify(rows)}\n`);
+} finally {
+  await client.query("SELECT pg_advisory_unlock(4815162342)").catch(() => undefined);
+  await client.end();
+}

@@ -1,6 +1,7 @@
+import { env } from "../../env";
 import { notFound, redirect } from "next/navigation";
 import { formatINR } from "@bayana/shared";
-const api = process.env.NEXT_PUBLIC_API_ORIGIN ?? "http://localhost:4000";
+const api = env.NEXT_PUBLIC_API_URL;
 type Service = { id: string; name: string; description: string; price_paise: string; duration_minutes: number; advance_paise: number; remaining_paise: number };
 type Vendor = { slug: string; canonical_slug: string; display_name: string; city: string; bio: string; service_area: string | null; timezone: string; categories: string[]; terms: string; cancellation_policy: string; rescheduling_policy: string; services: Service[] };
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) { const { slug } = await params; const response = await fetch(`${api}/v1/vendors/${slug}`, { cache: "no-store" }); if (!response.ok) return { robots: { index: false } }; const vendor = await response.json() as Vendor; return { title: `${vendor.display_name} | Bayana`, description: vendor.bio || `Book ${vendor.display_name} on Bayana` }; }
