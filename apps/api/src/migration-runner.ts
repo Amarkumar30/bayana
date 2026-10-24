@@ -12,6 +12,30 @@ export async function loadMigrationFiles(directory: URL): Promise<MigrationFile[
   return Promise.all(names.map(async name => ({ name, sql: await readFile(new URL(name, directory), "utf8") })));
 }
 
+/** The message db:migrate prints when the target database's name does not match NODE_ENV. Names only, never the URL (it holds a password). */
+export function migrationRefusal(variable: string, databaseName: string, problem: string, nodeEnv: string) {
+  return [
+    `Refusing to migrate: ${variable} ${problem}. It currently names database "${databaseName}". Nothing was changed.`,
+    ...(nodeEnv === "development" ? [
+      "To keep your data and move it to bayana_dev (Windows PowerShell, from the repository root):",
+      `  1. Back up:   docker exec bayana-postgres-1 pg_dump -U bayana -Fc -f /tmp/${databaseName}.dump ${databaseName}`,
+      `                docker cp bayana-postgres-1:/tmp/${databaseName}.dump backups\\${databaseName}.dump`,
+      "  2. Point DATABASE_URL in apps/api/.env at .../bayana_dev, then run: pnpm.cmd db:create",
+      `  3. Restore:   docker exec bayana-postgres-1 pg_restore -U bayana -d bayana_dev /tmp/${databaseName}.dump`,
+      "  4. Migrate:   pnpm.cmd db:migrate"
+    ] : [])
+  ].join("\n");
+}
+
+/** Read-only: names of files not yet recorded in the migrations table (all of them if the table does not exist yet). */
+export async function pendingMigrations(client: ClientBase, files: MigrationFile[], table = "schema_migrations"): Promise<string[]> {
+  if (!tablePattern.test(table)) throw new Error("Invalid migrations table name");
+  const exists = (await client.query<{ name: string | null }>("SELECT to_regclass($1) AS name", [table])).rows[0].name;
+  if (!exists) return files.map(file => file.name);
+  const applied = new Set((await client.query<{ name: string }>(`SELECT name FROM ${table}`)).rows.map(row => row.name));
+  return files.map(file => file.name).filter(name => !applied.has(name));
+}
+
 /** Applies pending files in order, each in its own transaction. Fails before applying anything new if an applied file changed. */
 export async function runMigrations(client: ClientBase, files: MigrationFile[], options: { table?: string; statusOnly?: boolean } = {}): Promise<MigrationRow[]> {
   const table = options.table ?? "schema_migrations";

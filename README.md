@@ -2,35 +2,30 @@
 
 Bayana is an advance-booking platform for independent service providers. A vendor publishes a page at `bayana.in/<slug>`; a customer picks a service and time, verifies their email, accepts the terms and pays an advance; both sides see the booking and payment state. The full specification is in `docs/SPEC.md`, and current defects are in `docs/AUDIT.md`.
 
-## Run locally (Windows / PowerShell)
+## First-time setup (Windows PowerShell, 6 commands)
 
-You need Node 22, pnpm 10 (`corepack enable`), Git and Docker Desktop. Keep the repository outside OneDrive (for example `C:\dev\bayana`); synced folders cause EPERM/EBUSY errors and slow builds.
+You need Node 22, pnpm 10 (`corepack enable`), Git and Docker Desktop running. Keep the repository outside OneDrive (for example `C:\dev\bayana`); synced folders cause EPERM/EBUSY errors and slow builds.
 
-1. Start PostgreSQL 16 and Mailpit. A fresh volume creates `bayana_dev` and `bayana_test` automatically through `docker/postgres/init`:
+```powershell
+pnpm.cmd install          # dependencies
+pnpm.cmd db:up            # PostgreSQL 16 (port 5433) and Mailpit (SMTP 1025, inbox http://localhost:8025)
+pnpm.cmd setup:env        # creates apps/api/.env and apps/web/.env.local if missing; never overwrites; lists anything still to fill in
+pnpm.cmd db:create        # creates bayana_dev and bayana_test if they do not exist
+pnpm.cmd db:migrate       # lists pending migrations, then applies them (refuses unless the database name ends in _dev)
+pnpm.cmd dev              # web on http://localhost:3000, API on http://localhost:4000
+```
 
-   ```powershell
-   pnpm.cmd db:up
-   ```
+If anything fails, run `pnpm.cmd run doctor` (with `run`: plain `pnpm doctor` is a built-in pnpm command). It checks Node and pnpm, the env files (by variable name only), the database and its migrations, and the ports, and prints the fix for each failed check. Env errors at startup name the variable, the allowed values and the file to edit.
 
-2. Create the environment files and fill in the values (`.env.example` lists names only; see SPEC Appendix A). Never commit them.
+Back up before migrating a database that holds data you care about (`>` redirection in Windows PowerShell corrupts binary dumps, so copy the file out of the container):
 
-   ```powershell
-   Copy-Item .env.example apps/api/.env
-   Copy-Item apps/web/.env.example apps/web/.env.local
-   ```
+```powershell
+docker exec bayana-postgres-1 pg_dump -U bayana -Fc -f /tmp/bayana_dev.dump bayana_dev
+docker cp bayana-postgres-1:/tmp/bayana_dev.dump backups\bayana_dev.dump
+```
 
-   Locally: `DATABASE_URL` points at `bayana_dev` and `DATABASE_URL_TEST` at `bayana_test`, both on port 5433. `WEB_ORIGINS` and `NEXT_PUBLIC_SITE_URL` are `http://localhost:3000`, and `NEXT_PUBLIC_API_URL` is `http://localhost:4000`. Set `SMTP_URL` to `smtp://localhost:1025` (Mailpit) and `PAYMENT_MODE` to `disabled`.
+Optional: `pnpm.cmd seed:dev` loads development-only sample data.
 
-3. Install, create any missing databases, migrate and seed (the seed runs only when `NODE_ENV=development`):
-
-   ```powershell
-   pnpm.cmd install
-   pnpm.cmd db:create
-   pnpm.cmd db:migrate
-   pnpm.cmd seed:dev
-   ```
-
-4. Run the web app (port 3000) and the API (port 4000) together with `pnpm.cmd dev`. `http://localhost:4000/ready` checks the database. Mail you send is viewable at `http://localhost:8025`.
 
 Stop with `Ctrl+C`, then `docker compose stop`. Never use `docker compose down -v`, because it deletes the database volume.
 
@@ -39,6 +34,8 @@ Stop with `Ctrl+C`, then `docker compose stop`. Never use `docker compose down -
 | Command | What it does |
 |---|---|
 | `pnpm.cmd db:up` | Starts PostgreSQL and Mailpit |
+| `pnpm.cmd setup:env` | Creates missing env files from the examples (never overwrites) and lists variables still needing a value |
+| `pnpm.cmd run doctor` | Read-only health check of tools, env files, database, migrations and ports, with a fix per failure |
 | `pnpm.cmd db:create` | Creates the databases named by `DATABASE_URL` and `DATABASE_URL_TEST` if missing. Never drops anything |
 | `pnpm.cmd db:migrate` | Applies pending migrations over `DATABASE_URL_DIRECT` (falls back to `DATABASE_URL` outside production) |
 | `pnpm.cmd db:migrate:test` | Creates and migrates the `_test` database |

@@ -93,3 +93,14 @@
 - Web: /login (tabs), /signup (two steps), /forgot, lib/api.ts with human error messages, /auth redirects to /login, and Settings › Security lists and revokes sessions.
 - Tests: 25 HTTP tests cover AU-01..AU-09 (mutation-checked on AU-07), plus 18 Playwright auth UI tests. Integration runs use TRUST_PROXY=1.
 - Not done: AU-10 admin second factor (P1). Migrations 009-011 are not applied to the dev DB; run pnpm.cmd db:migrate after a backup.
+
+## Fix local setup - 2026-10-24
+
+- Branch fix-local-setup, from phase-3-auth. Setup tooling only; no Phase 4 work.
+- Env errors list every problem at once: the variable, its allowed values, and the file to edit. Values are never echoed. Rules live in apps/api/src/config-schema.ts; the web equivalent is webEnvProblems in apps/web/env-schema.ts.
+- apps/api/.env.example (new) and apps/web/.env.example now have safe local placeholders. The root .env.example points to them.
+- pnpm.cmd setup:env (scripts/setup-env.mjs) creates missing files with an exclusive write, so existing files are never overwritten. It generates SESSION_SECRET and OTP_PEPPER in new files and lists what still needs a value.
+- pnpm.cmd run doctor (scripts/doctor.mjs) needs `run`, because `pnpm doctor` is a pnpm built-in. Read-only checks: tools, env files, database server, the _dev and _test databases, pending migrations, ports.
+- db:migrate prints pending migrations first, then refuses unless the database name matches NODE_ENV (_dev, _test, neither in production). The refusal includes PowerShell-safe backup and restore steps.
+- Tests: env messages (API and web), the database-name guard, and setup:env never overwriting. Gates all exit 0. Playwright was not re-run (only env-schema changed on the web side).
+- User state (from doctor): apps/api/.env points at "bayana" and lacks DATABASE_URL_TEST, apps/web/.env.local is missing, and port 4000 is in use. No migrations were applied.

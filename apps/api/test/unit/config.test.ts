@@ -14,7 +14,7 @@ describe("configuration", () => {
     const { WEB_ORIGINS: _unused, ...legacy } = base;
     expect(loadConfig({ ...legacy, WEB_ORIGIN: "http://localhost:3000" }).WEB_ORIGINS).toEqual(["http://localhost:3000"]);
     const { WEB_ORIGINS: _alsoUnused, ...legacyProduction } = production;
-    expect(() => loadConfig({ ...legacyProduction, WEB_ORIGIN: "https://bayana.in" })).toThrow("WEB_ORIGINS is required");
+    expect(() => loadConfig({ ...legacyProduction, WEB_ORIGIN: "https://bayana.in" })).toThrow("WEB_ORIGINS: is missing");
   });
   it("names variables but never echoes their values", () => {
     const secretish = "rzp_live_do_not_print_this";
@@ -48,7 +48,7 @@ describe("configuration", () => {
     const configModule = fileURLToPath(new URL("../../src/config.ts", import.meta.url));
     const result = spawnSync(process.execPath, [tsx, configModule], { cwd: fileURLToPath(new URL("../../test/", import.meta.url)), env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, NODE_ENV: "development", SESSION_SECRET: "short-value-123" }, encoding: "utf8" });
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("Invalid environment:");
+    expect(result.stderr).toContain("Invalid environment. Edit apps/api/.env");
     expect(result.stderr).toContain("SESSION_SECRET");
     expect(result.stderr).not.toContain("short-value-123");
     expect(result.stderr).not.toMatch(/\n\s+at /);
