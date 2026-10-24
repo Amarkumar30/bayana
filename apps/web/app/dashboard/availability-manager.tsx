@@ -14,7 +14,7 @@ import { ApiError, api, humanMessage } from "@/lib/api";
 type Window = { start_time: string; end_time: string };
 type Override = { id: string; local_date: string; kind: "block" | "open"; start_time: string | null; end_time: string | null; note: string };
 type Period = { id: string; starts_at: string; ends_at: string; reason: string };
-type Booking = { id: string; status: string; starts_at_utc: string };
+type Booking = { id: string; status: string; starts_at: string };
 type Data = { timezone: string; min_notice_minutes: number; max_advance_days: number; rules: ({ id: string; weekday: number } & Window)[]; overrides: Override[]; blocked_periods: Period[]; bookings: Booking[] };
 
 export function AvailabilityManager() {
@@ -38,7 +38,7 @@ export function AvailabilityManager() {
         <TabsContent value="window"><WindowEditor notice={data.min_notice_minutes} days={data.max_advance_days} onSaved={() => saved("Booking window saved")} /></TabsContent>
       </Tabs>
       <Card><CardHeader title="Upcoming bookings and holds" description="These times are taken." />
-        {data.bookings.length ? <ul className="grid gap-2">{data.bookings.map(booking => <li key={booking.id} className="flex items-center gap-3 text-sm"><StatusBadge status={booking.status} /><span className="tabular-nums">{new Date(booking.starts_at_utc).toLocaleString("en-IN", { timeZone: data.timezone, dateStyle: "medium", timeStyle: "short" })}</span></li>)}</ul> : <p className="text-sm text-muted">None yet.</p>}
+        {data.bookings.length ? <ul className="grid gap-2">{data.bookings.map(booking => <li key={booking.id} className="flex items-center gap-3 text-sm"><StatusBadge status={booking.status} /><span className="tabular-nums">{new Date(booking.starts_at).toLocaleString("en-IN", { timeZone: data.timezone, dateStyle: "medium", timeStyle: "short" })}</span></li>)}</ul> : <p className="text-sm text-muted">None yet.</p>}
       </Card>
     </div>
   );

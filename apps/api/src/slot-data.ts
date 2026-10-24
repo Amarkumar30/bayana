@@ -11,7 +11,7 @@ export async function loadSlotEngineInput(db: Pool | PoolClient, vendorId: strin
     db.query<{ weekday: number; start_time: string; end_time: string }>("SELECT weekday,start_time::text,end_time::text FROM availability_rules WHERE vendor_id=$1 ORDER BY weekday,start_time", [vendorId]),
     db.query<{ local_date: string; kind: "block" | "open"; start_time: string | null; end_time: string | null }>("SELECT local_date::text,kind,start_time::text,end_time::text FROM availability_overrides WHERE vendor_id=$1 AND local_date >= current_date - 1", [vendorId]),
     db.query<BusyPeriod>("SELECT starts_at::text AS \"startsAt\",ends_at::text AS \"endsAt\" FROM blocked_periods WHERE vendor_id=$1 AND ends_at>now()", [vendorId]),
-    db.query<BusyPeriod>("SELECT occupied_starts_at::text AS \"startsAt\",occupied_ends_at::text AS \"endsAt\" FROM bookings WHERE vendor_id=$1 AND status IN ('HELD','PENDING','CONFIRMED','COMPLETED') AND (status NOT IN ('HELD','PENDING') OR hold_expires_at>now()) AND occupied_ends_at>now()", [vendorId])
+    db.query<BusyPeriod>("SELECT block_start::text AS \"startsAt\",block_end::text AS \"endsAt\" FROM bookings WHERE vendor_id=$1 AND status IN ('HELD','PENDING','CONFIRMED') AND (status='CONFIRMED' OR hold_expires_at>now()) AND block_end>now()", [vendorId])
   ]);
   if (!vendor.rowCount || !service.rowCount) return null;
   const weeklyRules = new Map<number, LocalInterval[]>();

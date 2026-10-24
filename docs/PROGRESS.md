@@ -133,3 +133,13 @@ Facts for the next session:
 - Seed data (apps/api/src/seed.ts) still writes the legacy availability table, which no longer drives slots.
 - Open bug: the customer booking page shows NaN because GET /v1/bookings/:id has no balance_due_paise.
 - Stale branch names phase-2-authentication, phase-3-domain-alignment and phase-4-vendor-onboarding point at aa51855 and have no commits of their own.
+
+## Phase 5 Booking engine - 2026-10-24 (branch phase-5-booking-engine)
+- Migration 013_booking_engine.sql (DESTRUCTIVE renames; applied to bayana_test only): starts_at_utc/ends_at_utc -> starts_at/ends_at, occupied_* -> block_start/block_end, legacy `starts_at time` -> local_start_time; NULL legacy times backfilled (block range, else vendor-local whole day); bookings_no_overlap + bookings_block_valid exactly as SPEC 8.3; idempotency unique per (vendor_id, key); advance >= 0.
+- booking_events append-only: bayana_app NOLOGIN role (no UPDATE/DELETE/TRUNCATE) plus triggers that reject them for every role; new meta jsonb; created_at defaults to clock_timestamp().
+- src/booking-transition.ts is the only status writer: transitionBooking (FOR UPDATE, SPEC 10 table + guards, event row), recordCreated, lockVendorSchedule (pg_advisory_xact_lock), expireOverdueHolds. Unit test greps src for any other UPDATE bookings SET status.
+- createHold: vendor lock -> idempotency -> lazy expiry -> engine re-check -> insert HELD (23P01 -> SLOT_TAKEN) -> HELD->PENDING (offline advance / nothing to pay) -> CONFIRMED when advance is 0. Engine misses are also SLOT_TAKEN (was SLOT_UNAVAILABLE). Response no longer includes hashes.
+- Payments: checkout order moves HELD->PENDING; webhook requires PENDING and confirms with payment_id. Time-off route takes the same vendor lock and expires through transitionBooking. GET /v1/bookings/:id returns balance_due_paise (NaN bug fixed).
+- Tests: 20-way race x10 and block-vs-book x10 pass (plus 3 extra file runs); idempotency, state table, row lock, sweep, append-only, privileges, BK-08.
+- Left: apply 013 to dev after backup (see report); API still connects as `bayana`, so connect production runtime as a bayana_app member; customers table not created (bookings snapshot client fields); seed.ts still writes the legacy availability table; tick endpoint (POST /internal/jobs/tick) not wired (Phase 7).
+- Local runs need DATABASE_URL_TEST in apps/api/.env and NEXT_PUBLIC_* in apps/web/.env.local (I set them per shell only).

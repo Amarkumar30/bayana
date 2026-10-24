@@ -5,7 +5,7 @@ import {useParams} from "next/navigation"; import {useEffect,useState} from "rea
 import { Button } from "@/components/ui/button";
 import { Card, EmptyState, LoadingState, Money, Notice, Skeleton, StatusBadge } from "@/components/ui/display";
 const api=env.NEXT_PUBLIC_API_URL;
-type BookingView={status:string;advance_paise:string|number;balance_due_paise?:string|number;service_name?:string|null;display_name?:string;starts_at_utc?:string|null};
+type BookingView={status:string;advance_paise:string|number;balance_due_paise?:string|number;service_name?:string|null;display_name?:string;starts_at?:string|null};
 export default function Booking(){const {id}=useParams<{id:string}>();const[b,setB]=useState<BookingView>();const[error,setError]=useState("");async function load(){const r=await fetch(`${api}/v1/bookings/${id}`,{credentials:"include"});if(r.ok){setB(await r.json());setError("")}else if(r.status===401)setError("Sign in with the email used for this booking to view it.");else setError("This booking could not be found.")}useEffect(()=>{load();const t=setInterval(load,5000);return()=>clearInterval(t)},[id]);
   if(error)return <EmptyState title={error} description="Booking links are private. Use the link from your confirmation email, or sign in with the same email." action={<Button asChild><Link href="/login">Client sign in</Link></Button>}/>;
   if(!b)return <LoadingState label="Loading your booking…" className="mx-auto grid max-w-xl gap-4"><Skeleton className="h-6 w-28"/><Skeleton className="h-9 w-3/4"/><Skeleton className="h-40 rounded-card"/></LoadingState>;

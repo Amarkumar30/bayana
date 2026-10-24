@@ -9,6 +9,7 @@ import {
 import { currentUser, type SessionUser } from "./auth.js";
 import { cookieToken } from "./auth-routes.js";
 import { pool, transaction } from "./database.js";
+import { expireOverdueHolds, lockVendorSchedule } from "./booking-transition.js";
 import { AppError } from "./errors.js";
 
 export type VendorRow = { id: string; slug: string; owner_user_id: string; published: boolean; timezone: string };
@@ -150,7 +151,7 @@ vendorRouter.get("/availability", requireVendor, handle(async (_req, res) => {
     pool.query("SELECT id,weekday,to_char(start_time,'HH24:MI') AS start_time,to_char(end_time,'HH24:MI') AS end_time FROM availability_rules WHERE vendor_id=$1 ORDER BY weekday,start_time", [id]),
     pool.query("SELECT id,local_date::text AS local_date,kind,to_char(start_time,'HH24:MI') AS start_time,to_char(end_time,'HH24:MI') AS end_time,note FROM availability_overrides WHERE vendor_id=$1 AND local_date >= current_date - 1 ORDER BY local_date,start_time NULLS FIRST", [id]),
     pool.query("SELECT id,starts_at,ends_at,reason FROM blocked_periods WHERE vendor_id=$1 AND ends_at>now() ORDER BY starts_at", [id]),
-    pool.query("SELECT id,status,starts_at_utc,ends_at_utc,hold_expires_at FROM bookings WHERE vendor_id=$1 AND status IN ('HELD','PENDING','CONFIRMED','COMPLETED') AND (status NOT IN ('HELD','PENDING') OR hold_expires_at>now()) AND ends_at_utc > now() ORDER BY starts_at_utc", [id])
+    pool.query("SELECT id,status,starts_at,ends_at,hold_expires_at FROM bookings WHERE vendor_id=$1 AND status IN ('HELD','PENDING','CONFIRMED') AND (status='CONFIRMED' OR hold_expires_at>now()) AND ends_at > now() ORDER BY starts_at", [id])
   ]);
   res.json({ ...settings.rows[0], rules: rules.rows, overrides: overrides.rows, blocked_periods: blocked.rows, bookings: bookings.rows });
 }));
@@ -193,10 +194,10 @@ vendorRouter.delete("/availability/overrides/:id", requireVendor, handle(async (
 vendorRouter.post("/availability/blocked-periods", requireVendor, handle(async (req, res) => {
   const body = blockedPeriodSchema.parse(req.body); const id = vendorOf(res).id;
   const row = await transaction(async db => {
-    await db.query("SELECT id FROM vendors WHERE id=$1 FOR UPDATE", [id]);
-    // Phase 5 replaces this direct status write with transitionBooking (audit finding BK-07).
-    await db.query("UPDATE bookings SET status='EXPIRED' WHERE vendor_id=$1 AND status='HELD' AND hold_expires_at < now()", [id]);
-    const overlap = await db.query("SELECT id FROM bookings WHERE vendor_id=$1 AND status IN ('HELD','PENDING','CONFIRMED','COMPLETED') AND occupied_range && tstzrange($2::timestamptz,$3::timestamptz,'[)') LIMIT 1", [id, body.starts_at, body.ends_at]);
+    // Same lock as hold creation, so time off and a booking can never interleave (SPEC 9.3).
+    await lockVendorSchedule(db, id);
+    await expireOverdueHolds(db, id);
+    const overlap = await db.query("SELECT id FROM bookings WHERE vendor_id=$1 AND status IN ('HELD','PENDING','CONFIRMED') AND tstzrange(block_start,block_end,'[)') && tstzrange($2::timestamptz,$3::timestamptz,'[)') LIMIT 1", [id, body.starts_at, body.ends_at]);
     if (overlap.rowCount) throw new AppError(409, "BOOKING_CONFLICT", "That period overlaps a booking. Cancel or move the booking first.");
     return (await db.query("INSERT INTO blocked_periods(id,vendor_id,starts_at,ends_at,reason) VALUES($1,$2,$3,$4,$5) RETURNING id,starts_at,ends_at,reason", [randomUUID(), id, body.starts_at, body.ends_at, body.reason])).rows[0];
   });
