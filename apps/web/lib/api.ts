@@ -1,3 +1,4 @@
+import { bookingErrorCopy } from "@bayana/shared";
 import { env } from "@/env";
 
 /** The API's single error shape, surfaced as a typed exception with a human message (SPEC 14.2). */
@@ -11,7 +12,9 @@ const messages: Record<string, string> = {
   OTP_RATE_LIMITED: "We just sent you a code. Please wait a minute before asking for another.",
   RATE_LIMITED: "Too many attempts. Please wait a minute and try again.",
   AUTHENTICATION_REQUIRED: "Please sign in to continue.",
-  VALIDATION_ERROR: "Some details look wrong. Check the highlighted fields."
+  VALIDATION_ERROR: "Some details look wrong. Check the highlighted fields.",
+  API_WAKING: "Bayana is waking up after a quiet spell. This takes under a minute.",
+  ...bookingErrorCopy
 };
 /** Server-authored messages are already human for these codes (for example password rules). */
 const passThrough = new Set(["INVALID_PASSWORD", "SLUG_TAKEN", "PROFILE_EXISTS", "WINDOW_OVERLAP", "SERVICE_IN_USE", "BOOKING_CONFLICT", "PUBLISH_CHECKLIST_INCOMPLETE", "NOT_FOUND"]);
@@ -37,11 +40,26 @@ export const requirementCopy: Record<string, string> = {
   policies: "Write your booking terms, cancellation and rescheduling policies"
 };
 
-export async function api<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+/** The first call after load waits at most 10 s: a sleeping API (Render free tier) is sent to /waking instead (SPEC 16.6). */
+const FIRST_CALL_TIMEOUT_MS = 10_000;
+let apiAwake = false;
+function toWaking() {
+  if (typeof window === "undefined" || window.location.pathname === "/waking") return;
+  window.location.assign(`/waking?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+}
+
+export async function api<T>(path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> } = {}): Promise<T> {
   let response: Response;
+  const headers = { ...(init.body ? { "Content-Type": "application/json" } : {}), ...init.headers };
   try {
-    response = await fetch(`${env.NEXT_PUBLIC_API_URL}${path}`, { method: init.method ?? (init.body ? "POST" : "GET"), credentials: "include", headers: init.body ? { "Content-Type": "application/json" } : undefined, body: init.body ? JSON.stringify(init.body) : undefined });
-  } catch (cause) { throw new ApiError(0, "NETWORK_ERROR", "Network error", { cause: String(cause) }); }
+    response = await fetch(`${env.NEXT_PUBLIC_API_URL}${path}`, { method: init.method ?? (init.body ? "POST" : "GET"), credentials: "include", headers, body: init.body ? JSON.stringify(init.body) : undefined, signal: apiAwake ? undefined : AbortSignal.timeout(FIRST_CALL_TIMEOUT_MS) });
+  } catch (cause) {
+    if (!apiAwake && cause instanceof DOMException && cause.name === "TimeoutError") { toWaking(); throw new ApiError(0, "API_WAKING", "The service is waking up"); }
+    throw new ApiError(0, "NETWORK_ERROR", "Network error", { cause: String(cause) });
+  }
+  // A sleeping or restarting host answers 502/503 from its proxy, without our error shape; a 503 from the API itself has one.
+  if ((response.status === 502 || response.status === 503) && !(await response.clone().json().catch(() => null) as { error?: unknown } | null)?.error) { toWaking(); throw new ApiError(response.status, "API_WAKING", "The service is waking up"); }
+  apiAwake = true;
   if (response.status === 204) return undefined as T;
   const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string; details?: Record<string, unknown> } } | null;
   if (!response.ok) {

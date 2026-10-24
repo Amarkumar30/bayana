@@ -37,10 +37,17 @@ describe("configuration", () => {
   });
   it("aborts on a key and mode mismatch", () => expect(() => loadConfig({ ...base, PAYMENT_MODE: "test", RAZORPAY_KEY_ID: "rzp_live_x", RAZORPAY_KEY_SECRET: "s", RAZORPAY_WEBHOOK_SECRET: "w".repeat(16) })).toThrow("test key"));
   it("uses DATABASE_URL_TEST in test mode and requires a _test name", () => {
-    const test = { ...base, NODE_ENV: "test", EMAIL_TRANSPORT: "smtp" };
+    const test = { ...base, NODE_ENV: "test", EMAIL_TRANSPORT: "capture" };
     expect(() => loadConfig(test)).toThrow("DATABASE_URL_TEST");
     expect(() => loadConfig({ ...test, DATABASE_URL_TEST: "postgres://u:p@localhost:5432/bayana_dev" })).toThrow("ending in _test");
     expect(loadConfig({ ...test, DATABASE_URL_TEST: "postgres://u:p@localhost:5432/bayana_test" }).DATABASE_URL).toMatch(/bayana_test$/);
+  });
+  it("keeps email in memory under test unless SMTP is chosen explicitly, and never captures outside test", () => {
+    const test = { ...base, NODE_ENV: "test", EMAIL_TRANSPORT: undefined, DATABASE_URL_TEST: "postgres://u:p@localhost:5432/bayana_test" };
+    expect(loadConfig(test).EMAIL_TRANSPORT).toBe("capture");
+    expect(() => loadConfig({ ...test, EMAIL_TRANSPORT: "smtp" })).toThrow("SMTP_URL");
+    expect(loadConfig({ ...test, EMAIL_TRANSPORT: "smtp", SMTP_URL: "smtp://localhost:1025", EMAIL_FROM: "Bayana <t@example.test>" }).EMAIL_TRANSPORT).toBe("smtp");
+    expect(() => loadConfig({ ...base, EMAIL_TRANSPORT: "capture" })).toThrow("capture only when NODE_ENV=test");
   });
   it("refuses a _test database as the runtime database outside test mode", () => expect(() => loadConfig({ ...base, DATABASE_URL: "postgres://u:p@localhost:5432/bayana_test" })).toThrow("must not name a _test database"));
   it("exits the process with a clear message when the environment is invalid", () => {

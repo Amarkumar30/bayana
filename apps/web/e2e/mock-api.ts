@@ -54,12 +54,32 @@ function authRoute(route: Route, path: string) {
   return route.fulfill(fail(401, "AUTHENTICATION_REQUIRED", "Sign in is required"));
 }
 
+export const SAMPLE_BOOKING_ID = "7f3c2a10-0001-4000-8000-000000000001";
+const isoDay = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+/** Public reads for the booking flow and the customer booking page, shaped like GET /v1/vendors/:slug and GET /v1/bookings/:id. */
+function publicRoute(route: Route, path: string) {
+  const url = new URL(route.request().url());
+  if (path === "/v1/vendors/studio-sunday") return route.fulfill({ json: { ...sampleProfile(), canonical_slug: "studio-sunday", display_name: "Studio Sunday", bio: "Event styling and portraits across Mumbai.", categories: ["Photography"], payments_enabled: false, contact_email: null, contact_phone: null, services: sampleServices().filter(service => service.active).map(service => ({ ...service, advance_paise: 200000, remaining_paise: 600000 })) } });
+  if (path === "/v1/vendors/studio-sunday/availability/month") return route.fulfill({ json: { timezone: "Asia/Kolkata", days: Array.from({ length: 40 }, (_, index) => ({ date: isoDay(index), available: index > 0 && index % 3 !== 0 })).filter(day => day.date.startsWith(url.searchParams.get("month") ?? "")) } });
+  if (path === "/v1/vendors/studio-sunday/availability/slots") return route.fulfill({ json: { timezone: "Asia/Kolkata", slots: ["04:30", "06:00", "08:30", "10:00"].map(time => ({ startsAt: `${url.searchParams.get("date")}T${time}:00.000Z`, endsAt: `${url.searchParams.get("date")}T${time}:00.000Z` })) } });
+  if (path === `/v1/bookings/${SAMPLE_BOOKING_ID}`) return route.fulfill({ json: {
+    id: SAMPLE_BOOKING_ID, status: "PENDING", service_name: "Portrait session", duration_minutes: 90, starts_at: `${isoDay(9)}T04:30:00.000Z`, ends_at: `${isoDay(9)}T06:00:00.000Z`, hold_expires_at: `${isoDay(2)}T04:30:00.000Z`, timezone: "Asia/Kolkata",
+    vendor: { slug: "studio-sunday", display_name: "Studio Sunday" }, client_name: "Asha Rao", total_paise: 800000, advance_paise: 200000, paid_paise: 0, balance_due_paise: 800000, payments_enabled: false, viewer: "customer",
+    timeline: [{ to_status: "HELD", created_at: `${isoDay(0)}T05:00:00.000Z` }, { to_status: "PENDING", created_at: `${isoDay(0)}T05:04:00.000Z` }], payments: [],
+    contract: { body: ["Booking", "Business: Studio Sunday", "Service: Portrait session", "", "Booking terms", "Advance confirms your date."].join("\n"), sha256: "a".repeat(64), accepted_at: `${isoDay(0)}T05:04:00.000Z` }, contract_preview: null,
+    cancellation_tiers: [{ min_hours_before: 168, refund_percent: 100 }, { min_hours_before: 48, refund_percent: 50 }], can_cancel: true, refund_preview: { refund_paise: 0, refund_percent: 100, paid_paise: 0 }
+  } });
+  if (path.startsWith("/v1/bookings/")) return route.fulfill(fail(404, "NOT_FOUND", "Not found"));
+  return route.fulfill(fail(401, "AUTHENTICATION_REQUIRED", "Sign in is required"));
+}
+
 /** Answers vendor and auth calls from in-memory state; everything else is a 401 in the API's error shape. */
 export async function mockApi(page: Page, state: VendorState = establishedVendor()) {
   await page.route(`${MOCK_API_URL}/**`, route => {
     const path = new URL(route.request().url()).pathname;
     if (path.startsWith("/v1/vendor/")) return vendorRoute(route, path, state);
     if (path.startsWith("/v1/auth/")) return authRoute(route, path);
+    if (path.startsWith("/v1/vendors/") || path.startsWith("/v1/bookings/")) return publicRoute(route, path);
     return route.fulfill(fail(401, "AUTHENTICATION_REQUIRED", "Sign in is required"));
   });
   return state;

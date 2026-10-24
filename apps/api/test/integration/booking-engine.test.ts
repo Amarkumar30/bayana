@@ -3,8 +3,9 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { app } from "../../src/app.js";
 import { startSession } from "../../src/auth.js";
-import { createHold } from "../../src/booking-service.js";
+import { acceptTerms, createHold } from "../../src/booking-service.js";
 import { expireOverdueHolds, transitionBooking } from "../../src/booking-transition.js";
+import { loadContract } from "../../src/contract.js";
 import { pool, transaction } from "../../src/database.js";
 import { createUser } from "../helpers.js";
 
@@ -24,8 +25,13 @@ async function bookableVendor(advance: { type: "PERCENT" | "NONE"; value: number
 }
 async function client() { const user = await createUser(pool, { role: "CLIENT" }); return user; }
 const holdInput = (vendor: { slug: string; serviceId: string }, user: { id: string; email: string }, overrides: Partial<Parameters<typeof createHold>[1]> = {}) =>
-  ({ slug: vendor.slug, date: day, name: "Asha Rao", phone: "+919800000000", email: user.email, clientUserId: user.id, serviceId: vendor.serviceId, startsAt: nineIst, termsAccepted: true, key: randomUUID(), ...overrides });
+  ({ slug: vendor.slug, date: day, name: "Asha Rao", phone: "+919800000000", email: user.email, clientUserId: user.id, serviceId: vendor.serviceId, startsAt: nineIst, key: randomUUID(), ...overrides });
 const hold = (input: Parameters<typeof createHold>[1]) => transaction(db => createHold(db, input));
+/** Hold, then agree to the exact contract text (HELD -> PENDING, or CONFIRMED when nothing is due). */
+async function accepted(input: Parameters<typeof createHold>[1]) {
+  const booking = await hold(input); const contract = await loadContract(pool, booking.id);
+  return (await transaction(db => acceptTerms(db, { bookingId: booking.id, termsHash: contract!.sha256, email: input.email, ip: "203.0.113.9", userAgent: "vitest" }))).booking;
+}
 const codeOf = (result: PromiseSettledResult<unknown>) => result.status === "rejected" ? (result.reason as { code?: string }).code : "OK";
 const events = async (bookingId: string) => (await pool.query("SELECT from_status,to_status,actor FROM booking_events WHERE booking_id=$1 ORDER BY created_at", [bookingId])).rows;
 
@@ -59,7 +65,7 @@ describe("hold creation", () => {
     const vendor = await bookableVendor(); const user = await client();
     const booking = await hold(holdInput(vendor, user));
     const row = (await pool.query("SELECT * FROM bookings WHERE id=$1", [booking.id])).rows[0];
-    expect(row).toMatchObject({ status: "PENDING", total_paise: "100000", advance_paise: "20000", service_name: "Session", duration_minutes: 60, service_advance_type: "PERCENT", service_advance_value: 20 });
+    expect(row).toMatchObject({ status: "HELD", total_paise: "100000", advance_paise: "20000", service_name: "Session", duration_minutes: 60, service_advance_type: "PERCENT", service_advance_value: 20 });
     expect(new Date(row.starts_at).toISOString()).toBe(nineIst);
     expect(new Date(row.ends_at).toISOString()).toBe(tenIst);
     expect(row.block_start).toEqual(row.starts_at);
@@ -71,9 +77,9 @@ describe("hold creation", () => {
   });
 
   it("records (none) -> HELD -> PENDING events; a zero advance goes on to CONFIRMED", async () => {
-    const paid = await hold(holdInput(await bookableVendor(), await client()));
+    const paid = await accepted(holdInput(await bookableVendor(), await client()));
     expect(await events(paid.id)).toEqual([{ from_status: null, to_status: "HELD", actor: "client" }, { from_status: "HELD", to_status: "PENDING", actor: "client" }]);
-    const free = await hold(holdInput(await bookableVendor({ type: "NONE", value: 0 }), await client()));
+    const free = await accepted(holdInput(await bookableVendor({ type: "NONE", value: 0 }), await client()));
     expect(free.status).toBe("CONFIRMED");
     expect((await events(free.id)).map(event => event.to_status)).toEqual(["HELD", "PENDING", "CONFIRMED"]);
   });
@@ -99,9 +105,9 @@ describe("hold creation", () => {
     const first = await hold(holdInput(vendor, await client()));
     await pool.query("UPDATE bookings SET hold_expires_at=now()-interval '1 minute' WHERE id=$1", [first.id]);
     const second = await hold(holdInput(vendor, await client()));
-    expect(second.status).toBe("PENDING");
+    expect(second.status).toBe("HELD");
     expect((await pool.query("SELECT status FROM bookings WHERE id=$1", [first.id])).rows[0].status).toBe("EXPIRED");
-    expect((await events(first.id)).at(-1)).toEqual({ from_status: "PENDING", to_status: "EXPIRED", actor: "system" });
+    expect((await events(first.id)).at(-1)).toEqual({ from_status: "HELD", to_status: "EXPIRED", actor: "system" });
   });
 });
 
@@ -126,7 +132,7 @@ describe("idempotency (BK-05)", () => {
 
 describe("transitionBooking (SPEC 10)", () => {
   it("enforces the state table and its guards", async () => {
-    const booking = await hold(holdInput(await bookableVendor(), await client()));
+    const booking = await accepted(holdInput(await bookableVendor(), await client()));
     await expect(transaction(db => transitionBooking(db, booking.id, "COMPLETED", "vendor", "done"))).rejects.toMatchObject({ code: "INVALID_TRANSITION", status: 409 });
     await expect(transaction(db => transitionBooking(db, booking.id, "CONFIRMED", "vendor", "no proof"))).rejects.toMatchObject({ code: "INVALID_TRANSITION" });
     await expect(transaction(db => transitionBooking(db, booking.id, "EXPIRED", "system", "early"))).rejects.toMatchObject({ code: "INVALID_TRANSITION" });
@@ -139,7 +145,7 @@ describe("transitionBooking (SPEC 10)", () => {
     expect((await events(booking.id)).map(event => event.to_status)).toEqual(["HELD", "PENDING", "CONFIRMED"]);
   });
   it("locks the row: two simultaneous cancellations give one success", async () => {
-    const booking = await hold(holdInput(await bookableVendor(), await client()));
+    const booking = await accepted(holdInput(await bookableVendor(), await client()));
     const results = await Promise.allSettled([1, 2].map(n => transaction(db => transitionBooking(db, booking.id, "CANCELLED", n === 1 ? "vendor" : "client", "changed plans"))));
     expect(results.map(codeOf).sort()).toEqual(["INVALID_TRANSITION", "OK"]);
     expect((await events(booking.id)).filter(event => event.to_status === "CANCELLED")).toHaveLength(1);
@@ -161,13 +167,13 @@ describe("time off goes through transitionBooking", () => {
     const cookie = `bayana_session=${await transaction(db => startSession(db, vendor.ownerId))}`;
     const response = await fetch(`${base}/v1/vendor/availability/blocked-periods`, { method: "POST", headers: { "content-type": "application/json", cookie, "x-forwarded-for": "10.78.0.1" }, body: JSON.stringify({ starts_at: nineIst, ends_at: tenIst, reason: "Travel" }) });
     expect(response.status).toBe(201);
-    expect((await events(booking.id)).at(-1)).toEqual({ from_status: "PENDING", to_status: "EXPIRED", actor: "system" });
+    expect((await events(booking.id)).at(-1)).toEqual({ from_status: "HELD", to_status: "EXPIRED", actor: "system" });
   });
 });
 
 describe("booking_events is append-only", () => {
   it("UPDATE, DELETE and TRUNCATE are rejected even for the migration owner", async () => {
-    const booking = await hold(holdInput(await bookableVendor(), await client()));
+    const booking = await accepted(holdInput(await bookableVendor(), await client()));
     await expect(pool.query("UPDATE booking_events SET reason='rewritten' WHERE booking_id=$1", [booking.id])).rejects.toMatchObject({ code: "42501" });
     await expect(pool.query("DELETE FROM booking_events WHERE booking_id=$1", [booking.id])).rejects.toMatchObject({ code: "42501" });
     await expect(pool.query("TRUNCATE booking_events CASCADE")).rejects.toMatchObject({ code: "42501" });
@@ -182,11 +188,11 @@ describe("booking_events is append-only", () => {
 describe("customer booking link (BK-08)", () => {
   it("GET /v1/bookings/:id returns balance_due_paise to the owner and 404 to strangers", async () => {
     const vendor = await bookableVendor(); const user = await client();
-    const booking = await hold(holdInput(vendor, user));
+    const booking = await accepted(holdInput(vendor, user));
     const own = `bayana_session=${await transaction(db => startSession(db, user.id))}`;
     const mine = await fetch(`${base}/v1/bookings/${booking.id}`, { headers: { cookie: own } });
     expect(mine.status).toBe(200);
-    expect(await mine.json()).toMatchObject({ status: "PENDING", balance_due_paise: "100000", starts_at: expect.any(String) });
+    expect(await mine.json()).toMatchObject({ status: "PENDING", balance_due_paise: 100000, starts_at: expect.any(String) });
     expect((await fetch(`${base}/v1/bookings/${booking.id}?t=wrong-token`)).status).toBe(404);
   });
 });

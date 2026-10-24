@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { mockApi } from "./mock-api";
 import { routes } from "./routes";
-const states = ["/dashboard/bookings?state=empty", "/dashboard/bookings?state=loading", "/dashboard/calendar?state=empty", "/dashboard/payments?state=empty", "/b/x?state=loading"];
+const states = ["/dashboard/bookings?state=empty", "/dashboard/bookings?state=loading", "/dashboard/calendar?state=empty", "/dashboard/payments?state=empty"];
 
 for (const route of [...routes, ...states]) {
   test(`${route} fits the viewport and labels every control`, async ({ page }) => {
@@ -20,7 +20,7 @@ for (const route of [...routes, ...states]) {
   });
 }
 
-for (const route of ["/design", "/", "/login", "/signup", "/forgot", "/dashboard", "/dashboard/bookings", "/b/x"]) {
+for (const route of ["/design", "/", "/login", "/signup", "/forgot", "/dashboard", "/dashboard/bookings", "/b/x", "/b/7f3c2a10-0001-4000-8000-000000000001", "/studio-sunday/book", "/waking"]) {
   test(`${route} renders without console errors or hydration mismatches`, async ({ page }) => {
     const errors: string[] = [];
     page.on("console", message => { if (message.type() === "error") errors.push(message.text().slice(0, 300)); });
@@ -28,8 +28,8 @@ for (const route of ["/design", "/", "/login", "/signup", "/forgot", "/dashboard
     await mockApi(page);
     await page.goto(route);
     await page.waitForLoadState("networkidle");
-    // The mocked 401s are expected network responses, not page errors.
-    expect(errors.filter(text => !text.includes("401 (Unauthorized)"))).toEqual([]);
+    // The mocked 401s and 404s are expected network responses, not page errors.
+    expect(errors.filter(text => !text.includes("401 (Unauthorized)") && !text.includes("404 (Not Found)"))).toEqual([]);
   });
 }
 

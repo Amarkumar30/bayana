@@ -25,7 +25,7 @@ export function BookingDetailSheet({ booking }: { booking: Booking }) {
         <section aria-labelledby="timeline-title"><h3 id="timeline-title" className="mb-3 text-sm font-semibold">Timeline</h3>
           <ol className="grid gap-3 border-l-2 border-border pl-4">{timeline(booking.status).map(item => <li key={item.label} className="relative text-sm"><span aria-hidden className={`absolute -left-[1.4rem] top-1 size-3 rounded-full ring-2 ring-surface ${item.done ? "bg-success" : "bg-border"}`} /><span className={item.done ? "text-ink" : "text-muted"}>{item.label}</span><span className="sr-only">{item.done ? " (done)" : " (not yet)"}</span></li>)}</ol>
         </section>
-        <div className="mt-auto grid gap-2"><Button disabled>Record offline payment</Button><Button variant="danger" disabled>Cancel booking</Button><p className="text-xs text-muted">Actions are disabled in this preview.</p></div>
+        <div className="mt-auto grid gap-2"><Button disabled aria-describedby="offline-advance-note">Record offline advance</Button><p id="offline-advance-note" className="text-xs text-muted">Online payments are off, so customers pay you directly. Recording that advance here (and confirming the booking) arrives with the payments update.</p><Button variant="danger" disabled>Cancel booking</Button><p className="text-xs text-muted">Cancelling from the dashboard is not available yet.</p></div>
       </SheetContent>
     </Sheet>
   );
