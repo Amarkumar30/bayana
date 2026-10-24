@@ -1,1 +1,23 @@
-export default function Home() { return <main><section className="hero"><div><p className="eyebrow">FOR INDEPENDENT PHOTOGRAPHERS</p><h1>Bookings that feel as polished as your work.</h1><p>Share one beautiful link, collect the advance to lock a date, and keep every balance easy to understand.</p><div className="hero-actions"><a className="button" href="/rahul-photography">See a booking page <span>→</span></a><a className="text-link" href="/dashboard">Open photographer demo</a></div><div className="trust"><span>✓ Date protection</span><span>✓ Clear advances</span><span>✓ Client-ready experience</span></div></div><aside className="hero-card"><div className="card-top"><span className="avatar">RP</span><div><strong>Rahul Photography</strong><small>New Delhi</small></div><span className="verified">Verified</span></div><div className="mini-calendar"><span>OCT</span><strong>18</strong><em>Available</em></div><div className="card-total"><span>Advance to confirm</span><strong>₹10,000</strong></div></aside></section><section className="feature-grid"><article><span>01</span><h2>One link, always on-brand</h2><p>A clean page for your availability and transparent starting price.</p></article><article><span>02</span><h2>Dates stay protected</h2><p>A date is reserved during payment, so competing requests cannot double-book it.</p></article><article><span>03</span><h2>Every rupee explained</h2><p>Advance and offline balance activity are tracked in one reliable record.</p></article></section></main>; }
+export default function Home() {
+  return <main>
+    <section className="hero">
+      <div>
+        <p className="eyebrow">A BETTER WAY TO BOOK</p>
+        <h1>Your business, beautifully booked.</h1>
+        <p>Give every client a clear, calm path from choosing a service to paying an advance. One link holds the details that matter.</p>
+        <div className="hero-actions"><a className="button" href="/dashboard">Set up your page</a><a className="text-link" href="/auth?next=/dashboard">Sign in to your workspace</a></div>
+        <div className="trust"><span>Secure email verification</span><span>Clear advance terms</span><span>Your policies, up front</span></div>
+      </div>
+      <aside className="hero-card" aria-label="Example booking summary">
+        <div className="card-top"><span className="avatar">S</span><div><strong>Studio Sunday</strong><small>Event styling · Mumbai</small></div><span className="verified">OPEN</span></div>
+        <div className="mini-calendar"><span>BOOKING</span><strong>24</strong><em>June · Available</em></div>
+        <div className="card-total"><span>Design consultation<br />60 minutes</span><strong>₹2,500</strong></div>
+      </aside>
+    </section>
+    <section className="feature-grid">
+      <article><span>01</span><h2>Make the next step obvious</h2><p>Services, timing, policies and advance terms live together—so clients always know what to expect.</p></article>
+      <article><span>02</span><h2>Build trust before payment</h2><p>Show a professional public page that makes a booking feel considered, not transactional.</p></article>
+      <article><span>03</span><h2>Stay in control</h2><p>Save a draft, refine your offerings, then publish only when your booking page is ready.</p></article>
+    </section>
+  </main>;
+}

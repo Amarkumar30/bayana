@@ -8,3 +8,56 @@
 - Added structured logging/redaction, request IDs, liveness/readiness routes, centralized error handling, and a 404 handler.
 - Made the development seed idempotent and development-only.
 - Remaining Phase 1 gate results are recorded in the final report after the full command run.
+
+## Phase 2 authentication — in progress
+
+- Added migration 005 for password credentials, purpose-bound OTP challenges, single-use tickets, session activity/freshness, and auth events.
+- Added Argon2id password hashing and new signup, password, OTP-login, reset, session, and CSRF endpoint plumbing.
+- Replaced the former passwordless `/auth` screen; booking OTP compatibility remains available for customer verification.
+- Typecheck, lint, existing tests, and build pass. Required end-to-end auth integration scenarios still need implementation before Phase 2 may be marked complete.
+
+## 2026-10-23 — Phase 3 domain alignment (in progress)
+
+- Added forward-only `006_domain_alignment.sql`: photographers/vendors and owner-column renames, normalized categories, role migration, and vendor slug history.
+- Fresh backup restored into `bayana_phase3_scratch_20261023`; 005 and 006 applied and preserved observed row counts.
+- `bayana_test` accepted migration 006.
+- Remaining: complete API/web route and role rename, slug-history redirect handling/tests, documentation cleanup, and full gates.
+
+## Phase 4 vendor onboarding and publication — 2026-10-23
+
+- Added vendor-owned profile, service CRUD, publication and unpublication routes plus the forward-only onboarding migration.
+- Service prices use exact rupee-string parsing; saved service advance rules drive public advance and remaining balance amounts.
+- Public pages now render saved profile, service and policy values only, with identical Next.js 404 handling for unavailable slugs.
+- Dashboard saves drafts, edits services, shows onboarding progress, and has preview/copy-link controls.
+- Added unit coverage for money, slug, advance, and precise publish-checklist behavior.
+- `bayana_test` migration and the focused database integration suite pass; run the full UI journey manually before release.
+
+## UI refinement — 2026-10-23
+
+- Refreshed the web visual system around a calm, trust-forward client flow: editorial typography, warm surfaces, accessible focus states, responsive cards, and a guided vendor workspace.
+- Reworked the landing-page narrative to make service setup and secure booking benefits immediately clear.
+- No backend/API behavior changed; run a visual browser review of public, dashboard, authentication, and booking views before release.
+
+## Phase 5 availability - 2026-10-23
+
+- Added weekly rules, date exceptions, blocked periods, UTC booking intervals, occupied ranges, and service/policy snapshots in migrations 008 and 009.
+- Public availability now supplies rate-limited month summaries and UTC slots; holds re-evaluate a slot inside their transaction and persist its buffered occupied range.
+- Added DST/full-day/buffer unit coverage and a direct-SQL GiST exclusion-constraint integration test; `bayana_test` accepted both migrations.
+- Public booking now uses a keyboard-navigable month grid and slot list with timezone/loading/empty/error states.
+- Remaining: add endpoint-level concurrent block-versus-book race coverage and complete an interactive mobile/desktop dashboard calendar review.
+
+## Phase 0 re-audit - 2026-10-24
+
+- Re-audited the current working tree, including the uncommitted phase 2-5 work, against SPEC §4, 8, 10, 11 and 12. Replaced docs/AUDIT.md. No source files changed.
+- Sign-in bug (verified on bayana_test): vendors created before migration 005 have no password. Password login returns 401 (auth.ts:46), and the UI's reset calls /v1/auth/password/* routes that do not exist (404). OTP login works.
+- CRITICAL: POST /v1/auth/login/password returns password_hash in its response (auth.ts:46, server.ts:47). Fix this first.
+- BK-07 fails: 3 status UPDATEs outside transitionBooking, and PENDING has no transitions. The email outbox is never processed. Payment verify, late-payment handling and CT are not built.
+- Migrations 001-008 are applied on the dev DB and 001-010 on test. Treat all of them as immutable. 005-010 and backups/ are still untracked in git.
+- Gates: typecheck 0, lint 0 (tsc only), test 0 (20 tests, none at HTTP level), build 0.
+- Next: commit the phase 2-5 work, then fix the auth defects (hash leak, reset and claim-password, HTTP tests) before any new phase.
+
+## Auth hotfix: password hash leak - 2026-10-24
+
+- passwordLogin (apps/api/src/auth.ts:46) now returns only id, email and role, so POST /v1/auth/login/password no longer sends password_hash.
+- Added test/integration/password-login.test.ts covering the response fields and an identical 401 for wrong password and unknown email. All gates pass.
+- Not committed: auth.ts also holds the uncommitted phase 2 rewrite, so commit it with that work. Still open: reset routes, a way for legacy vendors to set a password, session revocation on re-signup.

@@ -3,7 +3,7 @@ import Razorpay from "razorpay";
 import type { PoolClient } from "pg";
 import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
-import { transition } from "./booking-service.js";
+import { transitionBooking } from "./booking-service.js";
 
 const provider = () => {
   if (config.PAYMENT_MODE === "disabled") throw Object.assign(new Error("Online advance payment is not enabled"), { status: 503, code: "PAYMENTS_NOT_CONFIGURED" });
@@ -33,5 +33,5 @@ export async function captureFromWebhook(db: PoolClient, event: any) {
   if (booking.status !== "HELD" || Number(booking.advance_paise) !== payment.amount || payment.currency !== "INR") throw Object.assign(new Error("Payment does not match an active booking hold"), { status: 409 });
   await db.query("UPDATE payments SET status='CAPTURED',provider_payment_id=$1,raw_event=$2 WHERE id=$3", [payment.id, event, booking.payment_row_id]);
   await db.query("INSERT INTO ledger_entries(id,booking_id,payment_id,kind,amount_paise,actor,reason) VALUES($1,$2,$3,'CHARGE',$4,'system','booking total'),($5,$2,$3,'PAYMENT',$6,'razorpay','verified Razorpay capture')", [randomUUID(), booking.id, booking.payment_row_id, booking.total_paise, randomUUID(), -booking.advance_paise]);
-  await transition(db, booking, "CONFIRMED", "razorpay", "verified payment.captured webhook");
+  await transitionBooking(db, booking, "CONFIRMED", "razorpay", "verified payment.captured webhook");
 }

@@ -1,6 +1,6 @@
 # AGENTS.md — Bayana
 
-Read this before every task. Instructions in the chat prompt override it. Keep it honest: if something here is wrong for the real repo, say so in your report instead of silently ignoring it.
+Read this before every task. The full product and technical specification is `docs/SPEC.md`; read only the sections your task names. Instructions in the chat prompt override this file. Keep it honest: if something here is wrong for the real repo, say so in your report instead of silently ignoring it.
 
 ## 1. Product
 
@@ -71,7 +71,25 @@ Bayana is a universal advance-booking platform for independent service providers
 **Privacy**
 - Only published vendors are public. Unpublished and nonexistent slugs return the same 404. Owner email and phone are never exposed unless the vendor opted in. Booking pages need an unguessable access token or an authenticated owner. IDs in URLs are UUIDs.
 
-## 7. How to work
+## 7. Deploy-ready rules (apply from the first phase)
+
+The app runs on localhost first, then goes to Vercel (web), Render free (API) and Neon (Postgres). Write every phase so that move is configuration only.
+
+- No hardcoded `localhost`, ports or domains in code. URLs come from validated env vars (`NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL`, `WEB_ORIGINS`, `SESSION_COOKIE_DOMAIN`). Locally the cookie domain is empty; in staging and production it is `.bayana.in`.
+- Do not write user data or uploads to the local disk. The Render free plan has no persistent disk.
+- Correctness must not depend on timers or a long-running process. The API may sleep or restart. Hold expiry is lazy (inside booking transactions); background work runs from `POST /internal/jobs/tick`, which must be safe to run late or twice.
+- Neon pooled connections use PgBouncer in transaction mode: use only `pg_advisory_xact_lock`, never session-level locks, `SET` without `LOCAL`, or `LISTEN/NOTIFY` on the runtime connection. Migrations use `DATABASE_URL_DIRECT`.
+- The first request after sleep can take about a minute. The web app must handle it with the `/waking` flow and cached public pages.
+- Check `docs/SPEC.md` section 16 before changing anything about environments, env vars or deployment.
+
+## 8. UI and UX rules
+
+- Use only the design system in `apps/web/components/ui` and the tokens defined in Phase 2. No ad-hoc colours, fonts or one-off styles.
+- Mobile first: every page must work at 375px wide. Touch targets at least 44px.
+- Every screen has loading (skeleton), empty and error states. Errors are human sentences that say what to do next, never raw codes.
+- Forms validate inline using the shared Zod schemas. WCAG AA contrast, visible focus, keyboard usable.
+
+## 9. How to work
 
 1. Do only the phase named in the prompt. Stop when its gate is met. Do not start the next phase.
 2. Read only the files you need. Do not re-read files you already read this session. Do not dump files in your replies; cite `path:line`.
@@ -81,6 +99,6 @@ Bayana is a universal advance-booking platform for independent service providers
 6. Append a 15-line-or-shorter entry to `docs/PROGRESS.md` (what was done, what is left, anything the next session must know). Create the file if missing. This lets a new session resume cheaply.
 7. Update docs only where the phase says so.
 
-## 8. Final report (60 lines or fewer)
+## 10. Final report (60 lines or fewer)
 
 Phase and branch. Per item: PASS, FAIL, BLOCKED or NOT TESTED. Then: what you inspected; defects confirmed (file:line, root cause); changes (files); migrations added or applied; commands run with exit codes; manual steps for the user; known limitations; the next phase.
