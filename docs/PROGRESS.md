@@ -115,3 +115,21 @@
 - Tests: 70 unit (including 300 seeded property runs and DST cases for Kolkata, London and New York), 47 integration (A vs B on every vendor route, enforced by reading the router's route table), and 123 Playwright, all green twice.
 - Fixed: zod versions differed (3.24 vs 3.25), which broke instanceof ZodError and returned 500s; all packages are now on ^3.25.76.
 - Next: Phase 5 booking engine. Decided: a bayana_app role plus a trigger on booking_events, and renaming columns to the spec's starts_at/ends_at/block_* after a backup.
+
+## Session handoff - 2026-10-24 (read this first)
+
+History is one straight line on phase-4-vendor-setup. Each phase branch points at its own commit. Nothing is pushed: origin/main is still defc0df.
+- Phase 0 audit: phase-0-audit 4c2d705. docs/AUDIT.md re-audit. Left: audit items owned by later phases.
+- WIP snapshot: phase-2-auth-hotfix 680707c. Older uncommitted phase 2-5 work plus the password_hash leak fix. Left: nothing (superseded).
+- Phase 1 foundation: phase-1-foundation-v2 93082cf. Config, Pino, error handler, migration runner, Docker/Mailpit, CI, API Dockerfile. Left: CI never run (needs a push).
+- Phase 2 design system: phase-2-design-system 141281b. Tokens, components, layouts, previews, /design, Playwright. Left: screenshot baselines are Windows-only and not in CI.
+- Phase 3 auth: phase-3-auth f16574c. otp_codes, sessions, /v1/auth routes, login/signup/forgot UI, AU-01..09 tests. Left: AU-10 admin second factor.
+- Fix local setup: fix-local-setup d1a0da7. Actionable env errors, setup:env, `pnpm.cmd run doctor`, guarded db:migrate.
+- Phase 4 vendor setup: phase-4-vendor-setup fc0ec12. Overrides, booking window, shared schemas, ownership router, onboarding UI. Left: the items below.
+Facts for the next session:
+- The dev database is still named "bayana", and migrations 009-012 are not applied to it. Back it up first (README has PowerShell-safe commands), move it to bayana_dev, then run db:migrate.
+- Phase 5 decisions already made: a bayana_app role plus a trigger make booking_events append-only. Rename the booking columns to the spec's starts_at, ends_at, block_start and block_end. The rename is destructive: give the user backup commands first.
+- The time-off route (POST /v1/vendor/availability/blocked-periods) still sets booking status directly; Phase 5 must route it through transitionBooking.
+- Seed data (apps/api/src/seed.ts) still writes the legacy availability table, which no longer drives slots.
+- Open bug: the customer booking page shows NaN because GET /v1/bookings/:id has no balance_due_paise.
+- Stale branch names phase-2-authentication, phase-3-domain-alignment and phase-4-vendor-onboarding point at aa51855 and have no commits of their own.
