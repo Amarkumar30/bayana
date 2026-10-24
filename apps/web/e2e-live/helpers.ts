@@ -9,6 +9,17 @@ const api = () => process.env.E2E_API_URL ?? "http://127.0.0.1:4100";
 export const freshIp = () => `10.${Math.floor(Math.random() * 250) + 1}.${Math.floor(Math.random() * 250) + 1}.${Math.floor(Math.random() * 250) + 1}`;
 const mailpit = () => process.env.E2E_MAILPIT_URL ?? "http://127.0.0.1:8025";
 
+/** Whether Mailpit received an email to this address whose subject contains the text. */
+export async function mailArrived(email: string, subject: string): Promise<boolean> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const response = await fetch(`${mailpit()}/api/v1/search?query=${encodeURIComponent(`to:"${email}" subject:"${subject}"`)}`);
+    if (response.ok && ((await response.json()) as { messages?: unknown[] }).messages?.length) return true;
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+  return false;
+}
+
 /** The newest Bayana code sent to an address, read from Mailpit's API (subject "Your Bayana code: 123456"). */
 export async function codeFor(email: string, after = 0): Promise<string> {
   const deadline = Date.now() + 15_000;
@@ -43,7 +54,7 @@ export async function publishedVendor(name = "Studio Live") {
   await call("/v1/vendor/availability/rules", { windows: Array.from({ length: 7 }, (_, weekday) => ({ weekday, start_time: "09:00", end_time: "18:00" })) }, cookie, "PUT");
   await call("/v1/vendor/me", { terms: "The advance confirms your date.", cancellation_policy: "Half the advance back until 48 hours before.", rescheduling_policy: "One free reschedule with 48 hours' notice.", phone_required: true }, cookie, "PATCH");
   await call("/v1/vendor/publish", {}, cookie);
-  return { slug, serviceId: service.id, displayName: `${name} ${tag}` };
+  return { slug, serviceId: service.id, displayName: `${name} ${tag}`, email, password: "violet-harbour-lantern-42" };
 }
 
 /** Walks the stepper from the time step up to the code step, picking the first open time. */

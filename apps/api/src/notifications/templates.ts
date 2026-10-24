@@ -49,6 +49,7 @@ export type TemplateData = {
   reminder_24h: BookingFacts & { audience: "customer" | "vendor"; place: string; customerEmail: string };
   payment_review: { problem: string; bookingId: string | null; lines: string[] };
   payment_recorded: BookingFacts & { amountPaise: number; kind: "advance" | "balance"; confirmed: boolean };
+  booking_rescheduled: BookingFacts & { previousStartsAt: Date | string };
 };
 export type TemplateName = keyof TemplateData;
 
@@ -90,6 +91,7 @@ export const templates: { [K in TemplateName]: (data: TemplateData[K]) => Render
     rows: [["When", when(data.startsAt, data.timezone)], ["Where", data.place || "As agreed with the business"], ["Balance due", money(data.totalPaise - data.paidPaise)]], action: { label: "View the booking", url: data.link }
   }),
   payment_review: data => render(`[Bayana review] ${data.problem}`, { preheader: data.problem, heading: "Needs a look", paragraphs: [data.problem, ...(data.bookingId ? [`Booking ${data.bookingId}`] : [])], rows: data.lines.map((line, index): Row => [`${index + 1}`, line]), note: "Nothing was changed automatically except where the payment rules say so (late-payment refunds). Run pnpm.cmd payments:reconcile for detail." }),
-  payment_recorded: data => render(data.confirmed ? `Confirmed: ${data.service} with ${data.businessName}` : `Payment recorded: ${money(data.amountPaise)}`, { preheader: `${money(data.amountPaise)} ${data.kind}`, heading: data.confirmed ? "Your booking is confirmed" : "Payment recorded", paragraphs: [`${data.businessName} recorded your ${data.kind} payment of ${money(data.amountPaise)}.${data.confirmed ? " Your booking is confirmed." : ""}`], rows: bookingRows(data), action: { label: "View booking and receipt", url: data.link } })
+  payment_recorded: data => render(data.confirmed ? `Confirmed: ${data.service} with ${data.businessName}` : `Payment recorded: ${money(data.amountPaise)}`, { preheader: `${money(data.amountPaise)} ${data.kind}`, heading: data.confirmed ? "Your booking is confirmed" : "Payment recorded", paragraphs: [`${data.businessName} recorded your ${data.kind} payment of ${money(data.amountPaise)}.${data.confirmed ? " Your booking is confirmed." : ""}`], rows: bookingRows(data), action: { label: "View booking and receipt", url: data.link } }),
+  booking_rescheduled: data => render(`New time: ${data.service} with ${data.businessName}`, { preheader: when(data.startsAt, data.timezone), heading: "Your booking has a new time", paragraphs: [`Hi ${data.customerName}, ${data.businessName} moved your booking. Your payments and agreed terms stay the same.`], rows: [["Service", data.service], ["New time", when(data.startsAt, data.timezone)], ["Was", when(data.previousStartsAt, data.timezone)], ["Balance due", money(data.totalPaise - data.paidPaise)]], action: { label: "View the booking", url: data.link }, note: "If the new time does not work for you, reply to the business directly." })
 };
 export const renderTemplate = <K extends TemplateName>(name: K, data: TemplateData[K]) => templates[name](data);

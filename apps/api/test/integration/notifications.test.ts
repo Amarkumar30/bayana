@@ -55,7 +55,8 @@ const sample: { [K in keyof TemplateData]: TemplateData[K] } = (() => {
     otp: { code: "123456", action: "sign in", minutes: 10 }, hold_started: { ...facts, holdUntil: "2026-10-30T10:00:00Z", online: true }, booking_request_vendor: { ...facts, customerEmail: "asha@example.in" },
     booking_confirmed_customer: { ...facts, cancellation: "Full refund until 48 hours before." }, booking_confirmed_vendor: { ...facts, customerEmail: "asha@example.in" },
     booking_cancelled: { ...facts, audience: "customer", cancelledBy: "customer", reason: "Plans changed", refundPaise: 100000, refundManual: false }, refund_issued: { businessName: "Studio", customerName: "Asha", amountPaise: 100000, service: "Portrait", link: "https://bayana.in/b/x" },
-    reminder_24h: { ...facts, audience: "customer", place: "Bandra", customerEmail: "asha@example.in" }, payment_review: { problem: "Amount differs", bookingId: "b1", lines: ["Payment pay_1"] }, payment_recorded: { ...facts, amountPaise: 200000, kind: "advance", confirmed: true }
+    reminder_24h: { ...facts, audience: "customer", place: "Bandra", customerEmail: "asha@example.in" }, payment_review: { problem: "Amount differs", bookingId: "b1", lines: ["Payment pay_1"] }, payment_recorded: { ...facts, amountPaise: 200000, kind: "advance", confirmed: true },
+    booking_rescheduled: { ...facts, previousStartsAt: "2026-11-01T04:30:00Z" }
   };
 })();
 

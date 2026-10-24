@@ -69,7 +69,8 @@ async function sendReminders() {
       if (!won.rowCount) return false;
       const booking = await bookingFacts(db, id);
       await enqueue(db, "reminder_24h", booking.customerEmail, { ...booking.facts, audience: "customer", place: booking.place, customerEmail: booking.customerEmail }, { bookingId: id, dedupeKey: `reminder:${id}:customer`, senderName: booking.facts.businessName });
-      if (booking.vendorEmail) await enqueue(db, "reminder_24h", booking.vendorEmail, { ...booking.facts, audience: "vendor", place: booking.place, customerEmail: booking.customerEmail }, { bookingId: id, dedupeKey: `reminder:${id}:vendor` });
+      const vendorEmail = booking.vendorEmailFor("reminder_24h");
+      if (vendorEmail) await enqueue(db, "reminder_24h", vendorEmail, { ...booking.facts, audience: "vendor", place: booking.place, customerEmail: booking.customerEmail }, { bookingId: id, dedupeKey: `reminder:${id}:vendor` });
       return true;
     });
     if (claimed) queued++;

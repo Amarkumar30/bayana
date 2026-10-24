@@ -58,6 +58,24 @@ pnpm.cmd payments:reconcile [hours]   # report-only comparison with Razorpay
 pnpm.cmd payments:smoke   # one real test-mode payment end to end (see docs/PAYMENTS_LOCAL.md)
 ```
 
+## Admin console (/admin)
+
+Admin access is never granted by the app. Turn it on for your own account with SQL:
+
+```powershell
+docker exec -it bayana-postgres-1 psql -U bayana -d bayana_dev -c "UPDATE users SET is_admin=true WHERE email_normalized='you@example.com';"
+```
+
+Then sign in normally and open http://localhost:3000/admin.
+- The first visit sets up an authenticator app (TOTP). The setup key is shown once.
+- After that, every new session asks for a 6-digit code, and again every 12 hours.
+- If an admin loses their phone, another admin (or you, in psql) resets it. They then set it up again on the next visit:
+  ```powershell
+  docker exec -it bayana-postgres-1 psql -U bayana -d bayana_dev -c "UPDATE users SET totp_secret_enc=NULL,totp_enabled_at=NULL,totp_last_step=NULL WHERE email_normalized='you@example.com';"
+  ```
+
+Every admin page view and action is written to `audit_logs`. To diagnose a stuck booking, search for it on Health or Bookings and open it. The page lists what the booking is waiting for, with a button for the action that moves it on.
+
 ## Checks before a commit
 
 ```powershell

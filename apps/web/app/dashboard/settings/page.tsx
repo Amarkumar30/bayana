@@ -1,8 +1,8 @@
+import type { Metadata } from "next";
 import { PageHeader } from "@/components/layout/brand";
-import { PreviewBanner, previewMetadata } from "@/components/layout/preview-banner";
-import { SettingsPreview } from "./settings-preview";
+import { SettingsView } from "./settings-view";
 
-export const metadata = previewMetadata("Settings");
+export const metadata: Metadata = { title: "Settings | Bayana", robots: { index: false, follow: false } };
 export default function SettingsPage() {
-  return <><PreviewBanner /><PageHeader eyebrow="Settings" title="Account and business settings" /><SettingsPreview /></>;
+  return <><PageHeader eyebrow="Settings" title="Account and business settings" /><SettingsView /></>;
 }

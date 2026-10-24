@@ -97,7 +97,7 @@ test("the old /auth link redirects to /login and keeps a safe next", async ({ pa
 
 test("settings lists signed-in devices from the API", async ({ page }) => {
   await page.goto("/dashboard/settings");
-  await page.getByRole("tab", { name: "Security" }).click();
+  await page.getByRole("tab", { name: "Account" }).click();
   await expect(page.getByText("Chrome on Windows")).toBeVisible();
   await expect(page.getByText("Safari on iOS")).toBeVisible();
   await expect(page.getByText("This device")).toBeVisible();

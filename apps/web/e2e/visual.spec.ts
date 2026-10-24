@@ -1,6 +1,6 @@
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { mockApi } from "./mock-api";
+import { MOCK_NOW, mockApi } from "./mock-api";
 
 // Hides Next.js dev tooling from baselines; see screenshot.css.
 const stylePath = path.join(__dirname, "screenshot.css");
@@ -10,11 +10,16 @@ const pages = [
   { name: "design", path: "/design", ready: "Design system" },
   { name: "home", path: "/", ready: "Get booked." },
   { name: "login", path: "/login", ready: "Welcome back" },
-  { name: "dashboard", path: "/dashboard", ready: "Studio Sunday" }
+  { name: "dashboard", path: "/dashboard", ready: "Studio Sunday" },
+  { name: "booking-detail", path: "/dashboard/bookings/7f3c2a10-0002-4000-8000-000000000002", ready: "Rohit Malhotra" },
+  { name: "calendar", path: "/dashboard/calendar", ready: "November 2026" },
+  { name: "admin-booking", path: "/admin/bookings/7f3c2a10-0002-4000-8000-000000000002", ready: "Rohit Malhotra" }
 ];
 
 for (const { name, path: route, ready } of pages) {
   test(`${name} matches its screenshot`, async ({ page }) => {
+    // Dated content (today, next 7 days, the month) is rendered against a fixed clock.
+    await page.clock.setFixedTime(MOCK_NOW);
     await mockApi(page);
     await page.goto(route);
     const heading = page.getByRole("heading", { level: 1 }).first();

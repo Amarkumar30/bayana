@@ -65,7 +65,7 @@ bookingRouter.post("/:id/accept", handle(async (req, res) => {
 
 bookingRouter.post("/:id/cancel", handle(async (req, res) => {
   const access = await bookingAccess(req);
-  // Vendor cancellation (full refund, BK-11) belongs to the dashboard phase.
+  // Vendors cancel from the dashboard (POST /v1/vendor/bookings/:id/cancel, full refund, BK-11).
   if (access.isVendor) throw notFound();
   const body = z.object({ reason: z.string().trim().max(500).optional() }).parse(req.body ?? {});
   const view = await bookingView(access.id, access.isVendor);

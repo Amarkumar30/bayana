@@ -8,6 +8,8 @@ import { authRouter, cookieToken } from "./auth-routes.js";
 import { bookingRouter, customerBookings } from "./booking-routes.js";
 import { publicRouter } from "./public-routes.js";
 import { vendorRouter } from "./vendor-routes.js";
+import { dashboardRouter, icalRouter } from "./dashboard-routes.js";
+import { adminRouter } from "./admin-routes.js";
 import { processWebhookEvent, receiveWebhook } from "./payments/webhooks.js";
 import helmet from "helmet";
 import { runNightly, runTick, tickAuthorized } from "./jobs.js";
@@ -41,6 +43,9 @@ app.get("/ready", async (_req, res) => { try { await pool.query("SELECT 1"); res
 app.use("/v1/auth", authRouter);
 app.use("/v1/vendors", publicRouter);
 app.use("/v1/vendor", vendorRouter);
+app.use("/v1/vendor", dashboardRouter);
+app.use("/v1/ical", icalRouter);
+app.use("/v1/admin", adminRouter);
 app.use("/v1/bookings", bookingRouter);
 
 // Scheduled jobs (SPEC 15.3), called by GitHub Actions with Authorization: Bearer <TICK_SECRET>.

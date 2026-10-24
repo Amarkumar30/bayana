@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { mockApi } from "./mock-api";
 import { routes } from "./routes";
-const states = ["/dashboard/bookings?state=empty", "/dashboard/bookings?state=loading", "/dashboard/calendar?state=empty", "/dashboard/payments?state=empty"];
+// Filtered and empty variants of the dashboard lists.
+const states = ["/dashboard/bookings?status=HELD", "/dashboard/bookings?q=nobody", "/dashboard/bookings?status=PENDING"];
 
 for (const route of [...routes, ...states]) {
   test(`${route} fits the viewport and labels every control`, async ({ page }) => {
@@ -20,7 +21,7 @@ for (const route of [...routes, ...states]) {
   });
 }
 
-for (const route of ["/design", "/", "/login", "/signup", "/forgot", "/dashboard", "/dashboard/bookings", "/b/x", "/b/7f3c2a10-0001-4000-8000-000000000001", "/studio-sunday/book", "/waking"]) {
+for (const route of ["/design", "/", "/login", "/signup", "/forgot", "/dashboard", "/dashboard/bookings", "/dashboard/calendar", "/dashboard/settings", "/dashboard/bookings/7f3c2a10-0002-4000-8000-000000000002", "/admin", "/admin/bookings/7f3c2a10-0002-4000-8000-000000000002", "/b/x", "/b/7f3c2a10-0001-4000-8000-000000000001", "/studio-sunday/book", "/waking"]) {
   test(`${route} renders without console errors or hydration mismatches`, async ({ page }) => {
     const errors: string[] = [];
     page.on("console", message => { if (message.type() === "error") errors.push(message.text().slice(0, 300)); });
@@ -35,7 +36,7 @@ for (const route of ["/design", "/", "/login", "/signup", "/forgot", "/dashboard
 
 test("primary actions meet the 44px touch target on phones", async ({ page }, info) => {
   test.skip(info.project.name !== "mobile-375", "touch targets are a phone concern");
-  for (const route of ["/", "/login", "/signup", "/dashboard/bookings", "/design"]) {
+  for (const route of ["/", "/login", "/signup", "/dashboard/bookings", "/dashboard/bookings/7f3c2a10-0002-4000-8000-000000000002", "/admin", "/design"]) {
     await mockApi(page); await page.goto(route);
     // A switch's target is its whole labelled row (the <label for> toggles it), so measure that row instead of the 28px track.
     const small = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>("main button, main a[class*='min-h'], main input:not([type=checkbox]):not([type=hidden]), main select")]

@@ -59,6 +59,12 @@ export async function recordCreated(db: PoolClient, bookingId: string, status: B
   await db.query("INSERT INTO booking_events(id,booking_id,from_status,to_status,actor,reason,meta) VALUES($1,$2,NULL,$3,$4,$5,$6)", [randomUUID(), bookingId, status, actor, reason, JSON.stringify(meta)]);
 }
 
+/** An event that keeps the status (for example a reschedule): from_status = to_status, so the timeline shows it in order. */
+export async function recordChange(db: PoolClient, bookingId: string, actor: string, reason: string, meta: Meta = {}) {
+  const found = await db.query<{ status: BookingStatus }>("SELECT status FROM bookings WHERE id=$1", [bookingId]);
+  await db.query("INSERT INTO booking_events(id,booking_id,from_status,to_status,actor,reason,meta) VALUES($1,$2,$3,$3,$4,$5,$6)", [randomUUID(), bookingId, found.rows[0].status, actor, reason, JSON.stringify(meta)]);
+}
+
 /** Per-vendor transaction lock (Neon/PgBouncer safe). Holds, manual bookings and time off all take it (SPEC 9.3). */
 export async function lockVendorSchedule(db: PoolClient, vendorId: string) {
   await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))", [vendorId]);

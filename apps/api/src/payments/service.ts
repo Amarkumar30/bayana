@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { formatINR } from "@bayana/shared";
+import { writeAudit } from "../audit.js";
 import { lockVendorSchedule, transitionBooking } from "../booking-transition.js";
 import { pool, transaction } from "../database.js";
 import { bookingFacts, notifyConfirmed, notifyRefundIssued, notifyReview } from "../notifications/booking-mail.js";
@@ -23,9 +24,7 @@ export const paidSql = (bookingId: string) => `(COALESCE((SELECT SUM(amount_pais
 export async function paidPaise(db: Db, bookingId: string) {
   return Number((await db.query<{ paid: string }>(`SELECT ${paidSql("$1")} AS paid`, [bookingId])).rows[0].paid);
 }
-async function audit(db: Db, action: string, resourceId: string, metadata: Record<string, unknown>, actorUserId: string | null = null) {
-  await db.query("INSERT INTO audit_logs(id,actor_user_id,action,resource_type,resource_id,metadata) VALUES($1,$2,$3,'booking',$4,$5)", [randomUUID(), actorUserId, action, resourceId, JSON.stringify(metadata)]);
-}
+const audit = (db: Db, action: string, resourceId: string, metadata: Record<string, unknown>, actorUserId: string | null = null) => writeAudit(db, actorUserId, action, "booking", resourceId, metadata);
 
 // ---- Orders -------------------------------------------------------------------------------------------------------
 
