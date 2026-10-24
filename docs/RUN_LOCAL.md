@@ -46,6 +46,7 @@ Then:
   - Test-mode payments are covered in `docs/PAYMENTS_LOCAL.md`, including test cards, the webhook tunnel and refunds.
 - `TICK_SECRET` protects `POST /internal/jobs/tick` and `/nightly`.
 - `OPS_EMAIL` is optional and receives payment and consistency reviews.
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_REDIRECT_URI` are optional. With them set, the login page shows "Continue with Google". Setup steps are in `docs/GOOGLE_SETUP.md`.
 
 ## Background jobs locally
 

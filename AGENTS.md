@@ -51,7 +51,8 @@ Bayana is a universal advance-booking platform for independent service providers
 ## 6. Invariants (a phase is not done if any is violated or untested)
 
 **Auth**
-- One `users` row per email (case-insensitive unique). Vendors sign up with email OTP **and** a password; the account exists only after both. Returning users sign in with password **or** email OTP. Customers booking a service only verify an email OTP (no password).
+- One `users` row per email (case-insensitive unique). Vendors sign up with a verified email OTP **or** Google (Google-verified email); a password is optional and can be set later. Returning vendors sign in with Google, email OTP, or a password if they set one. Customers booking a service only verify an email OTP (no password).
+- Google sign-in: authorization code + PKCE, state and nonce checked, ID token verified (signature, iss, aud, exp, nonce, email_verified), single-use callback, no provider tokens stored, `next` only from the allowlist. An existing Google identity signs in its user; else the same email is linked; never a second user for one email. Off when `GOOGLE_CLIENT_ID` is unset. The last sign-in method can never be removed.
 - OTP: 6 digits from `crypto.randomInt`, stored as HMAC-SHA256 with a server pepper, bound to a purpose (`signup`, `login`, `reset`, `booking_verify`), 10-minute expiry, 5 attempts counted atomically, single-use, resend cooldown.
 - Passwords: argon2id (bcrypt cost 12 or higher only if argon2 will not install on Windows), minimum 10 characters, never logged.
 - Sessions: random 32-byte token, only its SHA-256 stored, httpOnly cookie, SameSite=Lax, Secure in production, revocable, rotated on login and on password change.

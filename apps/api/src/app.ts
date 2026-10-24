@@ -10,6 +10,7 @@ import { publicRouter } from "./public-routes.js";
 import { vendorRouter } from "./vendor-routes.js";
 import { dashboardRouter, icalRouter } from "./dashboard-routes.js";
 import { adminRouter } from "./admin-routes.js";
+import { googleRouter } from "./google/routes.js";
 import { processWebhookEvent, receiveWebhook } from "./payments/webhooks.js";
 import helmet from "helmet";
 import { runNightly, runTick, tickAuthorized } from "./jobs.js";
@@ -41,6 +42,7 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 app.get("/ready", async (_req, res) => { try { await pool.query("SELECT 1"); res.json({ ok: true }); } catch (errorValue) { log("error", "ready.database_unreachable", { requestId: res.locals.requestId, err: errorValue instanceof Error ? errorValue.message : String(errorValue) }); res.status(503).json(errorBody("NOT_READY", "Database is not reachable")); } });
 
 app.use("/v1/auth", authRouter);
+app.use("/v1/auth", googleRouter);
 app.use("/v1/vendors", publicRouter);
 app.use("/v1/vendor", vendorRouter);
 app.use("/v1/vendor", dashboardRouter);

@@ -56,7 +56,7 @@ async function signUp(email = newEmail("vendor")) {
 }
 const userCount = async (email: string) => Number((await pool.query("SELECT count(*) FROM users WHERE email_normalized=$1", [email.toLowerCase()])).rows[0].count);
 
-describe("AU-01 signup needs a verified code and a password", () => {
+describe("AU-01 signup needs a verified code; a password is optional but must be acceptable when given", () => {
   it("creates nothing for a password without a valid code", async () => {
     const email = newEmail("nocode"); const c = client();
     await requestCode(c, email, "signup");
@@ -64,9 +64,8 @@ describe("AU-01 signup needs a verified code and a password", () => {
     expect(reply.status).toBe(400); expect(reply.body).toMatchObject({ error: { code: "OTP_INVALID" } });
     expect(await userCount(email)).toBe(0);
   });
-  it("creates nothing for a code without an acceptable password, and leaves the code usable", async () => {
+  it("creates nothing for a code with an unacceptable password, and leaves the code usable", async () => {
     const email = newEmail("nopw"); const c = client(); const code = await requestCode(c, email, "signup");
-    expect((await c.call("POST", "/signup", { email, code })).status).toBe(400);
     expect((await c.call("POST", "/signup", { email, code, password: "short" })).body).toMatchObject({ error: { code: "INVALID_PASSWORD" } });
     expect(await userCount(email)).toBe(0);
     expect((await c.call("POST", "/signup", { email, code, password })).status).toBe(201);

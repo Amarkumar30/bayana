@@ -12,7 +12,8 @@ const shape = {
   PAYMENT_MODE: z.enum(["disabled", "test", "live"]).default("disabled"), LIVE_PAYMENTS_ACK: optional(z.literal("yes")), RAZORPAY_KEY_ID: optional(z.string().min(1)), RAZORPAY_KEY_SECRET: optional(z.string().min(1)), RAZORPAY_WEBHOOK_SECRET: optional(z.string().min(16)), PAYMENT_PROVIDER: z.enum(["razorpay", "fake"]).default("razorpay"),
   EMAIL_TRANSPORT: optional(z.enum(["smtp", "log", "capture"])), SMTP_URL: optional(z.string().url()), EMAIL_FROM: optional(z.string().min(3)),
   SESSION_SECRET: z.string().min(32), OTP_PEPPER: optional(z.string().min(16)),
-  TICK_SECRET: optional(z.string().min(32)), OPS_EMAIL: optional(z.string().email())
+  TICK_SECRET: optional(z.string().min(32)), OPS_EMAIL: optional(z.string().email()),
+  GOOGLE_CLIENT_ID: optional(z.string().regex(/^[\w.-]+\.apps\.googleusercontent\.com$/)), GOOGLE_CLIENT_SECRET: optional(z.string().min(8)), GOOGLE_REDIRECT_URI: optional(z.string().url().refine(url => /\/v1\/auth\/google\/callback$/.test(new URL(url).pathname)))
 };
 type Shape = typeof shape;
 type Parsed = { [K in keyof Shape]: z.infer<Shape[K]> };
@@ -29,7 +30,9 @@ export const allowedValues: Record<keyof Shape, string> = {
   RAZORPAY_KEY_SECRET: "the key secret paired with RAZORPAY_KEY_ID (required when PAYMENT_MODE=test or live)", RAZORPAY_WEBHOOK_SECRET: "the secret you chose for the Razorpay webhook, at least 16 characters (optional in test mode until the webhook exists)", PAYMENT_PROVIDER: "razorpay, or fake (NODE_ENV=test only, used by automated tests)",
   EMAIL_TRANSPORT: "one of smtp, log (development only), capture (test only); defaults to capture when NODE_ENV=test, otherwise smtp", SMTP_URL: "an smtp:// URL, e.g. smtp://localhost:1025 for Mailpit", EMAIL_FROM: "a sender like Bayana <hello@bayana.in>",
   SESSION_SECRET: "a random value of at least 32 characters (pnpm.cmd setup:env generates one)", OTP_PEPPER: "a random value of at least 16 characters (required in production)",
-  TICK_SECRET: "a random value of at least 32 characters that the scheduled job runner sends (required in production; pnpm.cmd setup:env generates one)", OPS_EMAIL: "empty, or the address that receives payment and consistency reviews"
+  TICK_SECRET: "a random value of at least 32 characters that the scheduled job runner sends (required in production; pnpm.cmd setup:env generates one)", OPS_EMAIL: "empty, or the address that receives payment and consistency reviews",
+  GOOGLE_CLIENT_ID: "empty (Google sign-in off), or the OAuth client id ending in .apps.googleusercontent.com (docs/GOOGLE_SETUP.md)", GOOGLE_CLIENT_SECRET: "the OAuth client secret paired with GOOGLE_CLIENT_ID",
+  GOOGLE_REDIRECT_URI: "the API callback URL registered in Google, e.g. http://localhost:4000/v1/auth/google/callback"
 };
 
 export type EnvProblem = { name: string; rule: string };
@@ -86,6 +89,8 @@ export function loadConfig(input: NodeJS.ProcessEnv = process.env, envFile = "ap
   if (keyId?.startsWith("rzp_test_") && v.PAYMENT_MODE === "live") problem("RAZORPAY_KEY_ID", "must be a live key (rzp_live_...) when PAYMENT_MODE=live");
   if (v.PAYMENT_PROVIDER === "fake" && v.NODE_ENV !== "test") problem("PAYMENT_PROVIDER", "may be fake only when NODE_ENV=test");
   if (v.PAYMENT_MODE === "live" && (!production || v.LIVE_PAYMENTS_ACK !== "yes")) problem("PAYMENT_MODE", "may be live only with NODE_ENV=production and LIVE_PAYMENTS_ACK=yes");
+  // Google sign-in is optional: without a client id it is simply off. With one, the secret and callback URL must be set too.
+  if (v.GOOGLE_CLIENT_ID) for (const name of ["GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"] as const) if (!v[name]) problem(name, `is required when GOOGLE_CLIENT_ID is set; set it to ${allowedValues[name]}`);
   if (problems.length || !webOrigins || !databaseUrl) throw new ConfigError(problems, envFile);
   const { WEB_ORIGIN: _legacyOrigin, WEB_ORIGINS: _origins, DATABASE_URL: _database, DATABASE_URL_DIRECT: direct, ...rest } = v as Parsed;
   return { ...rest, EMAIL_TRANSPORT: transport, WEB_ORIGINS: webOrigins, DATABASE_URL: databaseUrl, DATABASE_URL_DIRECT: v.NODE_ENV === "test" ? databaseUrl : direct ?? databaseUrl, OTP_PEPPER: v.OTP_PEPPER ?? (v as Parsed).SESSION_SECRET };

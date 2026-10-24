@@ -139,10 +139,14 @@ function adminRoute(route: Route, path: string, state: VendorState) {
 
 export const MOCK_PASSWORD = "correct-horse-battery-9", MOCK_CODE = "123456";
 const user = { id: "u1", email: "studio@example.in", role: "VENDOR" };
+let passwordSet = false;
 /** Mirrors the real auth API's contract: uniform 202 for code requests, INVALID_CREDENTIALS / OTP_INVALID for bad input. */
 function authRoute(route: Route, path: string) {
   const body = (route.request().postDataJSON() ?? {}) as Record<string, string>;
   if (path === "/v1/auth/otp/request") return route.fulfill({ status: 202, json: { ok: true } });
+  if (path === "/v1/auth/providers") return route.fulfill({ json: { google: true } });
+  if (path === "/v1/auth/methods") return route.fulfill({ json: { email_code: true, password: { set: passwordSet }, google: { available: true, connected: true, email: "studio@gmail.com" } } });
+  if (path === "/v1/auth/password" && route.request().method() === "PUT") { passwordSet = true; return route.fulfill({ json: { password: { set: true } } }); }
   if (path === "/v1/auth/login") return body.password !== undefined
     ? route.fulfill(body.password === MOCK_PASSWORD ? { json: { user } } : fail(401, "INVALID_CREDENTIALS", "Invalid email or password"))
     : route.fulfill(body.code === MOCK_CODE ? { json: { user } } : fail(400, "OTP_INVALID", "That code is wrong or has expired."));
@@ -175,6 +179,7 @@ function publicRoute(route: Route, path: string) {
 
 /** Answers vendor and auth calls from in-memory state; everything else is a 401 in the API's error shape. */
 export async function mockApi(page: Page, state: VendorState = establishedVendor()) {
+  passwordSet = false;
   await page.route(`${MOCK_API_URL}/**`, route => {
     const path = new URL(route.request().url()).pathname;
     if (path.startsWith("/v1/vendor/")) return vendorRoute(route, path, state);

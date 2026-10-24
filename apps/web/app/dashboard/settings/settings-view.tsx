@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react";
 import { CalendarPlus, Copy, Download } from "lucide-react";
 import { env } from "@/env";
 import { SessionsCard } from "@/components/auth/sessions-card";
+import { SignInMethods } from "@/components/auth/sign-in-methods";
 import { Gate, useVendorData } from "@/components/dashboard/load";
 import type { Settings } from "@/components/dashboard/types";
 import { Button } from "@/components/ui/button";
@@ -18,13 +19,14 @@ import { api, humanMessage, vendorMessage } from "@/lib/api";
 type Data = { profile: Profile; settings: Settings };
 
 /** SPEC 5.3 settings: profile and public page, notifications, calendar feed, sessions, export and delete. */
-export function SettingsView() {
+export function SettingsView({ google }: { google?: { connected?: boolean; error?: string } }) {
   const [state, reload] = useVendorData<Data>("settings", async () => { const [profile, settings] = await Promise.all([api<Profile>("/v1/vendor/me"), api<Settings>("/v1/vendor/settings")]); return { profile, settings }; });
   const skeleton = <LoadingState label="Loading settings…" className="grid gap-4"><Skeleton className="h-11 w-full max-w-md" /><Skeleton className="h-96 rounded-card" /></LoadingState>;
   return <Gate state={state} skeleton={skeleton} retry={() => void reload()} next="/dashboard/settings">{({ profile, settings }) => (
-    <Tabs defaultValue="profile">
-      <TabsList aria-label="Settings sections"><TabsTrigger value="profile">Profile</TabsTrigger><TabsTrigger value="notifications">Notifications</TabsTrigger><TabsTrigger value="calendar">Calendar feed</TabsTrigger><TabsTrigger value="account">Account</TabsTrigger></TabsList>
+    <Tabs defaultValue={google?.connected || google?.error ? "sign-in" : "profile"}>
+      <TabsList aria-label="Settings sections"><TabsTrigger value="profile">Profile</TabsTrigger><TabsTrigger value="sign-in">Sign-in methods</TabsTrigger><TabsTrigger value="notifications">Notifications</TabsTrigger><TabsTrigger value="calendar">Calendar feed</TabsTrigger><TabsTrigger value="account">Account</TabsTrigger></TabsList>
       <TabsContent value="profile"><ProfileForm profile={profile} onSaved={() => void reload()} /></TabsContent>
+      <TabsContent value="sign-in"><SignInMethods result={google} /></TabsContent>
       <TabsContent value="notifications"><NotificationsCard initial={settings.notify_prefs} /></TabsContent>
       <TabsContent value="calendar"><CalendarFeedCard enabled={settings.ical_enabled} /></TabsContent>
       <TabsContent value="account" className="grid gap-4"><SessionsCard /><ExportCard /><DeleteCard slug={profile.slug} email={settings.account_email} /></TabsContent>

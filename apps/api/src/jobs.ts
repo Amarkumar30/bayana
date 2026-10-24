@@ -103,12 +103,13 @@ async function reconcilePayments() {
 async function cleanup() {
   const otp = await pool.query("DELETE FROM otp_codes WHERE created_at < now() - interval '1 day'");
   const sessions = await pool.query("DELETE FROM sessions WHERE (expires_at < now() - interval '30 days') OR (revoked_at IS NOT NULL AND revoked_at < now() - interval '30 days')");
+  const googleStates = await pool.query("DELETE FROM oauth_login_states WHERE created_at < now() - interval '1 day'");
   const webhooks = await pool.query("UPDATE webhook_events SET payload=jsonb_build_object('event', type, 'trimmed', true) WHERE received_at < now() - interval '90 days' AND NOT (payload ? 'trimmed')");
   const stuck = await pool.query("UPDATE webhook_events SET needs_review=true, error=COALESCE(error,'') || ' (still waiting after a day)' WHERE processed_at IS NULL AND needs_review=false AND received_at < now() - interval '1 day'");
   const bodies = await pool.query("UPDATE email_outbox SET text_body='[removed after 90 days]', html_body=NULL, body_purged_at=now() WHERE created_at < now() - interval '90 days' AND body_purged_at IS NULL AND status <> 'queued'");
   // A login code that was never delivered has expired after 10 minutes; do not keep it.
   const codes = await pool.query("UPDATE email_outbox SET subject='Your Bayana code', text_body='[expired code removed]', html_body=NULL, body_purged_at=now(), status=CASE WHEN status='queued' THEN 'failed' ELSE status END, failed_at=CASE WHEN status='queued' THEN now() ELSE failed_at END WHERE template='otp' AND body_purged_at IS NULL AND created_at < now() - interval '15 minutes'");
-  return { otp_codes_deleted: otp.rowCount, sessions_deleted: sessions.rowCount, webhook_payloads_trimmed: webhooks.rowCount, webhooks_flagged_stuck: stuck.rowCount, email_bodies_removed: bodies.rowCount, expired_code_emails_removed: codes.rowCount };
+  return { otp_codes_deleted: otp.rowCount, sessions_deleted: sessions.rowCount, google_states_deleted: googleStates.rowCount, webhook_payloads_trimmed: webhooks.rowCount, webhooks_flagged_stuck: stuck.rowCount, email_bodies_removed: bodies.rowCount, expired_code_emails_removed: codes.rowCount };
 }
 
 /** SPEC 17.4 integrity queries. Findings are reported (job details plus a review email), never auto-fixed. */
