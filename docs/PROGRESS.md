@@ -293,3 +293,11 @@ Facts for the next session:
 - 4a7b71f production start with missing variables: exit 1, names only (test). API image built: /health 200; /ready 503 against a fake DB host; no .env in the image; runs as node.
 - Gates: typecheck 0, lint 0, test 0 (116 API unit + 9 web unit + 175 integration), build 0; gitleaks no leaks (7 new commits, 32 total).
 - Still open: bayana_app runtime role; per-IP rate limits for server-side calls from Vercel; test:visual on a production build.
+
+## Brevo HTTPS email transport - 2026-10-25 (branch hosting-ready; not pushed)
+- EMAIL_TRANSPORT=brevo_api: POST https://api.brevo.com/v3/smtp/email with the api-key header, built-in fetch (no new dependency), 10 s timeout. The sender is parsed from EMAIL_FROM (per-vendor names kept); htmlContent and textContent are sent; the app sets no reply-to. 2xx = sent; 4xx, 5xx, network error or timeout throw BrevoSendError (status + Brevo's short error code only), so the existing outbox backoff applies. Logs: email.sent with status and messageId only.
+- Config: BREVO_API_KEY (min 20) and EMAIL_FROM required with brevo_api; SMTP_URL not needed; names-only errors. The logger now also redacts field names matching api-key. .env.example, render.yaml (sync: false) and the DEPLOY.md matrix plus the email section are updated; staging and production rows now say brevo_api.
+- smtp, log and capture are unchanged (same templates, outbox and urgent kick).
+- Tests: unit email-brevo.test.ts (success, 4xx, 5xx, network error, timeout, sender parsing, config names only, no key in errors); integration email-brevo-outbox.test.ts (the real outbox with brevo_api and a stubbed fetch: sent row and log; 401 and 503 stay queued with backoff; no key, code or address in the row or log).
+- Gates: typecheck 0, lint 0, test 0 (126 API unit + 9 web unit + 178 integration), build 0.
+- NOT TESTED: a real send to Brevo (needs the user's API key and the authenticated domain).

@@ -12,6 +12,7 @@
   - A late payment re-claims the slot, or goes to EXPIRED_PAID with an automatic full refund.
   - A vendor cancellation refunds 100%. Refund previews and refunds use the same `refundPreview`.
 - **Email and jobs:** all email goes through `email_outbox`. Codes, payments and confirmations are priority 0, sent right after commit (`kickUrgent`). Backoff is 1, 5, 30 and 120 minutes, then failed. OTP bodies are blanked once sent.
+  - Delivery: `EMAIL_TRANSPORT=smtp` (local Mailpit) or `brevo_api` (HTTPS to Brevo, no SMTP port; `apps/api/src/email-brevo.ts`, needs `BREVO_API_KEY` + `EMAIL_FROM`). Deployed environments should use brevo_api. Its failures throw, so the same outbox backoff applies. It logs only the status and message id. The logger also redacts any field named like api-key.
   - No timers: GitHub Actions call `POST /internal/jobs/tick` (every 10 min) and `/nightly` with `Bearer TICK_SECRET`. Both stay off until the repo variable `JOBS_ENABLED=true`. Every run is in `job_runs`.
 - **Auth: Google + email code is BUILT** (branch auth-google-signin). The password is optional. Google links by subject, then by email, never a second user. No Google tokens are stored. The sign-in state is single-use in `oauth_login_states`. Google is off without `GOOGLE_CLIENT_ID`.
 - **Admin:** `users.is_admin` is set only by SQL, plus TOTP per session for 12 hours. The TOTP secret is encrypted with a key derived from `SESSION_SECRET`. Rotating `SESSION_SECRET` breaks sessions, booking links, admin TOTP and in-flight Google sign-ins.
