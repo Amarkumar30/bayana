@@ -160,7 +160,7 @@ The free plan sleeps after 15 minutes idle and takes about a minute to wake. The
 2. Set **Root Directory** to `apps/web`. Framework: Next.js. Leave **Include files outside the root directory** on; the app needs `packages/shared`.
 3. Set these overrides:
    - **Install Command:** `pnpm install --frozen-lockfile`
-   - **Build Command:** `pnpm --filter "@bayana/web..." build`. This builds `@bayana/shared` first; plain `next build` fails because `@bayana/shared` ships `dist/`.
+   - **Build Command:** leave Vercel's default (`pnpm run build` in `apps/web`). The web `build` script is `pnpm --filter @bayana/shared build && next build`, so it builds `@bayana/shared` (which ships `dist/`) first wherever it runs: Vercel, CI or a clean checkout.
    - **Node.js Version:** 22.x
 4. Add the environment variables from section 7 (web rows):
    - Under **Preview**, use the staging values.
@@ -170,7 +170,8 @@ The free plan sleeps after 15 minutes idle and takes about a minute to wake. The
    - Staging: `staging.bayana.in`, assigned to the Git branch `hosting-ready` (Settings > Domains > Git Branch), with the staging values under **Preview**.
    - Production: `bayana.in`, plus `www.bayana.in` set to **Redirect to bayana.in (308)**.
    - **Vercel preview URLs (`*.vercel.app`) cannot talk to the API.** The API accepts writes only from an exact origin in `WEB_ORIGINS` and refuses any request the browser marks cross-site (`apps/api/src/origin-check.ts`). CORS is exact-match too (`apps/api/src/app.ts`), and the session cookie is scoped to the bayana.in domains. A preview deployment renders, but sign-in, booking and every API read fail. Adding a preview URL to `WEB_ORIGINS` does not help, because `*.vercel.app` is a different site. Test on the stable domains only: `staging.bayana.in` and `bayana.in`.
-6. Vercel **Hobby** is non-commercial. It is fine for staging and personal testing, but production that earns money must move to Pro or another host first (section 9).
+6. There is no web Docker image: `apps/web/Dockerfile` was removed because Vercel builds and hosts the web app, and that file could not build (it ran `next build` without the required `NEXT_PUBLIC_*` values). The only image is the API's (`apps/api/Dockerfile`, used by Render).
+7. Vercel **Hobby** is non-commercial. It is fine for staging and personal testing, but production that earns money must move to Pro or another host first (section 9).
 
 ## 6. DNS (Cloudflare) — merge, don't replace
 
