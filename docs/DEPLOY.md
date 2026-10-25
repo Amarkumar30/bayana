@@ -99,6 +99,8 @@ Clean up with `docker rm -f bayana-api-rehearsal`.
 2. In the Neon dashboard, copy both connection strings:
    - **Pooled** (the host contains `-pooler`). This is the API's `DATABASE_URL`.
    - **Direct** (no `-pooler`). This is `DATABASE_URL_DIRECT`, used by migrations, backups and the check below.
+   - Both must end in **`?sslmode=require`**, as Neon shows them. Without it, `pg` connects without TLS and Neon refuses the connection.
+   - The API's pool (`apps/api/src/database.ts`) is sized for this: at most 10 connections, idle ones closed after 10 s, and up to 15 s to connect, because a suspended Neon compute takes a few seconds to wake. A connection Neon drops while idle is logged (`database.idle_client_error`) and replaced; it never crashes the API. `/ready` retries its read-only check once after a dropped connection.
 3. Prove compatibility. The check runs `CREATE EXTENSION btree_gist`, tests an exclusion constraint like the double-booking guard, and tests `pg_advisory_xact_lock` and `SET LOCAL`. Everything is rolled back, so it is safe to repeat.
    ```powershell
    $env:NEON_CHECK_URL = "<direct connection string>"
@@ -121,8 +123,8 @@ Migrations run from the same image Render will run, against the **direct** URL. 
 2. Run:
    ```powershell
    docker build -f apps/api/Dockerfile -t bayana-api:local .
-   docker run --rm --env-file C:\dev\secrets\staging.env bayana-api:local node dist/src/migrate.js --status   # read-only: lists pending
-   docker run --rm --env-file C:\dev\secrets\staging.env bayana-api:local node dist/src/migrate.js            # applies them
+   docker run --rm --env-file C:\dev\secrets\staging-migrate.env bayana-api:local node dist/src/migrate.js --status   # read-only: lists pending
+   docker run --rm --env-file C:\dev\secrets\staging-migrate.env bayana-api:local node dist/src/migrate.js            # applies them
    ```
 3. Expect `Applied N migrations.` On later runs, expect `Checksums of applied migrations verified.`
 4. Delete the env file afterwards, or keep it encrypted.

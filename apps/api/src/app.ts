@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import { config } from "./config.js";
-import { pool } from "./database.js";
+import { pool, readWithOneRetry } from "./database.js";
 import { currentUser, type SessionUser } from "./auth.js";
 import { authRouter, cookieToken } from "./auth-routes.js";
 import { bookingRouter, customerBookings } from "./booking-routes.js";
@@ -43,7 +43,7 @@ app.use(originCheck);
 app.use(express.json({ limit: "32kb" }));
 app.use(rateLimit({ windowMs: 15 * 60_000, limit: 300, standardHeaders: "draft-8", legacyHeaders: false }));
 app.get("/health", (_req, res) => res.json({ ok: true }));
-app.get("/ready", async (_req, res) => { try { await pool.query("SELECT 1"); res.json({ ok: true }); } catch (errorValue) { log("error", "ready.database_unreachable", { requestId: res.locals.requestId, err: errorValue instanceof Error ? errorValue.message : String(errorValue) }); res.status(503).json(errorBody("NOT_READY", "Database is not reachable")); } });
+app.get("/ready", async (_req, res) => { try { await readWithOneRetry(() => pool.query("SELECT 1")); res.json({ ok: true }); } catch (errorValue) { log("error", "ready.database_unreachable", { requestId: res.locals.requestId, err: errorValue instanceof Error ? errorValue.message : String(errorValue) }); res.status(503).json(errorBody("NOT_READY", "Database is not reachable")); } });
 
 app.use("/v1/auth", authRouter);
 app.use("/v1/auth", googleRouter);
