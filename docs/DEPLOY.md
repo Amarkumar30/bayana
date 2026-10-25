@@ -170,8 +170,9 @@ The free plan sleeps after 15 minutes idle and takes about a minute to wake. The
    - Staging: `staging.bayana.in`, assigned to the Git branch `hosting-ready` (Settings > Domains > Git Branch), with the staging values under **Preview**.
    - Production: `bayana.in`, plus `www.bayana.in` set to **Redirect to bayana.in (308)**.
    - **Vercel preview URLs (`*.vercel.app`) cannot talk to the API.** The API accepts writes only from an exact origin in `WEB_ORIGINS` and refuses any request the browser marks cross-site (`apps/api/src/origin-check.ts`). CORS is exact-match too (`apps/api/src/app.ts`), and the session cookie is scoped to the bayana.in domains. A preview deployment renders, but sign-in, booking and every API read fail. Adding a preview URL to `WEB_ORIGINS` does not help, because `*.vercel.app` is a different site. Test on the stable domains only: `staging.bayana.in` and `bayana.in`.
-6. There is no web Docker image: `apps/web/Dockerfile` was removed because Vercel builds and hosts the web app, and that file could not build (it ran `next build` without the required `NEXT_PUBLIC_*` values). The only image is the API's (`apps/api/Dockerfile`, used by Render).
-7. Vercel **Hobby** is non-commercial. It is fine for staging and personal testing, but production that earns money must move to Pro or another host first (section 9).
+6. **HSTS:** production and staging (HTTPS) send `Strict-Transport-Security: max-age=63072000; includeSubDomains` (`apps/web/security-headers.ts`), deliberately **without `preload`**. Preloading puts `bayana.in` and every subdomain into browsers' built-in HTTPS-only list, and removal takes months. Add `preload` (and submit at hstspreload.org) only after production has run cleanly on HTTPS, every subdomain included, for several months.
+7. There is no web Docker image: `apps/web/Dockerfile` was removed because Vercel builds and hosts the web app, and that file could not build (it ran `next build` without the required `NEXT_PUBLIC_*` values). The only image is the API's (`apps/api/Dockerfile`, used by Render).
+8. Vercel **Hobby** is non-commercial. It is fine for staging and personal testing, but production that earns money must move to Pro or another host first (section 9).
 
 ## 6. DNS (Cloudflare) — merge, don't replace
 
