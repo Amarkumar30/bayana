@@ -207,7 +207,11 @@ Rules:
   - Send one booking email to the address mail-tester.com gives you, and confirm SPF, DKIM and DMARC all pass (staging check 11).
   - Send one email from Zoho to Gmail and confirm "Show original" still shows SPF, DKIM and DMARC as PASS.
 
-Brevo SMTP for the API is `SMTP_URL=smtp://<login>:<smtp-key>@smtp-relay.brevo.com:587`. URL-encode the login, because its `@` becomes `%40`. `EMAIL_FROM` must use the authenticated domain, for example `Bayana <bookings@bayana.in>`, with replies going to the Zoho mailbox.
+**Sending from the API: use Brevo's HTTPS API.** Set `EMAIL_TRANSPORT=brevo_api` and `BREVO_API_KEY` (Brevo > SMTP & API > **API keys**, a key starting `xkeysib-`; not the SMTP key). Mail then goes over HTTPS on port 443 (`POST https://api.brevo.com/v3/smtp/email`, `apps/api/src/email-brevo.ts`), so it doesn't depend on the host allowing outbound SMTP ports. Behaviour is the same as SMTP: same templates and outbox. A non-2xx answer, a network error or no answer within 10 s leaves the email queued with the usual backoff (1, 5, 30, 120 minutes). Logs show only `email.sent` with Brevo's status and message id; the key, addresses and bodies are never logged.
+
+SMTP still works as an alternative: `EMAIL_TRANSPORT=smtp` with `SMTP_URL=smtp://<login>:<smtp-key>@smtp-relay.brevo.com:587`. URL-encode the login, because its `@` becomes `%40`.
+
+Either way, `EMAIL_FROM` must use the authenticated domain, for example `Bayana <bookings@bayana.in>`, with replies going to the Zoho mailbox. Brevo receives the display name and address parsed from it, including the per-vendor "Studio via Bayana" names.
 
 ## 7. Environment variable matrix
 
@@ -231,8 +235,9 @@ API variables are validated at startup (`apps/api/src/config-schema.ts`) and the
 | `OTP_PEPPER` | generated | new random | new random | yes |
 | `TICK_SECRET` | generated | new random (= GitHub secret) | new random (= GitHub secret) | yes |
 | `OPS_EMAIL` | optional | your inbox | your inbox | no |
-| `EMAIL_TRANSPORT` | smtp (Mailpit) | smtp | smtp | no |
-| `SMTP_URL` | smtp://localhost:1025 | Brevo SMTP URL | Brevo SMTP URL | yes |
+| `EMAIL_TRANSPORT` | smtp (Mailpit) | brevo_api | brevo_api | no |
+| `BREVO_API_KEY` | empty | Brevo API key | Brevo API key | yes |
+| `SMTP_URL` | smtp://localhost:1025 | empty (only with `EMAIL_TRANSPORT=smtp`) | empty (only with `EMAIL_TRANSPORT=smtp`) | yes |
 | `EMAIL_FROM` | Bayana <hello@bayana.local> | Bayana Staging <bookings@bayana.in> | Bayana <bookings@bayana.in> | no |
 | `PAYMENT_MODE` | disabled or test | test | disabled (live only after section 9) | no |
 | `RAZORPAY_KEY_ID` | rzp_test_… | rzp_test_… | empty while disabled | no |

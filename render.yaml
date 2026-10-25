@@ -56,6 +56,9 @@ services:
         sync: false
       - key: SMTP_URL
         sync: false
+      # With EMAIL_TRANSPORT=brevo_api (HTTPS, recommended here) set BREVO_API_KEY and leave SMTP_URL empty.
+      - key: BREVO_API_KEY
+        sync: false
       - key: EMAIL_FROM
         sync: false
       - key: PAYMENT_MODE

@@ -14,14 +14,14 @@ const shape = {
   DATABASE_URL: optional(z.string().url()), DATABASE_URL_DIRECT: optional(z.string().url()), DATABASE_URL_TEST: optional(z.string().url()),
   HOLD_MINUTES: z.coerce.number().int().min(1).default(15), REQUEST_HOLD_HOURS: z.coerce.number().int().min(1).max(168).default(48), MIN_ADVANCE_PAISE: z.coerce.number().int().positive().default(10000),
   PAYMENT_MODE: z.enum(["disabled", "test", "live"]).default("disabled"), LIVE_PAYMENTS_ACK: optional(z.literal("yes")), RAZORPAY_KEY_ID: optional(z.string().min(1)), RAZORPAY_KEY_SECRET: optional(z.string().min(1)), RAZORPAY_WEBHOOK_SECRET: optional(z.string().min(16)), PAYMENT_PROVIDER: z.enum(["razorpay", "fake"]).default("razorpay"),
-  EMAIL_TRANSPORT: optional(z.enum(["smtp", "log", "capture"])), SMTP_URL: optional(z.string().url()), EMAIL_FROM: optional(z.string().min(3)),
+  EMAIL_TRANSPORT: optional(z.enum(["smtp", "brevo_api", "log", "capture"])), SMTP_URL: optional(z.string().url()), BREVO_API_KEY: optional(z.string().min(20)), EMAIL_FROM: optional(z.string().min(3)),
   SESSION_SECRET: z.string().min(32), OTP_PEPPER: optional(z.string().min(16)),
   TICK_SECRET: optional(z.string().min(32)), OPS_EMAIL: optional(z.string().email()),
   GOOGLE_CLIENT_ID: optional(z.string().regex(/^[\w.-]+\.apps\.googleusercontent\.com$/)), GOOGLE_CLIENT_SECRET: optional(z.string().min(8)), GOOGLE_REDIRECT_URI: optional(z.string().url().refine(url => /\/v1\/auth\/google\/callback$/.test(new URL(url).pathname)))
 };
 type Shape = typeof shape;
 type Parsed = { [K in keyof Shape]: z.infer<Shape[K]> };
-export type EmailTransport = "smtp" | "log" | "capture";
+export type EmailTransport = "smtp" | "brevo_api" | "log" | "capture";
 export type Config = Omit<Parsed, "WEB_ORIGIN" | "WEB_ORIGINS" | "DATABASE_URL" | "DATABASE_URL_DIRECT" | "EMAIL_TRANSPORT"> & { EMAIL_TRANSPORT: EmailTransport; WEB_ORIGINS: string[]; DATABASE_URL: string; DATABASE_URL_DIRECT: string; OTP_PEPPER: string };
 
 /** What each variable accepts, in words. Shown instead of the (possibly secret) value that was rejected. */
@@ -33,7 +33,7 @@ export const allowedValues: Record<keyof Shape, string> = {
   HOLD_MINUTES: "a whole number of minutes, at least 1", REQUEST_HOLD_HOURS: "a whole number of hours from 1 to 168", MIN_ADVANCE_PAISE: "a positive whole number of paise",
   PAYMENT_MODE: "one of disabled, test, live (use disabled locally)", LIVE_PAYMENTS_ACK: "empty, or yes (production with live payments only)", RAZORPAY_KEY_ID: "an rzp_test_ key id with PAYMENT_MODE=test (may stay set, unused, while disabled); rzp_live_ only with PAYMENT_MODE=live",
   RAZORPAY_KEY_SECRET: "the key secret paired with RAZORPAY_KEY_ID (required when PAYMENT_MODE=test or live)", RAZORPAY_WEBHOOK_SECRET: "the secret you chose for the Razorpay webhook, at least 16 characters (optional in test mode until the webhook exists)", PAYMENT_PROVIDER: "razorpay, or fake (NODE_ENV=test only, used by automated tests)",
-  EMAIL_TRANSPORT: "one of smtp, log (development only), capture (test only); defaults to capture when NODE_ENV=test, otherwise smtp", SMTP_URL: "an smtp:// URL, e.g. smtp://localhost:1025 for Mailpit", EMAIL_FROM: "a sender like Bayana <hello@bayana.in>",
+  EMAIL_TRANSPORT: "one of smtp, brevo_api (HTTPS, no SMTP port needed), log (development only), capture (test only); defaults to capture when NODE_ENV=test, otherwise smtp", BREVO_API_KEY: "the Brevo API key (SMTP & API > API keys), required when EMAIL_TRANSPORT=brevo_api", SMTP_URL: "an smtp:// URL, e.g. smtp://localhost:1025 for Mailpit", EMAIL_FROM: "a sender like Bayana <hello@bayana.in>",
   SESSION_SECRET: "a random value of at least 32 characters (pnpm.cmd setup:env generates one)", OTP_PEPPER: "a random value of at least 16 characters (required in production)",
   TICK_SECRET: "a random value of at least 32 characters that the scheduled job runner sends (required in production; pnpm.cmd setup:env generates one)", OPS_EMAIL: "empty, or the address that receives payment and consistency reviews",
   GOOGLE_CLIENT_ID: "empty (Google sign-in off), or the OAuth client id ending in .apps.googleusercontent.com (docs/GOOGLE_SETUP.md)", GOOGLE_CLIENT_SECRET: "the OAuth client secret paired with GOOGLE_CLIENT_ID",
@@ -105,6 +105,7 @@ export function loadConfig(input: NodeJS.ProcessEnv = process.env, envFile = "ap
   if (production && !v.TICK_SECRET) problem("TICK_SECRET", "is required in production (scheduled jobs call /internal/jobs with it)");
   // Tests keep email in memory unless a run opts into SMTP explicitly (the live browser suite reads codes from Mailpit).
   const transport: EmailTransport = v.EMAIL_TRANSPORT ?? (v.NODE_ENV === "test" ? "capture" : "smtp");
+  if (transport === "brevo_api") { if (!v.BREVO_API_KEY) problem("BREVO_API_KEY", `is required when EMAIL_TRANSPORT=brevo_api; set it to ${allowedValues.BREVO_API_KEY}`); if (!v.EMAIL_FROM) problem("EMAIL_FROM", `is required when EMAIL_TRANSPORT=brevo_api; set it to ${allowedValues.EMAIL_FROM}`); }
   if (transport === "smtp") { if (!v.SMTP_URL) problem("SMTP_URL", `is required when EMAIL_TRANSPORT=smtp; set it to ${allowedValues.SMTP_URL}`); if (!v.EMAIL_FROM) problem("EMAIL_FROM", `is required when EMAIL_TRANSPORT=smtp; set it to ${allowedValues.EMAIL_FROM}`); }
   if (transport === "log" && v.NODE_ENV !== "development") problem("EMAIL_TRANSPORT", "may be log only when NODE_ENV=development");
   if (transport === "capture" && v.NODE_ENV !== "test") problem("EMAIL_TRANSPORT", "may be capture only when NODE_ENV=test");
