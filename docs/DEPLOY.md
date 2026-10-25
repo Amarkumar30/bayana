@@ -5,8 +5,10 @@ Step-by-step setup for **staging** and **production** (SPEC section 16). Local d
 | Environment | Web (Vercel)        | API (Render)            | Database                  | Payments                   |
 |-------------|---------------------|-------------------------|---------------------------|----------------------------|
 | Local       | localhost:3000      | localhost:4000          | Docker Postgres 16        | disabled or test           |
-| Staging     | staging.bayana.in   | api-staging.bayana.in   | Neon project `bayana-staging` | test                   |
+| Staging     | staging.bayana.in   | api.staging.bayana.in   | Neon project `bayana-staging` | test                   |
 | Production  | bayana.in           | api.bayana.in           | Neon project `bayana-prod`    | disabled, then live only after section 9 |
+
+Staging deploys from the branch **`hosting-ready`** for now (render.yaml `branch:`, and the Vercel staging domain). Switch both to `main` once hosting-ready is merged.
 
 Ground rules:
 - Values live only in the host dashboards and your password manager. This repo holds names only (`render.yaml`, `.env.example` files).
@@ -56,7 +58,7 @@ curl.exe -s http://localhost:4100/ready         # {"ok":true}  (proves the datab
 
 ### Cookie rehearsal (SPEC 16.7 check 3, local)
 
-This proves that the production cookie settings work across sub-domains. Staging uses `staging.bayana.in` and `api-staging.bayana.in`; locally the same shape is `app.localtest.me` and `api.localtest.me`.
+This proves that the production cookie settings work across sub-domains. Staging uses `staging.bayana.in` and `api.staging.bayana.in` (cookie domain `.staging.bayana.in`); locally the same shape is `app.localtest.me` and `api.localtest.me` (cookie domain `.localtest.me`).
 
 ```powershell
 pnpm.cmd --filter @bayana/web test:cookies
@@ -125,8 +127,9 @@ For production, take a backup first (see `docs/RESTORE.md`) whenever the pending
 
 ## 4. Render (API)
 
-1. Push the branch containing `render.yaml` to GitHub.
-2. In Render, go to **New > Blueprint**, pick the repo, and apply `render.yaml`. It creates `bayana-api-staging`:
+1. Push the branch containing `render.yaml` (`hosting-ready`) to GitHub.
+2. In Render, go to **New > Blueprint**, pick the repo and the branch `hosting-ready`, and apply `render.yaml`. It creates `bayana-api-staging`:
+   - deploys from `hosting-ready` (`branch:` in render.yaml; change it to `main` after the merge);
    - Docker runtime, free plan, Singapore;
    - health check `/health`;
    - `NODE_ENV=production` and `TRUST_PROXY=1` already set.
@@ -137,7 +140,7 @@ For production, take a backup first (see `docs/RESTORE.md`) whenever the pending
    curl.exe -s https://bayana-api-staging.onrender.com/ready
    ```
    Both should return `{"ok":true}`.
-5. **Custom domain.** In the service's Settings > Custom Domains, add `api-staging.bayana.in`. Add the CNAME it shows in Cloudflare (section 6) as **DNS only (grey cloud)**, and wait for the certificate.
+5. **Custom domain.** In the service's Settings > Custom Domains, add `api.staging.bayana.in`. Add the CNAME it shows in Cloudflare (section 6) as **DNS only (grey cloud)**, and wait for the certificate (Render issues it).
 6. `TRUST_PROXY=1` is correct while Cloudflare is grey-clouded (only Render's proxy is in front). If you later turn the orange cloud on, set `TRUST_PROXY=2`.
 7. Verify by signing in once, then running `SELECT host(ip) FROM sessions ORDER BY created_at DESC LIMIT 1;` in the Neon SQL editor. It must show your real public IP, not a Render address.
 
@@ -158,8 +161,9 @@ The free plan sleeps after 15 minutes idle and takes about a minute to wake. The
    - Under **Production**, use the production values.
    - `NEXT_PUBLIC_*` values are baked in at build time, so redeploy after changing one.
 5. Domains:
-   - Staging project or branch: `staging.bayana.in`.
+   - Staging: `staging.bayana.in`, assigned to the Git branch `hosting-ready` (Settings > Domains > Git Branch), with the staging values under **Preview**.
    - Production: `bayana.in`, plus `www.bayana.in` set to **Redirect to bayana.in (308)**.
+   - **Vercel preview URLs (`*.vercel.app`) cannot talk to the API.** The API accepts writes only from an exact origin in `WEB_ORIGINS` and refuses any request the browser marks cross-site (`apps/api/src/origin-check.ts`). CORS is exact-match too (`apps/api/src/app.ts`), and the session cookie is scoped to the bayana.in domains. A preview deployment renders, but sign-in, booking and every API read fail. Adding a preview URL to `WEB_ORIGINS` does not help, because `*.vercel.app` is a different site. Test on the stable domains only: `staging.bayana.in` and `bayana.in`.
 6. Vercel **Hobby** is non-commercial. It is fine for staging and personal testing, but production that earns money must move to Pro or another host first (section 9).
 
 ## 6. DNS (Cloudflare) — merge, don't replace
@@ -176,7 +180,7 @@ Keep every Zoho record exactly as it is.
 | CNAME | `www` | `cname.vercel-dns.com` | DNS only | www → Vercel (redirects to apex) |
 | CNAME | `staging` | `cname.vercel-dns.com` | DNS only | staging web |
 | CNAME | `api` | `bayana-api-prod.onrender.com` (exact value from Render) | DNS only | production API |
-| CNAME | `api-staging` | `bayana-api-staging.onrender.com` (exact value from Render) | DNS only | staging API |
+| CNAME | `api.staging` | `bayana-api-staging.onrender.com` (exact value from Render) | DNS only | staging API (`api.staging.bayana.in`) |
 | MX | `@` | **existing Zoho MX** (for India: `mx.zoho.in` 10, `mx2.zoho.in` 20, `mx3.zoho.in` 50) | — | keep unchanged |
 | TXT | `@` | **one** SPF record: `v=spf1 include:zoho.in include:spf.brevo.com ~all` | — | merged SPF, see below |
 | TXT | `zmail._domainkey` (your Zoho selector) | **existing Zoho DKIM** | — | keep unchanged |
@@ -189,7 +193,7 @@ Rules:
 - DKIM selectors differ (Zoho `zmail`, Brevo `brevo1`/`brevo2`), so both coexist.
 - **Exactly one DMARC record.** If `_dmarc` already exists, keep its `rua` and edit it in place. Start with `p=none`. After two weeks of clean reports from both Zoho and Brevo mail, move to `p=quarantine`.
 - If the zone has CAA records, they must allow `letsencrypt.org` and `pki.goog` for Vercel and Render certificates.
-- The API and web records stay grey-clouded (DNS only) so certificates issue and `TRUST_PROXY=1` stays correct.
+- The API and web records stay grey-clouded (DNS only) so certificates issue and `TRUST_PROXY=1` stays correct. Grey is also required for `api.staging.bayana.in`: it is two levels deep, and Cloudflare's free Universal SSL covers only one (`*.bayana.in`). An orange-clouded `api.staging` would need an Advanced Certificate.
 - Verify:
   - Brevo's domain page shows all checks green.
   - Send one booking email to the address mail-tester.com gives you, and confirm SPF, DKIM and DMARC all pass (staging check 11).
@@ -209,8 +213,8 @@ API variables are validated at startup (`apps/api/src/config-schema.ts`) and the
 | `APP_ENV` | local | staging | production | no |
 | `PORT` | 4000 | set by Render | set by Render | no |
 | `TRUST_PROXY` | 0 | 1 (in render.yaml) | 1 (in render.yaml) | no |
-| `WEB_ORIGINS` | http://localhost:3000 | https://staging.bayana.in | https://bayana.in | no |
-| `SESSION_COOKIE_DOMAIN` | empty | .bayana.in (see cookie note) | .bayana.in | no |
+| `WEB_ORIGINS` | http://localhost:3000 | https://staging.bayana.in | https://bayana.in (add `,https://www.bayana.in` only if www is ever served instead of redirected) | no |
+| `SESSION_COOKIE_DOMAIN` | empty (host-only) | .staging.bayana.in | .bayana.in | no |
 | `DATABASE_URL` | Docker `bayana_dev` | Neon staging **pooled** | Neon prod **pooled** | yes |
 | `DATABASE_URL_DIRECT` | empty | Neon staging **direct** | Neon prod **direct** | yes |
 | `DATABASE_URL_TEST` | Docker `bayana_test` | not set | not set | no |
@@ -227,13 +231,17 @@ API variables are validated at startup (`apps/api/src/config-schema.ts`) and the
 | `RAZORPAY_WEBHOOK_SECRET` | from test webhook | from staging test webhook | empty while disabled | yes |
 | `LIVE_PAYMENTS_ACK` | empty | **never set** | **never set** until section 9 | no |
 | `HOLD_MINUTES`, `REQUEST_HOLD_HOURS`, `MIN_ADVANCE_PAISE` | defaults (15, 48, 10000) | defaults | defaults | no |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` | arrive with the Google sign-in branch | per-environment OAuth client; redirect `https://api-staging.bayana.in/v1/auth/google/callback` | redirect `https://api.bayana.in/v1/auth/google/callback` | secret: yes |
+| `GOOGLE_CLIENT_ID` | from the local OAuth client (docs/GOOGLE_SETUP.md); empty turns Google off | staging OAuth client id | production OAuth client id | no |
+| `GOOGLE_CLIENT_SECRET` | local client secret | staging client secret | production client secret | yes |
+| `GOOGLE_REDIRECT_URI` | http://localhost:4000/v1/auth/google/callback | https://api.staging.bayana.in/v1/auth/google/callback | https://api.bayana.in/v1/auth/google/callback | no |
+
+**Google sign-in per environment.** All three Google variables are needed together (`GOOGLE_CLIENT_ID` alone fails startup), and Google stays off while `GOOGLE_CLIENT_ID` is empty. Use one OAuth client per environment in Google Cloud (APIs & Services > Credentials, type "Web application"). Give each exactly one **Authorized redirect URI**, the value in the table, character for character. The path is the API's `/v1/auth/google/callback`, on the API host, not the web host. No JavaScript origins are needed: the flow is server-side (authorization code with PKCE). After Google returns, the API sends the browser to the **first** entry of `WEB_ORIGINS`, so the site origin must come first there. The consent screen must be **published** (or each tester added as a test user) before anyone outside the test list can sign in; see docs/GOOGLE_SETUP.md.
 
 ### Web (Vercel: Preview = staging, Production = production; locally `apps/web/.env.local`)
 
 | Variable | Local | Staging | Production |
 |----------|-------|---------|------------|
-| `NEXT_PUBLIC_API_URL` | http://localhost:4000 | https://api-staging.bayana.in | https://api.bayana.in |
+| `NEXT_PUBLIC_API_URL` | http://localhost:4000 | https://api.staging.bayana.in | https://api.bayana.in |
 | `NEXT_PUBLIC_SITE_URL` | http://localhost:3000 | https://staging.bayana.in | https://bayana.in |
 | `NEXT_PUBLIC_RAZORPAY_KEY_ID` | empty or rzp_test_… | rzp_test_… | empty (the web build refuses live ids) |
 
@@ -243,13 +251,17 @@ Every `NEXT_PUBLIC_*` value is public. Never put a secret there.
 
 | Name | Kind | Used by | Value |
 |------|------|---------|-------|
-| `API_URL` | secret | tick.yml, nightly.yml | `https://api-staging.bayana.in` (no trailing slash) |
+| `API_URL` | secret | tick.yml, nightly.yml | `https://api.staging.bayana.in` (no trailing slash) |
 | `TICK_SECRET` | secret | tick.yml, nightly.yml | same as the API's `TICK_SECRET` |
 | `JOBS_ENABLED` | variable | tick.yml, nightly.yml | `true` to switch the schedulers on |
 | `BACKUP_DATABASE_URL`, `BACKUP_AGE_RECIPIENT`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | secrets | backup.yml | see `docs/RESTORE.md` |
 | `BACKUPS_ENABLED` | variable | backup.yml | `true` only when you decide to start backups |
 
-**Cookie note (staging and production share `.bayana.in`).** Both environments use the cookie name `bayana_session` with `Domain=.bayana.in`. One browser signed in to both would send both cookies to each API, and one environment would see the other's token and answer 401. Until the auth code supports a per-environment cookie name, test staging in a separate browser profile. This needs an auth change, so it is reported to the auth work stream, not changed here.
+**Cookie domains: why staging lives under `staging.bayana.in`.** The session cookie `bayana_session` must reach both the web host and the API host, so it is set with a `Domain`:
+- **Staging:** `Domain=.staging.bayana.in`. It is sent only to `staging.bayana.in` and `api.staging.bayana.in`, never to `bayana.in` or `api.bayana.in`, so a staging login can no longer reach production. With the old names (`api-staging.bayana.in`, cookie on `.bayana.in`), both environments would have shared one cookie scope.
+- **Production:** `Domain=.bayana.in`. It covers `bayana.in` and `api.bayana.in`, and, because `staging.bayana.in` is a subdomain of `bayana.in`, the staging hosts as well.
+
+So separation is **one-way** until the code fix below. A browser signed in to production sends its production `bayana_session` to staging too. Staging then receives two cookies with the same name and may read the production one (and answer 401). It never accepts that token, because sessions are stored per database, but a production session token still reaches the staging server. **Code fix pending:** a per-environment cookie name (for example `bayana_session_staging`), set from config by the API and read by the web helpers. Until it lands, test staging in a separate browser profile that has never signed in to production.
 
 ## 8. Staging go-live checklist (SPEC 16.7)
 
@@ -257,9 +269,10 @@ Run each check and record PASS or FAIL with the date.
 
 | # | Check | How | Pass when |
 |---|-------|-----|-----------|
-| 1 | Health | `curl.exe -s https://api-staging.bayana.in/health` and `/ready` | both `{"ok":true}` |
+| 1 | Health | `curl.exe -s https://api.staging.bayana.in/health` and `/ready` | both `{"ok":true}` |
 | 2 | Accounts | signup, logout, password login, OTP login for one email | all four work |
-| 3 | Cookies | sign in on staging.bayana.in, reload the dashboard | session survives reload and server fetch; cookie shows `Domain=.bayana.in; Secure; HttpOnly; SameSite=Lax` in DevTools |
+| 2b | Google sign-in | "Continue with Google" on staging.bayana.in/login with a test user; then the same email by code; then Settings > Sign-in methods | lands on the dashboard (new vendors on /onboarding); the code login reaches the **same** account; one `users` row for the email |
+| 3 | Cookies | sign in on staging.bayana.in, reload the dashboard | session survives reload and server fetch; cookie shows `Domain=.staging.bayana.in; Secure; HttpOnly; SameSite=Lax` in DevTools; no `bayana_session` cookie appears on bayana.in |
 | 4 | Booking + test payment | book, pay with a Razorpay test card | HELD → PENDING → CONFIRMED, emails arrive, ledger correct |
 | 5 | Race | double-click and two browsers on one slot | exactly one booking |
 | 6 | Closed tab | close the tab right after paying | webhook confirms the booking |
@@ -270,7 +283,7 @@ Run each check and record PASS or FAIL with the date.
 | 11 | Email auth | mail-tester.com | SPF, DKIM, DMARC pass |
 | 12 | No secrets | GitHub secret scanning, browser bundle search for `rzp_` secrets and `SESSION_SECRET`, Render log review | clean |
 
-Razorpay test webhook: in the Razorpay **Test** dashboard, go to Webhooks and set the URL `https://api-staging.bayana.in/webhooks/razorpay`. This path has no `/v1` prefix (`apps/api/src/app.ts`); SPEC 16.5 shows an older one. Subscribe to `payment.captured`, `payment.failed`, `order.paid`, `refund.processed` and `refund.failed` (the same list as `docs/PAYMENTS_LOCAL.md`), and put the secret into `RAZORPAY_WEBHOOK_SECRET` on Render.
+Razorpay test webhook: in the Razorpay **Test** dashboard, go to Webhooks and set the URL `https://api.staging.bayana.in/webhooks/razorpay`. This path has no `/v1` prefix (`apps/api/src/app.ts`); SPEC 16.5 shows an older one. Subscribe to `payment.captured`, `payment.failed`, `order.paid`, `refund.processed` and `refund.failed` (the same list as `docs/PAYMENTS_LOCAL.md`), and put the secret into `RAZORPAY_WEBHOOK_SECRET` on Render.
 
 ## 9. Cost gates before the first live rupee (SPEC 16.8)
 
@@ -293,8 +306,9 @@ When to leave the free tiers is covered in SPEC 16.9: at the first paying vendor
 1. Make sure the cost-gate rows you need for the launch type are done.
 2. Create the Neon prod project and pass `pnpm.cmd db:check-neon`.
 3. Run migrations (section 3) with the prod env file.
-4. Deploy the Render prod service, attach the domain `api.bayana.in`, and check `/health` and `/ready`.
-5. Set the Vercel production env, deploy, and attach `bayana.in` and `www`.
-6. Add the GitHub secrets for the prod API (or a second set of workflows), and set `JOBS_ENABLED=true`.
-7. Enable backups (`docs/RESTORE.md`) and run one manual backup and one restore drill.
-8. Run checks 1–3, 8, 10 and 12 of section 8 against production.
+4. Deploy the Render prod service (`branch: main`, `SESSION_COOKIE_DOMAIN=.bayana.in`, `WEB_ORIGINS=https://bayana.in`), attach the domain `api.bayana.in`, and check `/health` and `/ready`.
+5. Create the production Google OAuth client with the redirect URI `https://api.bayana.in/v1/auth/google/callback`, publish the consent screen, and set the three `GOOGLE_*` variables on the prod service. You can leave them empty to launch with email codes only.
+6. Set the Vercel production env, deploy, and attach `bayana.in` and `www`.
+7. Add the GitHub secrets for the prod API (or a second set of workflows), and set `JOBS_ENABLED=true`.
+8. Enable backups (`docs/RESTORE.md`) and run one manual backup and one restore drill.
+9. Run checks 1–3 (and 2b if Google is on), 8, 10 and 12 of section 8 against production.
