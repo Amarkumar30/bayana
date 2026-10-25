@@ -1,0 +1,95 @@
+name: Database backup
+# Nightly logical backup (SPEC 17.3): pg_dump over the DIRECT Neon URL -> verify -> encrypt with age -> upload to
+# Cloudflare R2 (S3 API). Retention: daily/ keeps 7, weekly/ keeps 4 (set as R2 lifecycle rules, see docs/RESTORE.md).
+#
+# DISABLED. It does nothing until BOTH are done:
+#   1. Uncomment the schedule below.
+#   2. Set the repository variable BACKUPS_ENABLED=true (Settings > Secrets and variables > Actions > Variables).
+# Even a manual run is skipped while BACKUPS_ENABLED is not true. Required secrets (names only; values never in the repo):
+#   BACKUP_DATABASE_URL    Neon DIRECT connection string (no -pooler), ideally a read-only role
+#   BACKUP_AGE_RECIPIENT   age PUBLIC key (age1...); the private key stays offline in your password manager
+#   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET   an R2 token limited to that one bucket
+# Restoring: docs/RESTORE.md and scripts/restore.mjs.
+on:
+  # schedule:
+  #   - cron: "30 21 * * *" # 03:00 IST
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: database-backup
+  cancel-in-progress: false
+env:
+  # Must be >= the Neon server's major version; check it with pnpm.cmd db:check-neon.
+  PG_MAJOR: "16"
+jobs:
+  backup:
+    if: ${{ vars.BACKUPS_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check configuration (names only)
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          missing=0
+          for name in BACKUP_DATABASE_URL BACKUP_AGE_RECIPIENT R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET; do
+            if [ -z "${!name}" ]; then echo "Missing secret: $name"; missing=1; fi
+          done
+          case "$BACKUP_DATABASE_URL" in *-pooler*) echo "BACKUP_DATABASE_URL must be the DIRECT URL, not the -pooler one"; missing=1;; esac
+          case "$BACKUP_AGE_RECIPIENT" in age1*) ;; *) echo "BACKUP_AGE_RECIPIENT must be an age public key (age1...)"; missing=1;; esac
+          exit $missing
+
+      - name: Install pg_dump ${{ env.PG_MAJOR }} and age
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-common age
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -qq "postgresql-client-$PG_MAJOR"
+          "/usr/lib/postgresql/$PG_MAJOR/bin/pg_dump" --version
+
+      - name: Dump, verify and encrypt
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_AGE_RECIPIENT: ${{ secrets.BACKUP_AGE_RECIPIENT }}
+        run: |
+          set -euo pipefail
+          umask 077
+          bin="/usr/lib/postgresql/$PG_MAJOR/bin"
+          name="bayana-$(date -u +%Y%m%dT%H%MZ).dump"
+          "$bin/pg_dump" --format=custom --no-owner --no-privileges --file "$RUNNER_TEMP/$name" "$BACKUP_DATABASE_URL"
+          # A dump that pg_restore cannot list is not a backup.
+          entries=$("$bin/pg_restore" --list "$RUNNER_TEMP/$name" | grep -cv '^;')
+          echo "Archive entries: $entries"
+          age --encrypt --recipient "$BACKUP_AGE_RECIPIENT" --output "$RUNNER_TEMP/$name.age" "$RUNNER_TEMP/$name"
+          rm -f "$RUNNER_TEMP/$name"
+          (cd "$RUNNER_TEMP" && sha256sum "$name.age" > "$name.age.sha256")
+          echo "BACKUP_NAME=$name.age" >> "$GITHUB_ENV"
+
+      - name: Upload to R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          endpoint="https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com"
+          prefixes="daily"
+          # Sunday's copy is also kept as a weekly one.
+          if [ "$(date -u +%u)" = "7" ]; then prefixes="daily weekly"; fi
+          for prefix in $prefixes; do
+            for file in "$BACKUP_NAME" "$BACKUP_NAME.sha256"; do
+              aws s3 cp --only-show-errors --endpoint-url "$endpoint" "$RUNNER_TEMP/$file" "s3://$R2_BUCKET/$prefix/$file"
+            done
+            echo "Uploaded $prefix/$BACKUP_NAME"
+          done
+
+      - name: Remove local copies
+        if: always()
+        run: rm -f "$RUNNER_TEMP"/bayana-*.dump "$RUNNER_TEMP"/bayana-*.dump.age "$RUNNER_TEMP"/bayana-*.sha256

@@ -24,7 +24,9 @@ const schemas = {
   bookingOtpVerify: z.object({ email, code }).strict()
 };
 
-export const cookieToken = (req: Request) => req.headers.cookie?.split(";").map(value => value.trim()).find(value => value.startsWith(`${sessionCookieName}=`))?.slice(sessionCookieName.length + 1);
+/** The value of exactly the cookie called `name`; a cookie with any other name (another environment's, say) is ignored. */
+export const readCookie = (header: string | undefined, name: string) => header?.split(";").map(value => value.trim()).find(value => value.startsWith(`${name}=`))?.slice(name.length + 1);
+export const cookieToken = (req: Request) => readCookie(req.headers.cookie, sessionCookieName);
 export const cookieOptions = () => ({ httpOnly: true, sameSite: "lax" as const, secure: config.NODE_ENV === "production", path: "/", ...(config.SESSION_COOKIE_DOMAIN ? { domain: config.SESSION_COOKIE_DOMAIN } : {}) });
 const setSessionCookie = (res: Response, token: string) => res.cookie(sessionCookieName, token, { ...cookieOptions(), maxAge: 30 * 24 * 60 * 60_000 });
 const clearSessionCookie = (res: Response) => res.clearCookie(sessionCookieName, cookieOptions());

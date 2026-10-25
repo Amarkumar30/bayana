@@ -249,3 +249,47 @@ Facts for the next session:
 - After moving the repo: run `pnpm.cmd install --frozen-lockfile` and delete apps/web/.next (broken links and a stale cache). `git worktree repair` was done for C:\dev\bayana-phase11 (its 17 uncommitted files untouched).
 - Never run pnpm dev at the same time as test:e2e/test:visual/build, including from another session: they share apps/web/.next.
 - Next: branch hosting-ready from this commit, bring in C:\dev\bayana-phase11, adapt to Google sign-in + Phase 10, test, push only that branch.
+
+## Phase 10 close-out - 2026-10-25 (branch phase-10-hardening, after 5db0c48)
+- Test-speed root cause: every password hash in the suite used production argon2id (64 MiB, t=3). NODE_ENV=test now uses m=1024, t=1 (passwordHashOptions, apps/api/src/auth.ts:18), with the unknown-email dummy hash built from the same options. test/unit/password-hashing.test.ts proves production and development keep 64 MiB and t=3.
+- AU-04: the 20 s timeout is removed; it compares medians of 11 interleaved runs (ratio 0.5-2) and takes about 0.2 s. dashboard-admin.test.ts never hashed passwords; its old timeouts came from gates running alongside dev/build/Playwright.
+- docs/LOCALHOST_SIGNOFF.md: each item now has how to check, the expected result and the evidence.
+- Gates (each alone, dev stopped): typecheck 0, lint 0, test 0/0/0 (three runs, 94 unit + 164 integration each), build 0, test:visual 0 (227 passed, 1 skipped), test:e2e 0 (4 + 2), then signoff:local 0 against pnpm dev.
+- test:visual is still exposed to next dev hot-swapping layout.css mid-test (seen once as /design losing every sm: rule; visual.spec.ts now waits for hydration and sm: padding, and screenshot.css is back to the original). Real fix, not done: run the visual suite on next build + next start and re-baseline.
+- Another session pushed phase-10-hardening and fast-forwarded origin/main to 5db0c48 (adds docs/DEPLOY_REVIEW_BUNDLE.md). gitleaks over 21 commits: no leaks.
+
+<!-- Imported unchanged from the phase-11-deploy-prep worktree (uncommitted there); superseded where the hosting-ready entry below says so. -->
+## Phase 11 Deploy preparation - 2026-10-24 (branch phase-11-deploy-prep, worktree C:\dev\bayana-phase11)
+- Built in a separate git worktree outside OneDrive, from 40f974c, because a parallel session was editing auth-google-signin in the main folder. Merge by PR; expect a small conflict only in docs/PROGRESS.md and in root and apps/web package.json scripts.
+- API image: built, migrated a new local DB bayana_rehearsal (production config refuses _dev/_test names), then ran with NODE_ENV=production and TRUST_PROXY=1. Checked: /health and /ready return 200, X-Forwarded-For is honoured, the cookie is Secure/HttpOnly/Lax with Domain, the container runs as user node, no code or cookie appears in the logs.
+- render.yaml (Docker runtime, /health check, names only). docs/DEPLOY.md: rehearsal, Neon, migrations via the image, Render, Vercel (build `pnpm --filter "@bayana/web..." build`), DNS merged with Zoho, variable matrix, staging checklist, cost gates. docs/DEPLOYMENT.md now points there.
+- Neon: src/neon-compat.ts + src/neon-check.ts (`pnpm.cmd db:check-neon`, all rolled back) and test/integration/neon-compat.test.ts. Grep test test/unit/pgbouncer-safety.test.ts covers session locks (migrate.ts is the only allowed one, on the direct URL), plain SET, set_config(..., false) and LISTEN/NOTIFY.
+- Cookies: apps/web/lib/session-forward.ts + lib/server-api.ts (no page uses serverApi yet). Unit test lib/session-forward.test.mjs (`node --test`; web test:unit is now part of root test:unit). Browser rehearsal against the production image: `pnpm.cmd --filter @bayana/web test:cookies` (needs full Chromium, channel "chromium").
+- Backups: .github/workflows/backup.yml is DISABLED (schedule commented out, plus a BACKUPS_ENABLED guard; pg_dump, then age, then R2). scripts/restore.mjs (`pnpm.cmd db:restore`) refuses non-empty targets. docs/RESTORE.md has the setup and drill log. Local drill into bayana_restore_drill passed.
+- Local DBs created: bayana_rehearsal, bayana_restore_drill, bayana_phase11_test (all disposable).
+- For the auth stream: (1) staging and production share cookie name bayana_session on .bayana.in; needs a per-environment cookie name. (2) migrate.ts needs the full production config (SMTP, TICK_SECRET...), so it can't run with DB URLs alone. (3) Server-side calls from Vercel bucket per-IP rate limits by Vercel's IP.
+- Next: Phase 12 (staging go-live), following docs/DEPLOY.md.
+
+## hosting-ready - 2026-10-25 (branch hosting-ready, from phase-10-hardening 8b647fb; not pushed)
+- Imported the Phase 11 files unchanged (commit 8a8ee7a): render.yaml, docs/DEPLOY.md, docs/RESTORE.md, the disabled backup workflow, scripts/restore.mjs, the Neon check (`pnpm.cmd db:check-neon`), the PgBouncer grep test, and the web session-forward helpers with the cookie rehearsal. The package.json scripts were merged by hand. All the imported tests pass against Phase 10 code.
+- Adapted (commit 611b44e): staging = staging.bayana.in + api.staging.bayana.in with SESSION_COOKIE_DOMAIN=.staging.bayana.in; production stays bayana.in, api.bayana.in, .bayana.in. Google variables and per-environment redirect URIs; WEB_ORIGINS[0] must be the site (the Google callback returns there); checklist 2b. Render staging deploys from hosting-ready. Vercel preview URLs are blocked by the origin check and CORS. DEPLOYMENT.md is a pointer; DEPLOY_REVIEW_BUNDLE.md is git-ignored but still tracked (`git rm --cached docs/DEPLOY_REVIEW_BUNDLE.md` untracks it and keeps the file).
+- Supersedes the Phase 11 entry: the cookie-name item is now one-way (staging's cookie no longer reaches production, but production's `.bayana.in` cookie still reaches the staging hosts).
+- Gates on hosting-ready: typecheck 0, lint 0, test 0 (100 API unit + 4 web unit + 166 integration), build 0; gitleaks: no leaks (2 new commits, 24 total).
+- Code fixes still needed (none made here):
+  1. A per-environment session cookie name (API `sessionCookieName`/`cookieOptions` from config; web `SESSION_COOKIE` in lib/session-forward.ts must read the same name).
+  2. `migrate.ts` must run with database URLs alone; today production config also demands SMTP, TICK_SECRET, etc.
+  3. Server-side API calls from Vercel would share Vercel's IP for per-IP rate limits (only matters once a page uses serverApi; none does yet).
+  4. The runtime should connect as a member of the `bayana_app` role (no rewrite rights on evidence tables).
+  5. Run test:visual on next build + next start (next dev hot-swaps CSS mid-test).
+
+## hosting-ready code fixes - 2026-10-25 (branch hosting-ready; not pushed)
+- 91333d9 untracked docs/DEPLOY_REVIEW_BUNDLE.md (still on disk, git-ignored).
+- cf77891 SESSION_COOKIE_NAME (default bayana_session; staging bayana_staging_session) for the API session cookie and the Google state cookie, plus the web server helpers (server-only loadServerEnv). Tests: a token under the other name gets 401; only this environment's cookie is forwarded.
+- 9283e76 migrate.ts and db:check-neon load a database-only config (NODE_ENV + database URL). Tests run the real scripts with only those variables; the name checks are kept.
+- e4f7e8f pool: max 10, idle 10 s, connect 15 s; pool.on("error") logs and never crashes (a real killed idle client is logged as 57P01); /ready retries once on ECONNRESET, ETIMEDOUT, 57P01 or 08006. DEPLOY.md: URLs need sslmode=require.
+- c52db0c graceful shutdown on SIGTERM/SIGINT (10 s grace, pool ended, exit 0); tested in-process, and docker stop on the image exits 0.
+- de24189 web build runs `pnpm --filter @bayana/shared build && next build` (verified from a deleted shared/dist); apps/web/Dockerfile removed.
+- c96e6ad HSTS without preload (apps/web/security-headers.ts, node:test).
+- 4a7b71f production start with missing variables: exit 1, names only (test). API image built: /health 200; /ready 503 against a fake DB host; no .env in the image; runs as node.
+- Gates: typecheck 0, lint 0, test 0 (116 API unit + 9 web unit + 175 integration), build 0; gitleaks no leaks (7 new commits, 32 total).
+- Still open: bayana_app runtime role; per-IP rate limits for server-side calls from Vercel; test:visual on a production build.

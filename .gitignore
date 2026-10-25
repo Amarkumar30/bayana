@@ -11,3 +11,6 @@ backups/
 test-results/
 playwright-report/
 .gitleaks-report.json
+
+# Local review dump (redacted, but a copy of repo internals); keep it out of git.
+docs/DEPLOY_REVIEW_BUNDLE.md
