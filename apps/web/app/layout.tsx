@@ -4,8 +4,11 @@ import { Fraunces, Inter } from "next/font/google";
 import { ToastProvider } from "@/components/ui/toast";
 import { env } from "@/env";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
-const fraunces = Fraunces({ subsets: ["latin"], variable: "--font-fraunces", display: "swap", axes: ["opsz"] });
+// display "optional": on a slow first visit the size-matched fallback stays for that page view instead of swapping late,
+// which would repaint the largest text (LCP) and shift the layout (CLS); the font is cached for the next page.
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "optional" });
+// Headings only: not preloaded, so it never competes with the page itself for a slow connection.
+const fraunces = Fraunces({ subsets: ["latin"], variable: "--font-fraunces", display: "optional", preload: false });
 
 export const metadata: Metadata = { metadataBase: new URL(env.NEXT_PUBLIC_SITE_URL), title: "Bayana", description: "Advance bookings for independent service businesses", applicationName: "Bayana", openGraph: { siteName: "Bayana", type: "website", locale: "en_IN" } };
 export const viewport: Viewport = { themeColor: [{ media: "(prefers-color-scheme: light)", color: "#fafaf7" }, { media: "(prefers-color-scheme: dark)", color: "#0f1218" }] };

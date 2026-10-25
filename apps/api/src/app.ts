@@ -11,11 +11,13 @@ import { vendorRouter } from "./vendor-routes.js";
 import { dashboardRouter, icalRouter } from "./dashboard-routes.js";
 import { adminRouter } from "./admin-routes.js";
 import { googleRouter } from "./google/routes.js";
+import { privacyRouter } from "./privacy.js";
 import { processWebhookEvent, receiveWebhook } from "./payments/webhooks.js";
 import helmet from "helmet";
 import { runNightly, runTick, tickAuthorized } from "./jobs.js";
 import { log, requestId } from "./logger.js";
 import { errorBody, errorHandler, notFoundHandler } from "./errors.js";
+import { originCheck } from "./origin-check.js";
 
 export const app = express();
 const userFor = (req: express.Request) => currentUser(pool, cookieToken(req));
@@ -24,7 +26,8 @@ const requireUser = async (req: express.Request, res: express.Response, role?: S
 app.disable("x-powered-by");
 app.set("trust proxy", config.TRUST_PROXY);
 app.use((req, res, next) => { res.locals.requestId = requestId(); res.setHeader("x-request-id", res.locals.requestId); next(); });
-app.use(helmet());
+// A JSON API: nothing it returns should ever run or embed anything. Receipts and the calendar feed are downloads.
+app.use(helmet({ contentSecurityPolicy: { useDefaults: false, directives: { defaultSrc: ["'none'"], frameAncestors: ["'none'"], baseUri: ["'none'"], formAction: ["'none'"] } }, crossOriginResourcePolicy: { policy: "same-site" } }));
 app.use(cors({ origin: config.WEB_ORIGINS, credentials: true }));
 // Razorpay webhooks need the raw body for the signature, so this route is mounted before express.json (SPEC 11.3).
 app.post("/webhooks/razorpay", express.raw({ type: "*/*", limit: "1mb" }), async (req, res, next) => {
@@ -36,6 +39,7 @@ app.post("/webhooks/razorpay", express.raw({ type: "*/*", limit: "1mb" }), async
     if (eventId) setImmediate(() => { processWebhookEvent(eventId).catch(error => log("error", "webhook.processing_crashed", { eventId, err: error instanceof Error ? error.message : String(error) })); });
   } catch (errorValue) { next(errorValue); }
 });
+app.use(originCheck);
 app.use(express.json({ limit: "32kb" }));
 app.use(rateLimit({ windowMs: 15 * 60_000, limit: 300, standardHeaders: "draft-8", legacyHeaders: false }));
 app.get("/health", (_req, res) => res.json({ ok: true }));
@@ -48,6 +52,7 @@ app.use("/v1/vendor", vendorRouter);
 app.use("/v1/vendor", dashboardRouter);
 app.use("/v1/ical", icalRouter);
 app.use("/v1/admin", adminRouter);
+app.use("/v1/client", privacyRouter);
 app.use("/v1/bookings", bookingRouter);
 
 // Scheduled jobs (SPEC 15.3), called by GitHub Actions with Authorization: Bearer <TICK_SECRET>.

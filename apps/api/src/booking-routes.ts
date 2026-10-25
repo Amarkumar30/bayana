@@ -3,7 +3,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { z } from "zod";
 import { refundPreview } from "@bayana/shared";
 import { currentUser, type SessionUser } from "./auth.js";
-import { cookieToken } from "./auth-routes.js";
+import { cookieToken, perIp } from "./auth-routes.js";
 import { acceptTerms, createHold } from "./booking-service.js";
 import { transitionBooking } from "./booking-transition.js";
 import { config } from "./config.js";
@@ -35,7 +35,7 @@ async function bookingAccess(req: Request) {
 }
 
 export const bookingRouter = Router();
-bookingRouter.post("/", handle(async (req, res) => {
+bookingRouter.post("/", perIp(20), handle(async (req, res) => {
   const user = await currentUser(pool, cookieToken(req));
   if (!user || user.role !== "CLIENT") throw new AppError(401, "AUTHENTICATION_REQUIRED", "Verify your email to continue");
   const body = holdSchema.parse(req.body);
@@ -46,12 +46,12 @@ bookingRouter.post("/", handle(async (req, res) => {
   kickUrgent();
 }));
 
-bookingRouter.get("/:id", handle(async (req, res) => {
+bookingRouter.get("/:id", perIp(120), handle(async (req, res) => {
   const access = await bookingAccess(req);
   res.json(await bookingView(access.id, access.isVendor));
 }));
 
-bookingRouter.post("/:id/accept", handle(async (req, res) => {
+bookingRouter.post("/:id/accept", perIp(20), handle(async (req, res) => {
   const access = await bookingAccess(req);
   if (access.isVendor) throw notFound();
   const body = z.object({ terms_hash: z.string().regex(/^[0-9a-f]{64}$/), accepted: z.literal(true) }).parse(req.body);
@@ -63,7 +63,7 @@ bookingRouter.post("/:id/accept", handle(async (req, res) => {
   kickUrgent();
 }));
 
-bookingRouter.post("/:id/cancel", handle(async (req, res) => {
+bookingRouter.post("/:id/cancel", perIp(10), handle(async (req, res) => {
   const access = await bookingAccess(req);
   // Vendors cancel from the dashboard (POST /v1/vendor/bookings/:id/cancel, full refund, BK-11).
   if (access.isVendor) throw notFound();
@@ -85,12 +85,12 @@ bookingRouter.post("/:id/cancel", handle(async (req, res) => {
 
 // ---- Payments (SPEC 11.2) -------------------------------------------------------------------------------------------
 const checkoutSchema = z.object({ razorpay_order_id: z.string().min(1).max(100), razorpay_payment_id: z.string().min(1).max(100), razorpay_signature: z.string().min(1).max(200) }).strict();
-bookingRouter.post("/:id/payment-order", handle(async (req, res) => {
+bookingRouter.post("/:id/payment-order", perIp(20), handle(async (req, res) => {
   const access = await bookingAccess(req);
   if (access.isVendor) throw notFound();
   res.json({ booking_id: access.id, ...await createPaymentOrder(access.id) });
 }));
-bookingRouter.post("/:id/payment-verify", handle(async (req, res) => {
+bookingRouter.post("/:id/payment-verify", perIp(30), handle(async (req, res) => {
   const access = await bookingAccess(req);
   if (access.isVendor) throw notFound();
   const body = checkoutSchema.parse(req.body);
@@ -99,7 +99,7 @@ bookingRouter.post("/:id/payment-verify", handle(async (req, res) => {
   res.status(result.outcome === "authorized" || result.outcome === "pending" ? 202 : 200).json({ outcome: result.outcome, booking: await bookingView(access.id, false) });
   kickUrgent();
 }));
-bookingRouter.get("/:id/receipts/:paymentId", handle(async (req, res) => {
+bookingRouter.get("/:id/receipts/:paymentId", perIp(30), handle(async (req, res) => {
   const access = await bookingAccess(req);
   const paymentId = z.string().uuid().safeParse(req.params.paymentId);
   if (!paymentId.success) throw notFound();

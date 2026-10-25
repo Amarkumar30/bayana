@@ -2,8 +2,10 @@ import { createHash, randomBytes } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { bookingListQuerySchema, calendarQuerySchema, manualBookingSchema, missingPublishRequirements, notifyPrefsSchema, rescheduleSchema, vendorCancelSchema } from "@bayana/shared";
-import { revokeAllSessions, type SessionUser } from "./auth.js";
+import type { SessionUser } from "./auth.js";
+import { closeLogin } from "./privacy.js";
 import { writeAudit } from "./audit.js";
+import { perIp } from "./auth-routes.js";
 import { bookingView } from "./booking-routes.js";
 import { config } from "./config.js";
 import { pool, transaction } from "./database.js";
@@ -210,8 +212,7 @@ dashboardRouter.post("/account/delete", requireVendor, handle(async (req, res) =
     const active = await db.query("SELECT 1 FROM bookings WHERE vendor_id=$1 AND status IN ('PENDING','CONFIRMED') AND ends_at > now() AND (status='CONFIRMED' OR hold_expires_at IS NULL OR hold_expires_at > now()) LIMIT 1", [vendor.id]);
     if (active.rowCount) throw new AppError(409, "ACTIVE_BOOKINGS", "You still have upcoming bookings. Cancel or complete them first, then delete your account.");
     await db.query("UPDATE vendors SET published=false,bookings_enabled=false,ical_token_hash=NULL,public_contact_email=false,public_contact_phone=false WHERE id=$1", [vendor.id]);
-    await db.query("UPDATE users SET email=$2,display_name=NULL,password_hash=NULL,totp_secret_enc=NULL,totp_enabled_at=NULL,deleted_at=now() WHERE id=$1", [user.id, `deleted-${user.id}@deleted.invalid`]);
-    await revokeAllSessions(db, user.id);
+    await closeLogin(db, user);
     await writeAudit(db, user.id, "account.deleted", "user", user.id, { vendor_id: vendor.id });
   });
   res.status(204).end();
@@ -224,7 +225,7 @@ const icsText = (value: string) => value.replace(/\\/g, "\\\\").replace(/[;,]/g,
 const fold = (line: string) => { const out: string[] = []; let rest = Buffer.from(line); while (rest.length > 75) { let cut = 75; while ((rest[cut] & 0xc0) === 0x80) cut--; out.push(rest.subarray(0, cut).toString()); rest = Buffer.concat([Buffer.from(" "), rest.subarray(cut)]); } out.push(rest.toString()); return out.join("\r\n"); };
 
 export const icalRouter = Router();
-icalRouter.get("/:file", handle(async (req, res) => {
+icalRouter.get("/:file", perIp(60), handle(async (req, res) => {
   const token = /^([A-Za-z0-9_-]{43})\.ics$/.exec(String(req.params.file))?.[1];
   const vendor = token ? (await pool.query<{ id: string; display_name: string }>("SELECT id,display_name FROM vendors WHERE ical_token_hash=$1", [icalTokenHash(token)])).rows[0] : undefined;
   if (!vendor) throw new AppError(404, "NOT_FOUND", "Not found");

@@ -3,6 +3,8 @@ import Link from "next/link";
 import { ShieldCheck } from "lucide-react";
 import { Brand } from "@/components/layout/brand";
 
+// Rendered per request so Next can put the CSP nonce on its scripts (lib/csp.ts).
+export const dynamic = "force-dynamic";
 export const metadata: Metadata = { robots: { index: false, follow: false } };
 
 /** Auth layout: one centred card, nothing else competing for attention. */

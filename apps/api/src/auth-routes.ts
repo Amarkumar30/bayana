@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import { z } from "zod";
 import { config } from "./config.js";
+import { recordConsent } from "./consent.js";
 import { pool, transaction } from "./database.js";
 import { AppError, errorBody } from "./errors.js";
 import { kickUrgent } from "./notifications/outbox.js";
@@ -88,6 +89,8 @@ authRouter.post("/signup", ...guard(20, 10), async (req, res, next) => {
         row = (await db.query<PublicUser>("UPDATE users SET role=CASE WHEN role='CLIENT' THEN 'VENDOR' ELSE role END,email_verified_at=COALESCE(email_verified_at,now()) WHERE id=$1 RETURNING id,email::text AS email,role", [existing.id])).rows[0];
         await event(db, existing.id, "login_via_signup", req.ip, req.header("user-agent"));
       }
+      // The signup screen says that creating an account means agreeing to the terms and the privacy policy (PV-01).
+      await recordConsent(db, { userId: row.id, kinds: ["account_terms", "privacy_policy"], source: "signup_email", ip: req.ip, userAgent: req.header("user-agent") });
       await rotateInto(req, res, db, row.id);
       return row;
     });

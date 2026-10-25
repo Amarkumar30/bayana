@@ -38,6 +38,7 @@ export function SignupForm() {
         <Button size="lg" block loading={busy} loadingText={step === 0 ? "Sending…" : "Creating your account…"}>{step === 0 ? "Email me a code" : "Create account"}</Button>
         {step === 1 && <div className="flex flex-wrap justify-between gap-2"><Button type="button" variant="ghost" size="sm" onClick={() => { setStep(0); setCode(""); setError(""); }}>Change email</Button><ResendButton onResend={sendCode} /></div>}
       </form>
+      <p className="text-center text-xs text-muted">By creating an account you agree to the <Link href="/terms">terms of service</Link> and the <Link href="/privacy">privacy policy</Link>. We record the date and version.</p>
       <p className="text-center text-sm text-muted">Already have an account? <Link href="/login">Sign in</Link></p>
     </div>
   );

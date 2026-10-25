@@ -56,7 +56,7 @@ test("calendar shows the month colour-coded, a day opens its details, and time c
   await day.getByLabel("Close").click();
   await expect(day).toBeHidden();
   expect(state.blocked.at(-1)).toMatchObject({ starts_at: "2026-11-04T07:30:00.000Z", ends_at: "2026-11-04T08:30:00.000Z", reason: "Dentist" });
-  await page.getByRole("tab", { name: "Week" }).click();
+  await page.getByRole("button", { name: "Week" }).click();
   await expect(page.getByRole("link", { name: /Ananya Iyer/ })).toBeVisible();
 });
 

@@ -13,7 +13,6 @@ import { Button } from "@/components/ui/button";
 import { Badge, Card, LoadingState, Notice, Skeleton, StatusBadge } from "@/components/ui/display";
 import { Sheet, SheetContent } from "@/components/ui/dialog";
 import { Checkbox, Field, Input } from "@/components/ui/field";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
 import { api, vendorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -63,7 +62,7 @@ export function CalendarView() {
       <PageHeader eyebrow="Calendar" title={title} description="Confirmed, held and blocked time at a glance. Choose a day to see it, block time or add a booking." actions={<NewBookingDialog />} />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1"><Button variant="secondary" size="icon" aria-label={view === "month" ? "Previous month" : "Previous week"} onClick={() => move(-1)}><ChevronLeft aria-hidden /></Button><Button variant="ghost" onClick={() => setAnchor(localDateKey(new Date(), state.kind === "ready" ? state.data.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone))}>Today</Button><Button variant="secondary" size="icon" aria-label={view === "month" ? "Next month" : "Next week"} onClick={() => move(1)}><ChevronRight aria-hidden /></Button></div>
-        <Tabs value={view} onValueChange={value => setView(value as "month" | "week")}><TabsList aria-label="Calendar view"><TabsTrigger value="month">Month</TabsTrigger><TabsTrigger value="week">Week</TabsTrigger></TabsList></Tabs>
+        <div role="group" aria-label="Calendar view" className="inline-flex gap-1 rounded-card bg-surface-muted p-1">{(["month", "week"] as const).map(option => <Button key={option} variant={view === option ? "secondary" : "ghost"} aria-pressed={view === option} onClick={() => setView(option)}>{option === "month" ? "Month" : "Week"}</Button>)}</div>
       </div>
       <div className="mb-4 flex flex-wrap gap-2" aria-label="Legend"><Badge tone="success">Confirmed</Badge><Badge tone="warning">Held or awaiting advance</Badge><Badge>Blocked</Badge></div>
       <Gate state={state} skeleton={skeleton} retry={() => void reload()} next="/dashboard/calendar">{data => {

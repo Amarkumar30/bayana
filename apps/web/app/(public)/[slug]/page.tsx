@@ -52,7 +52,7 @@ export default async function VendorPage({ params }: { params: Promise<{ slug: s
       <section className="grid gap-4">
         <div className="flex items-center gap-4"><Avatar name={vendor.display_name} size="lg" /><div className="grid gap-1"><h1 className="text-2xl sm:text-4xl">{vendor.display_name}</h1><div className="flex flex-wrap gap-1.5">{(vendor.categories.length ? vendor.categories : ["Independent service"]).map(category => <Badge key={category} tone="primary">{category}</Badge>)}</div></div></div>
         <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted"><span className="inline-flex items-center gap-1.5"><MapPin className="size-4" aria-hidden />{vendor.service_area || vendor.city}</span><span className="inline-flex items-center gap-1.5"><Clock className="size-4" aria-hidden />Times in {vendor.timezone}</span></p>
-        {vendor.services.length > 0 && <div className="hidden flex-wrap items-center gap-4 sm:flex"><Button asChild size="lg"><Link href={bookHref}><CalendarCheck aria-hidden />Book a time</Link></Button>{lowest !== null && <span className="text-sm text-muted">From <Money paise={lowest} size="sm" className="font-semibold text-ink" /></span>}</div>}
+        {vendor.services.length > 0 && <div className="hidden flex-wrap items-center gap-4 sm:flex"><Button asChild size="lg"><Link prefetch={false} href={bookHref}><CalendarCheck aria-hidden />Book a time</Link></Button>{lowest !== null && <span className="text-sm text-muted">From <Money paise={lowest} size="sm" className="font-semibold text-ink" /></span>}</div>}
       </section>
 
       {vendor.bio && <section aria-labelledby="about" className="grid gap-2"><h2 id="about" className="text-lg">About</h2><p className="max-w-2xl whitespace-pre-line text-muted">{vendor.bio}</p>
@@ -64,7 +64,7 @@ export default async function VendorPage({ params }: { params: Promise<{ slug: s
         {vendor.services.length === 0 ? <EmptyState title="No services are open for booking yet" description={`${vendor.display_name} hasn't listed any services. Please check back soon.`} /> :
           <ul className="grid gap-3">{vendor.services.map(service => (
             <li key={service.id}>
-              <Link href={`${bookHref}?service=${service.id}`} className="group block rounded-card bg-surface p-5 text-ink no-underline shadow-soft ring-1 ring-border/70 transition-shadow hover:shadow-raised hover:ring-primary/40">
+              <Link prefetch={false} href={`${bookHref}?service=${service.id}`} className="group block rounded-card bg-surface p-5 text-ink no-underline shadow-soft ring-1 ring-border/70 transition-shadow hover:shadow-raised hover:ring-primary/40">
                 <div className="flex items-start justify-between gap-4"><div className="grid gap-1"><strong className="text-base">{service.name}</strong>{service.description && <p className="text-sm text-muted">{service.description}</p>}<span className="text-sm text-muted">{service.booking_mode === "FULL_DAY" ? "Full day" : `${service.duration_minutes} min`}</span></div><div className="grid shrink-0 justify-items-end gap-1"><Money paise={service.price_paise} size="lg" /><span className="inline-flex items-center gap-0.5 text-sm font-semibold text-primary">Book<ChevronRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden /></span></div></div>
                 <p className="mt-3 border-t border-border pt-3 text-sm text-muted">{service.advance_paise > 0 ? <>Pay <Money paise={service.advance_paise} size="sm" className="font-semibold text-ink" /> now · <Money paise={service.remaining_paise} size="sm" /> later</> : "No advance needed"}</p>
               </Link>
@@ -83,7 +83,7 @@ export default async function VendorPage({ params }: { params: Promise<{ slug: s
       </section>
 
       {vendor.services.length > 0 && <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-background/95 px-4 py-3 backdrop-blur sm:hidden">
-        <Button asChild size="lg" block><Link href={bookHref}><CalendarCheck aria-hidden />Book {vendor.display_name}</Link></Button>
+        <Button asChild size="lg" block><Link prefetch={false} href={bookHref}><CalendarCheck aria-hidden />Book {vendor.display_name}</Link></Button>
       </div>}
     </div>
   );

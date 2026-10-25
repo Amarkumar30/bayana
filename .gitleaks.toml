@@ -1,0 +1,8 @@
+# Secret scan (SPEC 16.7 item 12): gitleaks' default rules, plus an allowlist of throwaway values that tests use on purpose.
+# Only exact test strings are allowed here; never add a real key, and never allowlist a whole file.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fixed test-only values (integration test job secret, logging redaction test password)"
+regexes = ['''integration-tests-tick-secret-0123456789''', '''pw-123456789''']

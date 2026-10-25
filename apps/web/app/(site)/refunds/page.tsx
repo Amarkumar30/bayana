@@ -1,12 +1,13 @@
-import { previewMetadata } from "@/components/layout/preview-banner";
-import { LegalPage } from "@/components/preview/legal-page";
+import { POLICY_VERSIONS } from "@bayana/shared";
+import { LegalPage, legalMetadata } from "@/components/preview/legal-page";
 
-export const metadata = previewMetadata("Refund policy");
+export const metadata = legalMetadata("Refund policy");
 export default function Refunds() {
-  return <LegalPage title="Refund policy" sections={[
-    { heading: "Vendor cancellation policies", body: "Placeholder: each service has its own cancellation tiers, shown before you pay and frozen with your booking." },
-    { heading: "Vendor-initiated cancellations", body: "Placeholder: if the vendor cancels, the advance is refunded in full." },
-    { heading: "Late payments", body: "Placeholder: if a payment arrives after a hold expires and the time is taken, it is refunded automatically." },
-    { heading: "Refund timelines", body: "Placeholder: typical bank and UPI processing times." }
+  return <LegalPage title="Refund policy" version={POLICY_VERSIONS.booking_terms} intro="Each business sets its own cancellation rules. This page explains how refunds work on Bayana within those rules." sections={[
+    { heading: "If you cancel", body: ["The refund follows the cancellation tiers shown before you booked and kept with your booking, for example a full refund until 7 days before and half until 48 hours before. The exact amount is shown before you confirm a cancellation, and that is the amount refunded."] },
+    { heading: "If the business cancels", body: ["You get back everything you paid, in full."] },
+    { heading: "If a payment arrives too late", body: ["If your payment is completed after your hold expired and the time is no longer free, the full amount is refunded automatically."] },
+    { heading: "How and when", body: ["Online payments are refunded to the original payment method by Razorpay, usually within 5 to 7 working days. Money paid directly to the business is returned by the business."] },
+    { heading: "Questions", body: ["Contact the business first. If something is not right, write to hello@bayana.in with your booking link."] }
   ]} />;
 }

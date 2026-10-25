@@ -31,11 +31,18 @@ jobs:
       NEXT_PUBLIC_API_URL: http://api.ci.invalid
       NEXT_PUBLIC_SITE_URL: http://ci.invalid
     steps:
+      # Full history, so the secret scan below covers every commit, not just the last one.
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
+      # Known vulnerabilities in dependencies (SPEC 12.4): high or critical fails the build.
+      - run: pnpm audit --audit-level=high
+      # Secrets in any commit (SPEC 16.7 item 12). Rules: gitleaks defaults plus .gitleaks.toml (exact test values only).
+      - name: Secret scan (gitleaks)
+        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.24.3 git /repo --redact --no-banner --config /repo/.gitleaks.toml
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm db:migrate:test

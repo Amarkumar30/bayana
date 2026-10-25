@@ -21,7 +21,11 @@ for (const { name, path: route, ready } of pages) {
     // Dated content (today, next 7 days, the month) is rendered against a fixed clock.
     await page.clock.setFixedTime(MOCK_NOW);
     await mockApi(page);
+    // Fonts use display "optional" (a cold first load may keep the fallback), so load once to cache them, then reload as a
+    // returning visitor would: the screenshot always shows the real fonts.
     await page.goto(route);
+    await page.waitForLoadState("networkidle");
+    await page.reload();
     const heading = page.getByRole("heading", { level: 1 }).first();
     await expect(heading).toContainText(ready);
     // Wait until the full stylesheet (including breakpoint variants) is applied, not just the first paint.
@@ -35,6 +39,8 @@ for (const { name, path: route, ready } of pages) {
 test("design page in dark mode", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("/design");
+  await page.waitForLoadState("networkidle");
+  await page.reload();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Design system");
   await page.waitForLoadState("networkidle");
   await page.evaluate(() => document.fonts.ready);

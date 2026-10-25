@@ -93,6 +93,8 @@
   body { @apply bg-background text-ink font-sans text-base antialiased; min-height: 100dvh; }
   h1, h2, h3 { @apply text-ink font-semibold tracking-tight; }
   a { @apply text-primary underline-offset-4; }
+  /* A link inside a sentence must not rely on colour alone (WCAG 1.4.1). */
+  p a, li > p a, dd a { @apply underline; }
   :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 4px; }
   ::selection { background: var(--primary-soft); }
 }

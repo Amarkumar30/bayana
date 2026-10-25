@@ -2,7 +2,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { z } from "zod";
 import { formatINR } from "@bayana/shared";
 import { currentUser, event, type SessionUser } from "./auth.js";
-import { cookieToken } from "./auth-routes.js";
+import { cookieToken, perIp } from "./auth-routes.js";
 import { writeAudit } from "./audit.js";
 import { pool } from "./database.js";
 import { AppError } from "./errors.js";
@@ -49,6 +49,7 @@ const audited = (res: Response, action: string, type: string, id: string, meta: 
 
 export const adminRouter = Router();
 adminRouter.use((_req, res, next) => { res.set("X-Robots-Tag", "noindex, nofollow"); res.set("Cache-Control", "private, no-store"); next(); });
+adminRouter.use(perIp(120));
 adminRouter.use(requireAdminAccount);
 
 // ---- Second factor ------------------------------------------------------------------------------------------------

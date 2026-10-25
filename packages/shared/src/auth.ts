@@ -15,3 +15,9 @@ export const googleErrorCopy: Record<string, string> = {
   google_unavailable: "Google sign-in isn't available right now. Sign in with an email code.",
   google_session_changed: "You were signed out while connecting Google. Sign in and try again."
 };
+
+/**
+ * Versions of the published policies a person agrees to (PV-01). Bump a version when the text of that page changes; each
+ * consent row records the version that was in force.
+ */
+export const POLICY_VERSIONS = { account_terms: "2026-10-25-draft", privacy_policy: "2026-10-25-draft", booking_terms: "2026-10-25-draft" } as const;

@@ -4,6 +4,7 @@ import { advancePaise } from "@bayana/shared";
 import { config } from "./config.js";
 import { slotsForDate } from "./availability.js";
 import { expireOverdueHolds, lockVendorSchedule, recordCreated, transitionBooking } from "./booking-transition.js";
+import { recordConsent } from "./consent.js";
 import { loadContract } from "./contract.js";
 import { paymentsEnabled } from "./payments/runtime.js";
 import { bookingFacts, bookingUrl, notifyConfirmed, notifyRequestToVendor } from "./notifications/booking-mail.js";
@@ -78,6 +79,8 @@ export async function acceptTerms(db: PoolClient, input: Acceptance) {
   const contract = await loadContract(db, input.bookingId);
   if (!contract || contract.sha256 !== input.termsHash) throw new AppError(409, "TERMS_CHANGED", "The terms changed; review them again", { sha256: contract?.sha256 ?? null });
   await db.query("INSERT INTO booking_contracts(booking_id,body,sha256,accepted_email,ip,user_agent) VALUES($1,$2,$3,$4,$5,$6)", [input.bookingId, contract.text, contract.sha256, input.email, input.ip.slice(0, 100), input.userAgent.slice(0, 1000)]);
+  const customer = (await db.query<{ client_user_id: string | null }>("SELECT client_user_id FROM bookings WHERE id=$1", [input.bookingId])).rows[0];
+  await recordConsent(db, { userId: customer.client_user_id, bookingId: input.bookingId, kinds: ["booking_terms", "privacy_policy"], source: "booking_accept", ip: input.ip, userAgent: input.userAgent });
   const advance = Number(booking.advance_paise);
   // Without online payments the booking waits (PENDING) for the vendor to record an offline advance, so the hold lengthens.
   const awaitsOffline = advance > 0 && !paymentsEnabled();

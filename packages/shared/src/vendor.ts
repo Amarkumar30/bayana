@@ -49,11 +49,10 @@ const serviceFields = z.object({
   cancellation_tiers: cancellationTiersSchema.default([]), terms_template: termsTemplateSchema.default(""),
   customer_details_prompt: text(1000).default(""), active: z.boolean().default(true)
 }).strict();
-const withAdvanceRule = <T extends z.ZodTypeAny>(schema: T) => schema.superRefine((value: { price_paise: number; advance_type: "NONE" | "PERCENT" | "FIXED"; advance_value: number }, ctx) => {
+export const serviceCreateSchema = serviceFields.superRefine((value, ctx) => {
   const problem = advanceRuleProblem(value.price_paise, value.advance_type, value.advance_value);
   if (problem) ctx.addIssue({ code: "custom", path: ["advance_value"], message: problem });
 });
-export const serviceCreateSchema = withAdvanceRule(serviceFields);
 /** PATCH bodies: any subset of fields. The API merges with the stored row and re-validates with serviceCreateSchema. */
 export const serviceUpdateSchema = serviceFields.partial();
 export const serviceReorderSchema = z.object({ ids: z.array(z.string().uuid()).min(1).max(200) }).strict();
