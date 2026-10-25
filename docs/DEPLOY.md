@@ -215,6 +215,7 @@ API variables are validated at startup (`apps/api/src/config-schema.ts`) and the
 | `TRUST_PROXY` | 0 | 1 (in render.yaml) | 1 (in render.yaml) | no |
 | `WEB_ORIGINS` | http://localhost:3000 | https://staging.bayana.in | https://bayana.in (add `,https://www.bayana.in` only if www is ever served instead of redirected) | no |
 | `SESSION_COOKIE_DOMAIN` | empty (host-only) | .staging.bayana.in | .bayana.in | no |
+| `SESSION_COOKIE_NAME` | empty (= bayana_session) | bayana_staging_session (in render.yaml) | bayana_session | no |
 | `DATABASE_URL` | Docker `bayana_dev` | Neon staging **pooled** | Neon prod **pooled** | yes |
 | `DATABASE_URL_DIRECT` | empty | Neon staging **direct** | Neon prod **direct** | yes |
 | `DATABASE_URL_TEST` | Docker `bayana_test` | not set | not set | no |
@@ -244,6 +245,9 @@ API variables are validated at startup (`apps/api/src/config-schema.ts`) and the
 | `NEXT_PUBLIC_API_URL` | http://localhost:4000 | https://api.staging.bayana.in | https://api.bayana.in |
 | `NEXT_PUBLIC_SITE_URL` | http://localhost:3000 | https://staging.bayana.in | https://bayana.in |
 | `NEXT_PUBLIC_RAZORPAY_KEY_ID` | empty or rzp_test_… | rzp_test_… | empty (the web build refuses live ids) |
+| `SESSION_COOKIE_NAME` (server-only, not `NEXT_PUBLIC_`) | empty (= bayana_session) | bayana_staging_session | bayana_session |
+
+`SESSION_COOKIE_NAME` must be identical on the API and the web app of one environment. The web server uses it to forward the visitor's session to the API (`apps/web/lib/server-api.ts`).
 
 Every `NEXT_PUBLIC_*` value is public. Never put a secret there.
 
@@ -257,11 +261,11 @@ Every `NEXT_PUBLIC_*` value is public. Never put a secret there.
 | `BACKUP_DATABASE_URL`, `BACKUP_AGE_RECIPIENT`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | secrets | backup.yml | see `docs/RESTORE.md` |
 | `BACKUPS_ENABLED` | variable | backup.yml | `true` only when you decide to start backups |
 
-**Cookie domains: why staging lives under `staging.bayana.in`.** The session cookie `bayana_session` must reach both the web host and the API host, so it is set with a `Domain`:
+**Cookie domains: why staging lives under `staging.bayana.in`.** The session cookie (`SESSION_COOKIE_NAME`: `bayana_session` in production, `bayana_staging_session` on staging) must reach both the web host and the API host, so it is set with a `Domain`:
 - **Staging:** `Domain=.staging.bayana.in`. It is sent only to `staging.bayana.in` and `api.staging.bayana.in`, never to `bayana.in` or `api.bayana.in`, so a staging login can no longer reach production. With the old names (`api-staging.bayana.in`, cookie on `.bayana.in`), both environments would have shared one cookie scope.
 - **Production:** `Domain=.bayana.in`. It covers `bayana.in` and `api.bayana.in`, and, because `staging.bayana.in` is a subdomain of `bayana.in`, the staging hosts as well.
 
-So separation is **one-way** until the code fix below. A browser signed in to production sends its production `bayana_session` to staging too. Staging then receives two cookies with the same name and may read the production one (and answer 401). It never accepts that token, because sessions are stored per database, but a production session token still reaches the staging server. **Code fix pending:** a per-environment cookie name (for example `bayana_session_staging`), set from config by the API and read by the web helpers. Until it lands, test staging in a separate browser profile that has never signed in to production.
+The domain alone is therefore **one-way**: a browser signed in to production still sends its `.bayana.in` cookie to the staging hosts. **`SESSION_COOKIE_NAME`** closes the other direction. Staging names its cookie `bayana_staging_session`, and the staging API and web server read only that name, so the production `bayana_session` that arrives there is ignored. Tests prove it: `apps/api/test/integration/cookie-name.test.ts` (a valid token under the other name gets 401) and `apps/web/lib/session-forward.test.mjs` (only this environment's cookie is forwarded). The Google sign-in state cookie follows the same rule (`bayana_google` / `bayana_staging_google`). The production cookie's value still travels to the staging hosts, because browsers send it, but nothing there reads it, and logs redact cookies.
 
 ## 8. Staging go-live checklist (SPEC 16.7)
 
@@ -272,7 +276,7 @@ Run each check and record PASS or FAIL with the date.
 | 1 | Health | `curl.exe -s https://api.staging.bayana.in/health` and `/ready` | both `{"ok":true}` |
 | 2 | Accounts | signup, logout, password login, OTP login for one email | all four work |
 | 2b | Google sign-in | "Continue with Google" on staging.bayana.in/login with a test user; then the same email by code; then Settings > Sign-in methods | lands on the dashboard (new vendors on /onboarding); the code login reaches the **same** account; one `users` row for the email |
-| 3 | Cookies | sign in on staging.bayana.in, reload the dashboard | session survives reload and server fetch; cookie shows `Domain=.staging.bayana.in; Secure; HttpOnly; SameSite=Lax` in DevTools; no `bayana_session` cookie appears on bayana.in |
+| 3 | Cookies | sign in on staging.bayana.in, reload the dashboard | session survives reload and server fetch; cookie `bayana_staging_session` shows `Domain=.staging.bayana.in; Secure; HttpOnly; SameSite=Lax` in DevTools; no `bayana_session` cookie appears on bayana.in |
 | 4 | Booking + test payment | book, pay with a Razorpay test card | HELD → PENDING → CONFIRMED, emails arrive, ledger correct |
 | 5 | Race | double-click and two browsers on one slot | exactly one booking |
 | 6 | Closed tab | close the tab right after paying | webhook confirms the booking |

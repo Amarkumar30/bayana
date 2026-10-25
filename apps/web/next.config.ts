@@ -1,8 +1,8 @@
 import type { NextConfig } from "next";
-import { loadWebEnv } from "./env-schema";
+import { loadServerEnv, loadWebEnv } from "./env-schema";
 
 // Fail `next dev` and `next build` early, with variable names only, when the public env is missing or invalid.
-try { loadWebEnv(); } catch (error) { process.stderr.write(`${error instanceof Error ? error.message : "Invalid web environment"}\n`); process.exit(1); }
+try { loadWebEnv(); loadServerEnv(); } catch (error) { process.stderr.write(`${error instanceof Error ? error.message : "Invalid web environment"}\n`); process.exit(1); }
 const dev = process.env.NODE_ENV !== "production";
 
 // The Content-Security-Policy is set per request by middleware.ts (lib/csp.ts), so pages with account data get a nonce.

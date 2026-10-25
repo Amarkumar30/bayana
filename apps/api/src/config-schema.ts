@@ -2,11 +2,15 @@ import { z } from "zod";
 
 // Pure environment rules: no dotenv, no process exit. config.ts applies them to process.env; scripts apply them to a parsed file.
 const optional = <T extends z.ZodTypeAny>(schema: T) => z.preprocess(value => value === "" ? undefined : value, schema.optional());
+// Letters, digits and underscores only, so the name can never carry cookie attributes or another cookie.
+const cookieNamePattern = /^[A-Za-z0-9_]{1,64}$/;
+export const DEFAULT_SESSION_COOKIE_NAME = "bayana_session";
 const origins = z.string().transform(value => value.split(",").map(origin => origin.trim()).filter(Boolean)).pipe(z.array(z.string().url().refine(origin => new URL(origin).origin === origin)).min(1));
 const shape = {
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"), APP_ENV: z.enum(["local", "staging", "production"]).default("local"),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000), TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
   WEB_ORIGINS: optional(origins), WEB_ORIGIN: optional(origins), SESSION_COOKIE_DOMAIN: optional(z.string().min(1)),
+  SESSION_COOKIE_NAME: z.preprocess(value => value === "" ? undefined : value, z.string().regex(cookieNamePattern).default(DEFAULT_SESSION_COOKIE_NAME)),
   DATABASE_URL: optional(z.string().url()), DATABASE_URL_DIRECT: optional(z.string().url()), DATABASE_URL_TEST: optional(z.string().url()),
   HOLD_MINUTES: z.coerce.number().int().min(1).default(15), REQUEST_HOLD_HOURS: z.coerce.number().int().min(1).max(168).default(48), MIN_ADVANCE_PAISE: z.coerce.number().int().positive().default(10000),
   PAYMENT_MODE: z.enum(["disabled", "test", "live"]).default("disabled"), LIVE_PAYMENTS_ACK: optional(z.literal("yes")), RAZORPAY_KEY_ID: optional(z.string().min(1)), RAZORPAY_KEY_SECRET: optional(z.string().min(1)), RAZORPAY_WEBHOOK_SECRET: optional(z.string().min(16)), PAYMENT_PROVIDER: z.enum(["razorpay", "fake"]).default("razorpay"),
@@ -24,6 +28,7 @@ export type Config = Omit<Parsed, "WEB_ORIGIN" | "WEB_ORIGINS" | "DATABASE_URL" 
 export const allowedValues: Record<keyof Shape, string> = {
   NODE_ENV: "one of development, test, production", APP_ENV: "one of local, staging, production", PORT: "a port number from 1 to 65535 (4000 locally)", TRUST_PROXY: "a whole number of proxy hops from 0 to 10 (0 locally, 1 on Render)",
   WEB_ORIGINS: "comma-separated exact origins with no path or trailing slash, e.g. http://localhost:3000", WEB_ORIGIN: "an origin like http://localhost:3000 (old name; use WEB_ORIGINS)", SESSION_COOKIE_DOMAIN: "empty locally, or a domain like .bayana.in",
+  SESSION_COOKIE_NAME: "empty (bayana_session), or letters, digits and _ only; staging uses bayana_staging_session so its cookie never collides with production",
   DATABASE_URL: "a postgres:// URL, e.g. postgres://bayana:bayana@localhost:5433/bayana_dev", DATABASE_URL_DIRECT: "a postgres:// URL for migrations (may be empty outside production)", DATABASE_URL_TEST: "a postgres:// URL whose database name ends in _test, e.g. .../bayana_test",
   HOLD_MINUTES: "a whole number of minutes, at least 1", REQUEST_HOLD_HOURS: "a whole number of hours from 1 to 168", MIN_ADVANCE_PAISE: "a positive whole number of paise",
   PAYMENT_MODE: "one of disabled, test, live (use disabled locally)", LIVE_PAYMENTS_ACK: "empty, or yes (production with live payments only)", RAZORPAY_KEY_ID: "an rzp_test_ key id with PAYMENT_MODE=test (may stay set, unused, while disabled); rzp_live_ only with PAYMENT_MODE=live",
@@ -34,6 +39,9 @@ export const allowedValues: Record<keyof Shape, string> = {
   GOOGLE_CLIENT_ID: "empty (Google sign-in off), or the OAuth client id ending in .apps.googleusercontent.com (docs/GOOGLE_SETUP.md)", GOOGLE_CLIENT_SECRET: "the OAuth client secret paired with GOOGLE_CLIENT_ID",
   GOOGLE_REDIRECT_URI: "the API callback URL registered in Google, e.g. http://localhost:4000/v1/auth/google/callback"
 };
+
+/** The Google sign-in state cookie follows the session cookie per environment: bayana_session -> bayana_google, bayana_staging_session -> bayana_staging_google. */
+export const googleCookieName = (sessionCookieName: string) => `${sessionCookieName.replace(/_session$/, "")}_google`;
 
 export type EnvProblem = { name: string; rule: string };
 export class ConfigError extends Error {

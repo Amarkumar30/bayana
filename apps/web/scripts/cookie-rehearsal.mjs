@@ -8,7 +8,11 @@
 // Prerequisites and the docker run command: docs/DEPLOY.md, "Cookie rehearsal". Codes are read from Mailpit, then deleted.
 import { createServer } from "node:http";
 import { chromium } from "@playwright/test";
-import { fetchWithSession, SESSION_COOKIE } from "../lib/session-forward.ts";
+import { loadServerEnv } from "../env-schema.ts";
+import { fetchWithSession } from "../lib/session-forward.ts";
+
+// The same name the API container uses (SESSION_COOKIE_NAME; bayana_session unless set).
+const SESSION_COOKIE = loadServerEnv().SESSION_COOKIE_NAME;
 
 const APP_PORT = Number(process.env.REHEARSAL_APP_PORT ?? 3200);
 const APP = `http://app.localtest.me:${APP_PORT}`;
@@ -26,7 +30,7 @@ const parseCookies = header => Object.fromEntries((header ?? "").split(";").map(
 const app = createServer(async (req, res) => {
   if (req.url === "/server-me") {
     const cookies = parseCookies(req.headers.cookie);
-    const response = await fetchWithSession(API_INTERNAL, "/v1/auth/me", { get: name => name in cookies ? { value: cookies[name] } : undefined });
+    const response = await fetchWithSession(API_INTERNAL, "/v1/auth/me", { get: name => name in cookies ? { value: cookies[name] } : undefined }, SESSION_COOKIE);
     const body = await response.json().catch(() => null);
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify({ webReceivedSession: SESSION_COOKIE in cookies, apiStatus: response.status, email: body?.user?.email ?? null }));

@@ -37,6 +37,9 @@ services:
         sync: false
       - key: SESSION_COOKIE_DOMAIN
         sync: false
+      # Staging: bayana_staging_session (production: bayana_session). Same value in Vercel's staging env.
+      - key: SESSION_COOKIE_NAME
+        value: bayana_staging_session
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_URL_DIRECT

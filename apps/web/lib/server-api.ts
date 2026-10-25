@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { env } from "@/env";
+import { loadServerEnv } from "@/env-schema";
 import { ApiError } from "./api";
 import { fetchWithSession } from "./session-forward";
 
@@ -9,9 +10,11 @@ import { fetchWithSession } from "./session-forward";
  * Works locally (cookies ignore ports, so localhost:3000 sees the localhost:4000 cookie) and in staging/production,
  * where the API sets the cookie with Domain=.bayana.in so the web host receives it too.
  */
+const { SESSION_COOKIE_NAME } = loadServerEnv();
+
 export async function serverApi<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   let response: Response;
-  try { response = await fetchWithSession(env.NEXT_PUBLIC_API_URL, path, await cookies(), init); }
+  try { response = await fetchWithSession(env.NEXT_PUBLIC_API_URL, path, await cookies(), SESSION_COOKIE_NAME, init); }
   catch (cause) { throw new ApiError(0, "NETWORK_ERROR", "Network error", { cause: String(cause) }); }
   if (response.status === 204) return undefined as T;
   const payload = await response.json().catch(() => null) as { error?: { code?: string; message?: string; details?: Record<string, unknown> } } | null;

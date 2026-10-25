@@ -10,7 +10,8 @@ export type Purpose = "signup" | "login" | "reset" | "booking_verify";
 export type Role = "VENDOR" | "CLIENT" | "ADMIN";
 export type PublicUser = { id: string; email: string; role: Role };
 export type SessionUser = PublicUser & { sessionId: string };
-export const sessionCookieName = "bayana_session";
+/** Per environment (SESSION_COOKIE_NAME), so a staging cookie and a production cookie never stand in for each other. */
+export const sessionCookieName = config.SESSION_COOKIE_NAME;
 
 export const OTP_TTL_MINUTES = 10, OTP_MAX_ATTEMPTS = 5, OTP_RESEND_SECONDS = 60, OTP_EMAIL_HOURLY_CAP = 10, OTP_IP_HOURLY_CAP = 30;
 const SESSION_SLIDING_DAYS = 30, SESSION_ABSOLUTE_DAYS = 90;

@@ -3,7 +3,7 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
 import { currentUser, event, findUserByEmail, hashPassword, invalidCredentials, validatePassword, verifyPassword, type PublicUser, type SessionUser } from "../auth.js";
-import { cookieOptions, cookieToken, meta, perIp, rotateInto } from "../auth-routes.js";
+import { cookieOptions, cookieToken, meta, perIp, readCookie, rotateInto } from "../auth-routes.js";
 import { config } from "../config.js";
 import { recordConsent } from "../consent.js";
 import { pool, transaction } from "../database.js";
@@ -18,7 +18,6 @@ const handle = (fn: Handler) => (req: Request, res: Response, next: NextFunction
 const web = (path: string) => `${config.WEB_ORIGINS[0]}${path}`;
 /** The one-time cookie is sent only to the callback path, never to the rest of the API. */
 const googleCookieOptions = () => ({ ...cookieOptions(), path: "/v1/auth/google", maxAge: GOOGLE_COOKIE_MINUTES * 60_000 });
-const readCookie = (req: Request, name: string) => req.headers.cookie?.split(";").map(value => value.trim()).find(value => value.startsWith(`${name}=`))?.slice(name.length + 1);
 const disabled = () => new AppError(404, "GOOGLE_DISABLED", "Google sign-in is not available");
 const requireSession = async (req: Request) => { const user = await currentUser(pool, cookieToken(req)); if (!user) throw new AppError(401, "AUTHENTICATION_REQUIRED", "Sign in is required"); return user; };
 
@@ -55,7 +54,7 @@ const fail = (res: Response, code: string, reason: string, path = "/login") => {
 googleRouter.get("/google/callback", perIp(30), handle(async (req, res) => {
   const provider = googleProvider();
   // Whatever happens next, the one-time cookie is used up.
-  const cookie = decodeGoogleCookie(readCookie(req, GOOGLE_COOKIE));
+  const cookie = decodeGoogleCookie(readCookie(req.headers.cookie, GOOGLE_COOKIE));
   res.clearCookie(GOOGLE_COOKIE, { ...cookieOptions(), path: "/v1/auth/google" });
   const back = cookie?.linkUserId ? "/dashboard/settings" : "/login";
   if (!provider) return fail(res, "google_unavailable", "disabled", back);

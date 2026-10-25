@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import { createLocalJWKSet, createRemoteJWKSet, exportJWK, generateKeyPair, jwtVerify, SignJWT, type JWTVerifyGetKey } from "jose";
 import { googleNextPath } from "@bayana/shared";
 import { config } from "../config.js";
+import { googleCookieName } from "../config-schema.js";
 
 // Google sign-in (OpenID Connect, authorization code flow with PKCE). Everything that talks to Google sits behind
 // GoogleProvider so tests use FakeGoogleProvider with no network; the ID token checks below run the same for both.
@@ -110,7 +111,7 @@ export function useTestGoogle(provider: GoogleProvider | null | undefined) { ove
 export const randomToken = () => randomBytes(32).toString("base64url");
 export const pkceChallenge = (verifier: string) => createHash("sha256").update(verifier).digest("base64url");
 export const stateHash = (state: string) => createHash("sha256").update(`google-state:${state}`).digest("hex");
-export const GOOGLE_COOKIE = "bayana_google", GOOGLE_COOKIE_MINUTES = 10;
+export const GOOGLE_COOKIE = googleCookieName(config.SESSION_COOKIE_NAME), GOOGLE_COOKIE_MINUTES = 10;
 export type GoogleCookie = { state: string; nonce: string; verifier: string; next: string; linkUserId: string | null; expires: number };
 const sign = (payload: string) => createHmac("sha256", config.SESSION_SECRET).update(`google-cookie:${payload}`).digest("base64url");
 /** The cookie is signed, not encrypted: it is httpOnly and lives 10 minutes, and its contents only work together with Google's code. */
