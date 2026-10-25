@@ -281,3 +281,15 @@ Facts for the next session:
   3. Server-side API calls from Vercel would share Vercel's IP for per-IP rate limits (only matters once a page uses serverApi; none does yet).
   4. The runtime should connect as a member of the `bayana_app` role (no rewrite rights on evidence tables).
   5. Run test:visual on next build + next start (next dev hot-swaps CSS mid-test).
+
+## hosting-ready code fixes - 2026-10-25 (branch hosting-ready; not pushed)
+- 91333d9 untracked docs/DEPLOY_REVIEW_BUNDLE.md (still on disk, git-ignored).
+- cf77891 SESSION_COOKIE_NAME (default bayana_session; staging bayana_staging_session) for the API session cookie and the Google state cookie, plus the web server helpers (server-only loadServerEnv). Tests: a token under the other name gets 401; only this environment's cookie is forwarded.
+- 9283e76 migrate.ts and db:check-neon load a database-only config (NODE_ENV + database URL). Tests run the real scripts with only those variables; the name checks are kept.
+- e4f7e8f pool: max 10, idle 10 s, connect 15 s; pool.on("error") logs and never crashes (a real killed idle client is logged as 57P01); /ready retries once on ECONNRESET, ETIMEDOUT, 57P01 or 08006. DEPLOY.md: URLs need sslmode=require.
+- c52db0c graceful shutdown on SIGTERM/SIGINT (10 s grace, pool ended, exit 0); tested in-process, and docker stop on the image exits 0.
+- de24189 web build runs `pnpm --filter @bayana/shared build && next build` (verified from a deleted shared/dist); apps/web/Dockerfile removed.
+- c96e6ad HSTS without preload (apps/web/security-headers.ts, node:test).
+- 4a7b71f production start with missing variables: exit 1, names only (test). API image built: /health 200; /ready 503 against a fake DB host; no .env in the image; runs as node.
+- Gates: typecheck 0, lint 0, test 0 (116 API unit + 9 web unit + 175 integration), build 0; gitleaks no leaks (7 new commits, 32 total).
+- Still open: bayana_app runtime role; per-IP rate limits for server-side calls from Vercel; test:visual on a production build.

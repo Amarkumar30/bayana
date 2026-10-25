@@ -1,6 +1,6 @@
 # Handoff (2026-10-25) — read this first, then docs/PROGRESS.md "Session handoff 3"
 
-**State:** Phase 10 is done on `phase-10-hardening` (`8b647fb`; origin has up to `5db0c48`, and `origin/main` was fast-forwarded to `5db0c48` by another session at the user's request). Branch **`hosting-ready`** (from `8b647fb`, not pushed) carries the Phase 11 deploy prep, adapted for Google sign-in and the staging hosts. Phases follow docs/CLAUDE_CODE_PHASES.md (SPEC 19.2 numbers them differently). `bayana_dev` and `bayana_test` both have migrations 001–019.
+**State:** Phase 10 is done on `phase-10-hardening` (`8b647fb`; origin has up to `5db0c48`, and `origin/main` was fast-forwarded to `5db0c48` by another session at the user's request). Branch **`hosting-ready`** (from `8b647fb`, not pushed) carries the Phase 11 deploy prep plus the deploy-safety code fixes (cookie names, database-only migrate config, Neon pool, graceful shutdown, web build, HSTS). Phases follow docs/CLAUDE_CODE_PHASES.md (SPEC 19.2 numbers them differently). `bayana_dev` and `bayana_test` both have migrations 001–019.
 
 ## Decisions not obvious from the code
 - **Status changes:** only `transitionBooking` (apps/api/src/booking-transition.ts) writes `bookings.status`, enforced by a grep test (test/unit/status-writes.test.ts). Same-status events (reschedules) use `recordChange`. Double booking is stopped by the vendor lock `pg_advisory_xact_lock` plus the exclusion constraint `bookings_no_overlap`.
@@ -15,6 +15,11 @@
   - No timers: GitHub Actions call `POST /internal/jobs/tick` (every 10 min) and `/nightly` with `Bearer TICK_SECRET`. Both stay off until the repo variable `JOBS_ENABLED=true`. Every run is in `job_runs`.
 - **Auth: Google + email code is BUILT** (branch auth-google-signin). The password is optional. Google links by subject, then by email, never a second user. No Google tokens are stored. The sign-in state is single-use in `oauth_login_states`. Google is off without `GOOGLE_CLIENT_ID`.
 - **Admin:** `users.is_admin` is set only by SQL, plus TOTP per session for 12 hours. The TOTP secret is encrypted with a key derived from `SESSION_SECRET`. Rotating `SESSION_SECRET` breaks sessions, booking links, admin TOTP and in-flight Google sign-ins.
+- **Deploy safety (hosting-ready):**
+  - The session cookie name is per environment (`SESSION_COOKIE_NAME`: bayana_session, staging bayana_staging_session) on the API and in the web server (server-only). The Google state cookie follows it (bayana_google / bayana_staging_google). Changing it signs everyone out.
+  - `migrate.ts` and `db:check-neon` load only `NODE_ENV` and the database URL (`db-config.ts`, `loadDatabaseConfig`). Everything else loads the full config.
+  - Pool: max 10, idle 10 s, connect 15 s. Idle drops are logged as `database.idle_client_error`; `/ready` retries once. The logger redacts any field named `code`, so database codes are logged as `pgCode`.
+  - SIGTERM/SIGINT: stop accepting connections, wait up to 10 s for in-flight requests, end the pool, exit 0 (`shutdown.ts`).
 - **CSP:** account pages render per request with a nonce. The cached public page `/[slug]` and static pages keep script `'unsafe-inline'` (cached HTML can't carry a nonce). `style-src 'unsafe-inline'` stays.
 - **Performance:** fonts use `display: optional`, CSS is inlined, and public links don't prefetch. The Lighthouse gate uses the measured LCP (median of 3, about 1.4 s); the simulated estimate (about 3.0 s) is printed too.
 - **Privacy:** erasure removes names, emails, phones and notes, and keeps money rows. Contracts are kept as legal evidence. Legal pages are drafts that need lawyer review.
@@ -48,8 +53,8 @@
 - **Before any migration on dev:** back up (command below).
 
 ## Next step
-1. Code fixes on `hosting-ready` (the user sends them next), all listed in docs/PROGRESS.md "hosting-ready": a per-environment session cookie name, `migrate.ts` running with database URLs alone, client IP for server-side calls from Vercel, and the `bayana_app` runtime role.
-2. Then push `hosting-ready` (ask first), apply render.yaml on Render, and follow docs/DEPLOY.md section by section. Never push to or merge into `main` without asking.
+1. Push `hosting-ready` (ask first), apply render.yaml on Render, and follow docs/DEPLOY.md section by section. Never push to or merge into `main` without asking.
+2. Still open: the runtime should connect as a member of `bayana_app`; server-side calls from Vercel would share Vercel's IP for per-IP rate limits (only once a page uses serverApi); test:visual should run on next build + next start.
 
 ## Commands (PowerShell, always pnpm.cmd)
 - Run: `pnpm.cmd db:up` · `pnpm.cmd dev` (web 3000, API 4000, Mailpit 8025) · `pnpm.cmd run doctor`
