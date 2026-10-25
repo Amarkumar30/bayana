@@ -212,3 +212,31 @@ Facts for the next session:
 - /signup takes email + code (password optional, validated if given). Password login for an account without one fails like a wrong password.
 - Web: login = Continue with Google, then email code, then "Use password"; ?error= codes shown as sentences; signup = email then code, to /onboarding; Settings > Sign-in methods (connect/disconnect Google, email code, set/change/remove password).
 - Tests: integration google.test.ts (17, FakeGoogleProvider), auth.test.ts updated; unit google.test.ts (config, allowlist, cookie, RFC 7636 PKCE vector); Playwright auth.spec.ts (Google button shown/hidden, cancelled message, sign-in methods). Real Google round trip NOT TESTED (needs the user's keys).
+
+## Phase 10 Hardening - 2026-10-25 (branch phase-10-hardening, commit 3220420) - IN PROGRESS
+- Web CSP per request (apps/web/middleware.ts, lib/csp.ts): nonce + 'strict-dynamic' on account pages (forced dynamic); static pages and the ISR /[slug] keep script 'unsafe-inline'. Headers in next.config.ts (nosniff, Referrer, X-Frame, Permissions, COOP; HSTS only for https). API: helmet CSP default-src 'none'; src/origin-check.ts (403 on foreign Origin or cross-site); per-route rate limits.
+- Migration 019_consents.sql: consents (append-only, policy versions in @bayana/shared POLICY_VERSIONS), bookings.client_erased_at, ledger trigger now allows only reason='[personal details removed]'. src/consent.ts, src/privacy.ts (/v1/client/export, /v1/client/delete; closeLogin shared with vendor delete). Draft legal pages with "needs lawyer review" banner.
+- Tests: integration hardening.test.ts (origin, headers, consent, erasure, IDOR over all 25 id routes, log scan); e2e/a11y.spec.ts + e2e-live/a11y.spec.ts (axe, 0 serious/critical after fixes); pnpm.cmd perf:lighthouse (measured LCP median 1.4 s; simulated estimate ~3.0 s). Fixes: removed /[slug]/loading.tsx (CLS 0.19 -> 0), fonts display optional, inlineCss, no prefetch on public links.
+- Dependencies upgraded so pnpm audit is clean: zod 4, nodemailer 10, express 5.3, vitest 4 (include test/**/*.test.ts), Playwright 1.55.1; overrides postcss/body-parser; lighthouse via pnpm dlx. CI: pnpm audit --audit-level=high + gitleaks (.gitleaks.toml). .gitattributes *.sql eol=lf.
+- Gates at 3220420: typecheck, lint, test (91 unit + 163 integration), build, test:visual (227, after reruns), test:e2e (6) all pass. NOT DONE: docs/LOCALHOST_SIGNOFF.md and running scripts/signoff-local.mjs (written, never run).
+
+## Session handoff 3 - 2026-10-25 (read this first; supersedes handoffs 1 and 2). Full detail: docs/HANDOFF.md
+| Phase | Branch | Commit | Done | Left |
+|---|---|---|---|---|
+| 0 Audit | phase-0-audit | 4c2d705 | re-audit | - |
+| (WIP snapshot) | phase-2-auth-hotfix | 680707c | old work + password_hash leak fix | superseded |
+| 1 Foundation | phase-1-foundation-v2 | 93082cf | config, logging, errors, migrations, Docker, CI | CI never run (not pushed) |
+| 2 Design system | phase-2-design-system | 141281b | tokens, components, Playwright | Windows-only baselines |
+| 3 Auth | phase-3-auth | f16574c | OTP, sessions, login/signup/forgot | - |
+| (local setup) | fix-local-setup | d1a0da7 | setup:env, doctor | - |
+| 4 Vendor setup | phase-4-vendor-setup | 110af94 | services, hours, onboarding | seed.ts legacy availability |
+| 5 Booking engine | phase-5-booking-engine | 67e2aa2 | exclusion guard, transitionBooking | customers table not created |
+| 6 Public experience | phase-6-public-experience | 1640f09 | ISR page, stepper, contract, /b, /waking | CT-04 PDF |
+| 7 Payments (test) | phase-7-payments | 836f475 | orders, verify, webhooks, refunds, receipts | real Checkout + webhook untested |
+| 8 Notifications/jobs | phase-8-notifications | 043b9e2 | outbox, templates, tick/nightly, job_runs | .ics, DNS |
+| 9 Dashboard/admin | phase-9-dashboard-admin | 40f974c | real dashboard, vendor actions, /admin + TOTP | customer reschedule |
+| Google sign-in | auth-google-signin | 71ccabd | Google OIDC, passwordless-first | real Google untested |
+| 10 Hardening | phase-10-hardening | 3220420 + docs | see entry above | sign-off doc and run |
+- bayana_dev and bayana_test: migrations 001-019 applied (dev backed up first to backups/bayana_dev-pre-017-019-20261025.dump). History is one straight line from main (defc0df); nothing pushed.
+- Uncommitted Phase 11 deploy-prep work by another session sits in the worktree C:\dev\bayana-phase11 (branch phase-11-deploy-prep, based on 40f974c). Agreed plan: copy it onto a new branch hosting-ready from phase-10-hardening, adapt, test, then push that one branch (main untouched).
+- Run: pnpm.cmd db:up; pnpm.cmd dev. Checks: typecheck, lint, test, build, test:visual, test:e2e (one at a time; stop dev first). docs/RUN_LOCAL.md has everything.

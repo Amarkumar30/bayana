@@ -86,11 +86,25 @@ pnpm.cmd test             # unit, then integration (migrates bayana_test first)
 pnpm.cmd build
 pnpm.cmd test:visual      # Playwright against next dev with a mocked API (Windows screenshot baselines)
 pnpm.cmd test:e2e         # real API on bayana_test plus Mailpit; runs twice (payments disabled, then FakeProvider)
+pnpm.cmd audit --audit-level=high   # known vulnerabilities in dependencies (CI runs this too)
+pnpm.cmd perf:lighthouse  # public page on a production build, mobile throttling; fails when LCP is 2.5 s or more
 ```
 
 Rules for these runs:
-- **One at a time.** `test:visual`, `test:e2e`, `build` and `pnpm.cmd dev` all use `apps/web/.next`. Stop `pnpm.cmd dev` before running them.
-- **`DATABASE_URL_TEST` must be set** (it is in apps/api/.env) for `test` and `test:e2e`.
+- **One at a time.** `test:visual`, `test:e2e`, `perf:lighthouse`, `build` and `pnpm.cmd dev` all use `apps/web/.next`. Stop `pnpm.cmd dev` before running them.
+- **`test:e2e` and `perf:lighthouse` read `DATABASE_URL_TEST` from the shell, not from apps/api/.env.** Copy it into the shell first:
+  ```powershell
+  $env:DATABASE_URL_TEST = (Select-String '^DATABASE_URL_TEST=' apps\api\.env).Line.Split('=',2)[1]
+  ```
+- **Ports in use?** The live suite uses 3200 and 4100 by default; set `$env:E2E_API_PORT=4110; $env:E2E_WEB_PORT=3210` to move it.
+- **Secret scan** (CI runs the same):
+  ```powershell
+  docker run --rm -v "${PWD}:/repo" zricethezav/gitleaks:v8.24.3 git /repo --redact --no-banner --config /repo/.gitleaks.toml
+  ```
+
+## Localhost sign-off (Phase 10, not finished)
+
+`pnpm.cmd signoff:local` (scripts/signoff-local.mjs) runs SPEC 16.7 checks 1-5, 10 and 12 against the running dev app (`pnpm.cmd dev`) and Mailpit. It creates its own `signoff-...` vendor and customers in bayana_dev. It has been written but **not yet run**; docs/LOCALHOST_SIGNOFF.md is still to be written.
 
 ## Notes
 
@@ -100,4 +114,10 @@ Rules for these runs:
   docker exec bayana-postgres-1 pg_dump -U bayana -Fc -f /tmp/bayana_dev.dump bayana_dev
   docker cp bayana-postgres-1:/tmp/bayana_dev.dump backups\bayana_dev-<date>.dump
   ```
+- **Restore a backup** (overwrites that database; only with a dump you trust):
+  ```powershell
+  docker cp backups\bayana_dev-<date>.dump bayana-postgres-1:/tmp/restore.dump
+  docker exec bayana-postgres-1 pg_restore -U bayana -d bayana_dev --clean --if-exists --no-owner /tmp/restore.dump
+  ```
 - **If something fails,** `pnpm.cmd run doctor` prints a fix for each failed check.
+- **Moving the project folder** (for example to `C:\dev\bayana`): copy `.env`, `apps\api\.env`, `apps\web\.env.local` and `backups\` by hand (they are not in git). Docker Compose names the project after the folder, so a folder named `bayana` keeps using the volume `bayana_postgres_data` (your data). Run `pnpm.cmd db:up` from the new folder; then `git worktree repair` if you use extra worktrees.
