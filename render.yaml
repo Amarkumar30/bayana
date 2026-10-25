@@ -1,0 +1,71 @@
+# Render Blueprint for the Bayana API (SPEC 16.5). Values never live here: every variable marked `sync: false`
+# is entered once in the Render dashboard when the Blueprint is applied. Steps and the per-environment matrix: docs/DEPLOY.md.
+# Migrations are NOT run by Render (the free plan has no pre-deploy step); run them from your laptop with DATABASE_URL_DIRECT.
+services:
+  - type: web
+    name: bayana-api-staging
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: main
+    autoDeploy: true
+    # The image is built from the repository root so the pnpm workspace and @bayana/shared are available.
+    dockerContext: .
+    dockerfilePath: ./apps/api/Dockerfile
+    healthCheckPath: /health
+    # Only these paths trigger a rebuild; web-only changes do not redeploy the API.
+    buildFilter:
+      paths:
+        - apps/api/**
+        - packages/shared/**
+        - package.json
+        - pnpm-lock.yaml
+        - pnpm-workspace.yaml
+    envVars:
+      # Fixed, non-secret values. Render injects PORT itself; the API reads it.
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"
+      # Entered in the dashboard (names only here).
+      - key: APP_ENV
+        sync: false
+      - key: WEB_ORIGINS
+        sync: false
+      - key: SESSION_COOKIE_DOMAIN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_DIRECT
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: OTP_PEPPER
+        sync: false
+      - key: TICK_SECRET
+        sync: false
+      - key: OPS_EMAIL
+        sync: false
+      - key: EMAIL_TRANSPORT
+        sync: false
+      - key: SMTP_URL
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: PAYMENT_MODE
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: HOLD_MINUTES
+        sync: false
+      - key: REQUEST_HOLD_HOURS
+        sync: false
+      - key: MIN_ADVANCE_PAISE
+        sync: false
+      # Deliberately absent: LIVE_PAYMENTS_ACK (live payments stay off until every SPEC 16.8 gate is done) and
+      # PAYMENT_PROVIDER (defaults to razorpay; "fake" is refused outside tests). Google sign-in variables arrive
+      # with the auth-google-signin branch; add GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI here then.
