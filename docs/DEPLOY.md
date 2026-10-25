@@ -111,9 +111,13 @@ Clean up with `docker rm -f bayana-api-rehearsal`.
 
 ## 3. Migrations (from your laptop, never from the API process)
 
-Migrations run from the same image Render will run, against the **direct** URL. Production config validates every variable, so the env file needs the full set from section 7.
+Migrations run from the same image Render will run, against the **direct** URL. `migrate.js` reads only `NODE_ENV` and the database URL (`apps/api/src/db-config.ts`), so the env file needs just two lines. The name check still refuses `_dev` and `_test` databases under `NODE_ENV=production`.
 
-1. Put the values in `C:\dev\secrets\staging.env`, outside the repo and OneDrive. These are the same values you will paste into Render.
+1. Put these in `C:\dev\secrets\staging-migrate.env`, outside the repo and OneDrive:
+   ```
+   NODE_ENV=production
+   DATABASE_URL_DIRECT=<Neon staging direct connection string, with ?sslmode=require>
+   ```
 2. Run:
    ```powershell
    docker build -f apps/api/Dockerfile -t bayana-api:local .

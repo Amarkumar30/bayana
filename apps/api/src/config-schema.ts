@@ -61,6 +61,27 @@ export function databaseNameProblem(url: string, nodeEnv: Parsed["NODE_ENV"]): s
   return null;
 }
 
+export type DatabaseConfig = { NODE_ENV: Parsed["NODE_ENV"]; databaseUrl: string; variable: "DATABASE_URL_TEST" | "DATABASE_URL_DIRECT" | "DATABASE_URL" };
+/**
+ * Only what migrations and the Neon check need: NODE_ENV and one database URL, so they run before mail, payments, Google
+ * or secrets exist. The target is the same one the full config's DATABASE_URL_DIRECT resolves to: DATABASE_URL_TEST under
+ * NODE_ENV=test, else DATABASE_URL_DIRECT, falling back to DATABASE_URL outside production. Name safety stays with the caller
+ * (databaseNameProblem), exactly as before.
+ */
+export function loadDatabaseConfig(input: NodeJS.ProcessEnv = process.env, envFile = "apps/api/.env"): DatabaseConfig {
+  const problems: EnvProblem[] = []; const value = {} as Record<string, unknown>;
+  for (const name of ["NODE_ENV", "DATABASE_URL", "DATABASE_URL_DIRECT", "DATABASE_URL_TEST"] as const) {
+    const result = shape[name].safeParse(input[name]);
+    if (result.success) value[name] = result.data; else problems.push({ name, rule: `must be ${allowedValues[name]}` });
+  }
+  const v = value as Pick<Parsed, "NODE_ENV" | "DATABASE_URL" | "DATABASE_URL_DIRECT" | "DATABASE_URL_TEST">;
+  const variable = v.NODE_ENV === "test" ? "DATABASE_URL_TEST" : v.DATABASE_URL_DIRECT || v.NODE_ENV === "production" ? "DATABASE_URL_DIRECT" : "DATABASE_URL";
+  const databaseUrl = v[variable];
+  if (!databaseUrl && !problems.some(item => item.name === variable)) problems.push({ name: variable, rule: `is missing; set it to ${allowedValues[variable]}${v.NODE_ENV === "production" ? " (required in production)" : ""}` });
+  if (problems.length || !databaseUrl) throw new ConfigError(problems, envFile);
+  return { NODE_ENV: v.NODE_ENV, databaseUrl, variable };
+}
+
 /** Validates every variable and reports all problems at once, by name and rule only; rejected values are never included. */
 export function loadConfig(input: NodeJS.ProcessEnv = process.env, envFile = "apps/api/.env"): Config {
   const problems: EnvProblem[] = []; const value = {} as Record<string, unknown>;

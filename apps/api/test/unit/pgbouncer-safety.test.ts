@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { loadDatabaseConfig } from "../../src/config-schema.js";
 
 // AGENTS.md section 7 / SPEC 16.5: the runtime connects through Neon's PgBouncer in transaction mode, where a session
 // outlives no transaction. Session-level advisory locks, plain SET (or set_config(..., false)) and LISTEN/NOTIFY would
@@ -56,6 +57,10 @@ describe("PgBouncer transaction-mode safety", () => {
 
   it("the migrate.ts exception still connects with DATABASE_URL_DIRECT", async () => {
     const text = await readFile(new URL("migrate.ts", sourceRoot), "utf8");
-    expect(text).toMatch(/new Client\(\{\s*connectionString:\s*config\.DATABASE_URL_DIRECT\s*\}\)/);
+    expect(text).toMatch(/const \{[^}]*\bdatabaseUrl\b[^}]*\} = databaseConfig;/);
+    expect(text).toMatch(/new Client\(\{\s*connectionString:\s*databaseUrl\s*\}\)/);
+    // ...and that URL is the direct one in production, never the pooled DATABASE_URL.
+    const direct = "postgres://u:p@ep-x.ap-southeast-1.aws.neon.tech/bayana", pooled = "postgres://u:p@ep-x-pooler.ap-southeast-1.aws.neon.tech/bayana";
+    expect(loadDatabaseConfig({ NODE_ENV: "production", DATABASE_URL: pooled, DATABASE_URL_DIRECT: direct })).toMatchObject({ databaseUrl: direct, variable: "DATABASE_URL_DIRECT" });
   });
 });
