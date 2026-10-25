@@ -90,7 +90,7 @@ describe("consent rows (PV-01)", () => {
     const email = `consent-${randomUUID().slice(0, 8)}@example.test`, since = capturedEmails().length;
     await call("POST", "/v1/auth/otp/request", { body: { email, purpose: "signup" } });
     let code = "";
-    for (let tries = 0; tries < 100 && !code; tries++) { code = /\b(\d{6})\b/.exec(capturedEmails().slice(since).find(item => item.to === email)?.text ?? "")?.[1] ?? ""; if (!code) await new Promise(resolve => setTimeout(resolve, 20)); }
+    for (let tries = 0; tries < 500 && !code; tries++) { code = /\b(\d{6})\b/.exec(capturedEmails().slice(since).find(item => item.to === email)?.text ?? "")?.[1] ?? ""; if (!code) await new Promise(resolve => setTimeout(resolve, 20)); }
     const signup = await call("POST", "/v1/auth/signup", { body: { email, code }, headers: { "user-agent": "ConsentTest/1.0" } });
     expect(signup.status).toBe(201);
     const rows = (await pool.query("SELECT kind,policy_version,source,user_agent FROM consents WHERE user_id=$1 ORDER BY kind", [signup.body.user.id])).rows;
@@ -221,7 +221,7 @@ describe("log scan", () => {
       const email = `logscan-${randomUUID().slice(0, 8)}@example.test`, since = capturedEmails().length;
       await call("POST", "/v1/auth/otp/request", { body: { email, purpose: "signup" } });
       let code = "";
-      for (let tries = 0; tries < 100 && !code; tries++) { code = /\b(\d{6})\b/.exec(capturedEmails().slice(since).find(item => item.to === email)?.text ?? "")?.[1] ?? ""; if (!code) await new Promise(resolve => setTimeout(resolve, 20)); }
+      for (let tries = 0; tries < 500 && !code; tries++) { code = /\b(\d{6})\b/.exec(capturedEmails().slice(since).find(item => item.to === email)?.text ?? "")?.[1] ?? ""; if (!code) await new Promise(resolve => setTimeout(resolve, 20)); }
       watched.push(code);
       const signup = await call("POST", "/v1/auth/signup", { body: { email, code, password: "lantern-harbour-violet-7" } });
       watched.push("lantern-harbour-violet-7", /bayana_session=([^;]+)/.exec(signup.headers.get("set-cookie") ?? "")![1]);

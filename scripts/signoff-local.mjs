@@ -15,7 +15,7 @@ const api = webEnv.NEXT_PUBLIC_API_URL ?? "http://localhost:4000", web = webEnv.
 const results = [];
 const report = (item, ok, name, evidence) => { results.push({ item, ok, name }); console.log(`${ok === null ? "INFO" : ok ? "PASS" : "FAIL"}  [${item}] ${name}${evidence ? ` — ${evidence}` : ""}`); };
 const ip = () => `10.${1 + Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}.${1 + Math.floor(Math.random() * 250)}`;
-const otpCodes = [];
+const otpCodes = [], usedMessages = new Set();
 
 /** A browser-like client: keeps its cookie, sends our web Origin (as the browser does), one client address. */
 function client() {
@@ -32,8 +32,9 @@ function client() {
 async function codeFor(email, after) {
   for (let tries = 0; tries < 60; tries++) {
     const found = await (await fetch(`${mailpit}/api/v1/search?query=${encodeURIComponent(`to:"${email}" subject:"Your Bayana code"`)}`)).json().catch(() => ({}));
-    const code = (found.messages ?? []).filter(message => new Date(message.Created).getTime() >= after).sort((a, b) => b.Created.localeCompare(a.Created)).map(message => /(\d{6})$/.exec(message.Subject)?.[1]).find(Boolean);
-    if (code) { otpCodes.push(code); return code; }
+    // A message is taken once: the previous code for this email can still be newest until the new one lands.
+    const message = (found.messages ?? []).filter(item => !usedMessages.has(item.ID) && new Date(item.Created).getTime() >= after && /\d{6}$/.test(item.Subject)).sort((a, b) => b.Created.localeCompare(a.Created))[0];
+    if (message) { const code = /(\d{6})$/.exec(message.Subject)[1]; usedMessages.add(message.ID); otpCodes.push(code); return code; }
     await new Promise(resolve => setTimeout(resolve, 500));
   }
   throw new Error(`no code reached Mailpit for ${email}`);
@@ -105,7 +106,7 @@ await step(4, "Full booking: HELD, PENDING, CONFIRMED, emails received, ledger c
   const customerEmail = `signoff-customer-${tag}@example.test`, customer = client(); let asked = Date.now() - 1000;
   expectStatus(await customer.call("POST", "/v1/auth/booking/otp/request", { email: customerEmail }), 202, "booking code");
   expectStatus(await customer.call("POST", "/v1/auth/booking/otp/verify", { email: customerEmail, code: await codeFor(customerEmail, asked) }), 200, "booking code verify");
-  const held = expectStatus(await customer.call("POST", "/v1/bookings", { slug, date: dayIso, service_id: serviceId, starts_at: slots[0].startsAt, name: "Sign-off Customer" }, { "idempotency-key": randomUUID() }), 201, "hold");
+  const held = expectStatus(await customer.call("POST", "/v1/bookings", { slug, date: dayIso, service_id: serviceId, starts_at: slots[0].startsAt, name: "Sign-off Customer", phone: "+919800000001" }, { "idempotency-key": randomUUID() }), 201, "hold");
   const id = held.json.booking.id, token = held.json.booking.access_token, states = [held.json.booking.status];
   const view = expectStatus(await customer.call("GET", `/v1/bookings/${id}`, undefined, { "x-booking-token": token }), 200, "booking view");
   states.push(expectStatus(await customer.call("POST", `/v1/bookings/${id}/accept`, { terms_hash: view.json.contract_preview.sha256, accepted: true }, { "x-booking-token": token }), 200, "accept").json.booking.status);
@@ -137,7 +138,7 @@ await step(5, "Two customers race for the same slot: exactly one gets it", async
     await racer.call("POST", "/v1/auth/booking/otp/verify", { email, code: await codeFor(email, asked) });
     return racer;
   }));
-  const replies = await Promise.all(racers.map(racer => racer.call("POST", "/v1/bookings", { slug, date: dayIso, service_id: serviceId, starts_at: slots[0].startsAt, name: "Racer" }, { "idempotency-key": randomUUID() })));
+  const replies = await Promise.all(racers.map(racer => racer.call("POST", "/v1/bookings", { slug, date: dayIso, service_id: serviceId, starts_at: slots[0].startsAt, name: "Racer", phone: "+919800000002" }, { "idempotency-key": randomUUID() })));
   const codes = replies.map(reply => reply.status).sort();
   if (codes.join() !== "201,409" || !replies.some(reply => reply.json?.error?.code === "SLOT_TAKEN")) throw new Error(`statuses ${codes.join(", ")}`);
   return "one 201 (held), one 409 SLOT_TAKEN";

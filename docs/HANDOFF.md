@@ -20,10 +20,10 @@
 - **Privacy:** erasure removes names, emails, phones and notes, and keeps money rows. Contracts are kept as legal evidence. Legal pages are drafts that need lawyer review.
 
 ## Open bugs and limitations
-- **Phase 10 sign-off not done:** `docs/LOCALHOST_SIGNOFF.md` is not written, and `scripts/signoff-local.mjs` was written but never run.
+- **Phase 10 localhost sign-off done** (docs/LOCALHOST_SIGNOFF.md): 11 of 12 PASS locally. Still for staging: Checkout payment, real webhook, real cold start, scheduled tick, mail DNS.
 - **Phase 11 deploy prep is uncommitted** in the worktree `C:\dev\bayana-phase11` (based on Phase 9; render.yaml, docs/DEPLOY.md, RESTORE.md, Neon compatibility, a backup workflow). Agreed plan: bring it onto a new branch `hosting-ready` from phase-10. Moving this repo breaks that worktree's link; run `git worktree repair`.
 - **Untested:** a real Razorpay Checkout payment and the webhook through a tunnel (`RAZORPAY_WEBHOOK_SECRET` is empty); a real Google round trip; Brevo SMTP; GitHub Actions (never pushed).
-- **Flaky under machine load:** the 5-second timeouts in apps/api/test/integration/dashboard-admin.test.ts and the AU-04 timing test in auth.test.ts.
+- **Flaky under machine load:** the 5-second timeouts in apps/api/test/integration/dashboard-admin.test.ts (passed in this session's runs). The AU-04 timeout and the hardening.test.ts code waits were raised in Phase 10.
 - **Not built:**
   - CT-04 contract PDF; receipts show "INR" rather than ₹ (apps/api/src/payments/receipt.ts).
   - Customer-side reschedule (BK-09).

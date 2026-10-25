@@ -102,9 +102,16 @@ Rules for these runs:
   docker run --rm -v "${PWD}:/repo" zricethezav/gitleaks:v8.24.3 git /repo --redact --no-banner --config /repo/.gitleaks.toml
   ```
 
-## Localhost sign-off (Phase 10, not finished)
+## Localhost sign-off (Phase 10)
 
-`pnpm.cmd signoff:local` (scripts/signoff-local.mjs) runs SPEC 16.7 checks 1-5, 10 and 12 against the running dev app (`pnpm.cmd dev`) and Mailpit. It creates its own `signoff-...` vendor and customers in bayana_dev. It has been written but **not yet run**; docs/LOCALHOST_SIGNOFF.md is still to be written.
+`pnpm.cmd signoff:local` (scripts/signoff-local.mjs) runs SPEC 16.7 checks 1-5, 10 and 12 against the running dev app (`pnpm.cmd dev`) and Mailpit. It creates its own `signoff-...` vendor and customers in bayana_dev. To have it scan the API log as well, save the dev output and point the script at it:
+
+```powershell
+pnpm.cmd dev *>&1 | Tee-Object -FilePath $env:TEMP\bayana-dev.log     # in one window
+$env:SIGNOFF_LOG="$env:TEMP\bayana-dev.log"; pnpm.cmd signoff:local    # in another
+```
+
+Results and evidence for all twelve items are in docs/LOCALHOST_SIGNOFF.md.
 
 ## Notes
 
@@ -120,4 +127,4 @@ Rules for these runs:
   docker exec bayana-postgres-1 pg_restore -U bayana -d bayana_dev --clean --if-exists --no-owner /tmp/restore.dump
   ```
 - **If something fails,** `pnpm.cmd run doctor` prints a fix for each failed check.
-- **Moving the project folder** (for example to `C:\dev\bayana`): copy `.env`, `apps\api\.env`, `apps\web\.env.local` and `backups\` by hand (they are not in git). Docker Compose names the project after the folder, so a folder named `bayana` keeps using the volume `bayana_postgres_data` (your data). Run `pnpm.cmd db:up` from the new folder; then `git worktree repair` if you use extra worktrees.
+- **Moving the project folder** (for example to `C:\dev\bayana`): copy `.env`, `apps\api\.env`, `apps\web\.env.local` and `backups\` by hand (they are not in git). Docker Compose names the project after the folder, so a folder named `bayana` keeps using the volume `bayana_postgres_data` (your data). Run `pnpm.cmd db:up` from the new folder; then `git worktree repair` if you use extra worktrees. A move also breaks pnpm's links and the Next cache: run `pnpm.cmd install --frozen-lockfile` and delete `apps\web\.next` (a missing `tsx/cli`, or 500s naming `routes-manifest.json`, mean exactly this).

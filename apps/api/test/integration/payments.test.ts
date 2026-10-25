@@ -10,6 +10,7 @@ import { pool, transaction } from "../../src/database.js";
 import { createLogger, setLogger } from "../../src/logger.js";
 import { FakeProvider } from "../../src/payments/fake-provider.js";
 import { reconcile } from "../../src/payments/reconcile.js";
+import { applyProviderRefund } from "../../src/payments/service.js";
 import { useTestPayments } from "../../src/payments/runtime.js";
 import { createUser } from "../helpers.js";
 
@@ -61,10 +62,11 @@ async function webhook(event: string, entities: Record<string, unknown>, options
   return { reply, eventId };
 }
 /** The route answers first and processes after; wait until the event is settled one way or the other. */
-async function settled(eventId: string) {
+async function settled(eventId: string, options: { processed?: boolean } = {}) {
   for (let attempt = 0; attempt < 100; attempt++) {
     const row = (await pool.query<{ processed_at: Date | null; error: string | null }>("SELECT processed_at,error FROM webhook_events WHERE event_id=$1", [eventId])).rows[0];
-    if (row && (row.processed_at || row.error)) return row;
+    // A "Waiting" event is retried after the payment it waits for, so { processed } waits past that error.
+    if (row && (row.processed_at || (row.error && !options.processed))) return row;
     await new Promise(resolve => setTimeout(resolve, 20));
   }
   throw new Error(`webhook ${eventId} never settled`);
@@ -206,10 +208,19 @@ describe("webhooks (PY-04)", () => {
     expect(await settled(early.eventId)).toMatchObject({ error: expect.stringContaining("Waiting") });
     const paid = await webhook("order.paid", { payment, order: { id: order_id } }); await settled(paid.eventId);
     const captured = await webhook("payment.captured", { payment }); await settled(captured.eventId);
-    expect(await settled(early.eventId)).toMatchObject({ error: null });
+    expect(await settled(early.eventId, { processed: true })).toMatchObject({ error: null });
     expect(await counts(booking.id)).toEqual({ captured: 0, ledger: 1, confirmations: 1 });
     expect((await pool.query("SELECT status FROM payments WHERE provider_order_id=$1", [order_id])).rows[0].status).toBe("partially_refunded");
     expect((await call("GET", `/v1/bookings/${booking.id}`, { token: booking.token })).body).toMatchObject({ status: "CONFIRMED", paid_paise: 15000, balance_due_paise: 85000 });
+  });
+  it("two retries applying one gateway refund at once record it once and neither fails", async () => {
+    const booking = await pending(); const { order_id } = await order(booking);
+    const { payment } = fake.pay(order_id);
+    await settled((await webhook("payment.captured", { payment })).eventId);
+    const refund = await fake.createRefund({ paymentId: payment.id, amountPaise: 5000 });
+    await Promise.all([applyProviderRefund(refund, "processed"), applyProviderRefund(refund, "processed")]);
+    expect((await pool.query("SELECT count(*)::int AS n FROM refunds WHERE provider_refund_id=$1", [refund.id])).rows[0].n).toBe(1);
+    expect((await pool.query("SELECT count(*)::int AS n FROM ledger_entries WHERE booking_id=$1 AND kind='REFUND'", [booking.id])).rows[0].n).toBe(1);
   });
 });
 

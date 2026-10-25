@@ -230,7 +230,11 @@ export async function applyProviderRefund(entity: ProviderRefund, status: "proce
     let refund = await db.query<{ id: string }>("SELECT id FROM refunds WHERE provider_refund_id=$1 FOR UPDATE", [entity.id]);
     // Our own refund whose id we have not stored yet, or one made in the Razorpay dashboard.
     if (!refund.rowCount) refund = await db.query<{ id: string }>("UPDATE refunds SET provider_refund_id=$1 WHERE id=(SELECT id FROM refunds WHERE payment_id=$2 AND amount_paise=$3 AND provider_refund_id IS NULL AND status='pending' ORDER BY created_at LIMIT 1 FOR UPDATE) RETURNING id", [entity.id, payment.rows[0].id, entity.amount]);
-    if (!refund.rowCount) { const id = randomUUID(); await db.query("INSERT INTO refunds(id,payment_id,booking_id,amount_paise,status,provider_refund_id,reason) VALUES($1,$2,$3,$4,'pending',$5,'refund created at Razorpay')", [id, payment.rows[0].id, payment.rows[0].booking_id, entity.amount, entity.id]); refund = { rowCount: 1, rows: [{ id }] } as typeof refund; }
+    // Two retries of one event can race here: the loser waits on the winner's row instead of failing on the unique key.
+    if (!refund.rowCount) {
+      await db.query("INSERT INTO refunds(id,payment_id,booking_id,amount_paise,status,provider_refund_id,reason) VALUES($1,$2,$3,$4,'pending',$5,'refund created at Razorpay') ON CONFLICT (provider_refund_id) DO NOTHING", [randomUUID(), payment.rows[0].id, payment.rows[0].booking_id, entity.amount, entity.id]);
+      refund = await db.query<{ id: string }>("SELECT id FROM refunds WHERE provider_refund_id=$1 FOR UPDATE", [entity.id]);
+    }
     const refundId = refund.rows[0].id;
     if (status === "processed") await applyRefundProcessed(db, refundId);
     else {

@@ -85,7 +85,8 @@ test("services page lists services and validates the advance before saving", asy
   await sheet.getByRole("button", { name: "{{advance}}" }).click();
   await expect(sheet.getByLabel("Terms for this service")).toHaveValue("{{advance}}");
   await sheet.getByRole("button", { name: "Add service" }).click();
-  await expect(page.getByText("Mini session")).toBeVisible();
+  // The "Mini session saved" toast may still be up, so look for the row itself.
+  await expect(page.locator("strong", { hasText: "Mini session" })).toBeVisible();
 });
 
 test("a vendor with no services gets step 1, not an empty table", async ({ page }) => {

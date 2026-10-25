@@ -1,2 +1,4 @@
 /* Next.js dev tooling is not product UI; keep it out of screenshot baselines. Console-error tests in layout.spec.ts guard real issues. */
 nextjs-portal { display: none !important; }
+/* Whether Chromium keeps a classic scrollbar in a full-page capture depends on timing; it would shift every line by 17 px. */
+html { scrollbar-width: none; }

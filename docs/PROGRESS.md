@@ -240,3 +240,12 @@ Facts for the next session:
 - bayana_dev and bayana_test: migrations 001-019 applied (dev backed up first to backups/bayana_dev-pre-017-019-20261025.dump). History is one straight line from main (defc0df); nothing pushed.
 - Uncommitted Phase 11 deploy-prep work by another session sits in the worktree C:\dev\bayana-phase11 (branch phase-11-deploy-prep, based on 40f974c). Agreed plan: copy it onto a new branch hosting-ready from phase-10-hardening, adapt, test, then push that one branch (main untouched).
 - Run: pnpm.cmd db:up; pnpm.cmd dev. Checks: typecheck, lint, test, build, test:visual, test:e2e (one at a time; stop dev first). docs/RUN_LOCAL.md has everything.
+
+## Phase 10 Hardening - localhost sign-off - 2026-10-25 (branch phase-10-hardening) - DONE
+- docs/LOCALHOST_SIGNOFF.md: SPEC 16.7 on localhost, 11 of 12 PASS (1-5, 10, 12 live via `pnpm.cmd signoff:local`; 6, 7, 9 by integration test; 8 simulated with Playwright against dev). 11 (mail DNS) NOT APPLICABLE; the Razorpay Checkout part of 4 NOT TESTED.
+- Defect fixed: concurrent retries of one gateway refund (refund.processed before its payment) hit refunds_provider_refund_id_key and flagged the event for review. applyProviderRefund now inserts ON CONFLICT DO NOTHING and re-reads FOR UPDATE. Regression test in payments.test.ts (fails without the fix).
+- signoff-local.mjs fixed: Mailpit code reuse (OTP_INVALID) and missing phone (PHONE_REQUIRED). Test timing fixed, no assertion weakened: AU-04 timeout 20 s; hardening.test.ts code waits 10 s; settled({ processed }) in payments.test.ts.
+- Visual: the design desktop baseline (from 3220420) was a capture taken before hydration (blank avatars). Now the test waits for hydration, screenshot.css hides scrollbars (a 17 px shift), and the baseline is regenerated. vendor.spec.ts services assertion no longer collides with the toast.
+- After moving the repo: run `pnpm.cmd install --frozen-lockfile` and delete apps/web/.next (broken links and a stale cache). `git worktree repair` was done for C:\dev\bayana-phase11 (its 17 uncommitted files untouched).
+- Never run pnpm dev at the same time as test:e2e/test:visual/build, including from another session: they share apps/web/.next.
+- Next: branch hosting-ready from this commit, bring in C:\dev\bayana-phase11, adapt to Google sign-in + Phase 10, test, push only that branch.

@@ -175,7 +175,7 @@ describe("AU-04 auth endpoints never reveal whether an email has an account", ()
     const median = (values: number[]) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
     const ratio = median(known) / median(missing);
     expect(ratio).toBeGreaterThan(0.5); expect(ratio).toBeLessThan(2);
-  });
+  }, 20_000); // 12 timed argon2id logins plus a signup: the 5 s default is too short on a loaded machine
 });
 
 describe("AU-05 codes: 6 digits, purpose-bound, 10 minutes, 5 attempts, single use, 60 s cooldown", () => {

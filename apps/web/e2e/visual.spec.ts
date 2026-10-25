@@ -1,9 +1,11 @@
 import path from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { MOCK_NOW, mockApi } from "./mock-api";
 
 // Hides Next.js dev tooling from baselines; see screenshot.css.
 const stylePath = path.join(__dirname, "screenshot.css");
+// Avatar initials appear only after hydration (Radix renders the fallback in an effect); before it the circles are blank.
+const expectHydrated = (page: Page) => expect(page.getByRole("img", { name: "Ananya Iyer" })).toHaveText("AI");
 
 // Screenshot baselines live in e2e/__screenshots__ and are platform-specific (fonts render differently per OS).
 const pages = [
@@ -31,6 +33,7 @@ for (const { name, path: route, ready } of pages) {
     // Wait until the full stylesheet (including breakpoint variants) is applied, not just the first paint.
     if (name !== "login") await expect(heading).toHaveCSS("font-size", (page.viewportSize()?.width ?? 0) >= 640 ? (name === "home" ? "48px" : "32px") : (name === "home" ? "32px" : "24px"));
     await page.waitForLoadState("networkidle");
+    if (name === "design") await expectHydrated(page);
     await page.evaluate(() => document.fonts.ready);
     await expect(page).toHaveScreenshot(`${name}.png`, { fullPage: true, stylePath });
   });
@@ -43,6 +46,7 @@ test("design page in dark mode", async ({ page }) => {
   await page.reload();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Design system");
   await page.waitForLoadState("networkidle");
+  await expectHydrated(page);
   await page.evaluate(() => document.fonts.ready);
   await expect(page).toHaveScreenshot("design-dark.png", { fullPage: true, stylePath });
 });
