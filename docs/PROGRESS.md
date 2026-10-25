@@ -249,3 +249,11 @@ Facts for the next session:
 - After moving the repo: run `pnpm.cmd install --frozen-lockfile` and delete apps/web/.next (broken links and a stale cache). `git worktree repair` was done for C:\dev\bayana-phase11 (its 17 uncommitted files untouched).
 - Never run pnpm dev at the same time as test:e2e/test:visual/build, including from another session: they share apps/web/.next.
 - Next: branch hosting-ready from this commit, bring in C:\dev\bayana-phase11, adapt to Google sign-in + Phase 10, test, push only that branch.
+
+## Phase 10 close-out - 2026-10-25 (branch phase-10-hardening, after 5db0c48)
+- Test-speed root cause: every password hash in the suite used production argon2id (64 MiB, t=3). NODE_ENV=test now uses m=1024, t=1 (passwordHashOptions, apps/api/src/auth.ts:18), with the unknown-email dummy hash built from the same options. test/unit/password-hashing.test.ts proves production and development keep 64 MiB and t=3.
+- AU-04: the 20 s timeout is removed; it compares medians of 11 interleaved runs (ratio 0.5-2) and takes about 0.2 s. dashboard-admin.test.ts never hashed passwords; its old timeouts came from gates running alongside dev/build/Playwright.
+- docs/LOCALHOST_SIGNOFF.md: each item now has how to check, the expected result and the evidence.
+- Gates (each alone, dev stopped): typecheck 0, lint 0, test 0/0/0 (three runs, 94 unit + 164 integration each), build 0, test:visual 0 (227 passed, 1 skipped), test:e2e 0 (4 + 2), then signoff:local 0 against pnpm dev.
+- test:visual is still exposed to next dev hot-swapping layout.css mid-test (seen once as /design losing every sm: rule; visual.spec.ts now waits for hydration and sm: padding, and screenshot.css is back to the original). Real fix, not done: run the visual suite on next build + next start and re-baseline.
+- Another session pushed phase-10-hardening and fast-forwarded origin/main to 5db0c48 (adds docs/DEPLOY_REVIEW_BUNDLE.md). gitleaks over 21 commits: no leaks.

@@ -171,11 +171,12 @@ describe("AU-04 auth endpoints never reveal whether an email has an account", ()
     const { email } = await signUp(); const unknown = newEmail("ghost");
     const time = async (address: string) => { const start = performance.now(); await client().call("POST", "/login", { email: address, password: "not-the-password-1" }); return performance.now() - start; };
     const known: number[] = [], missing: number[] = [];
-    for (let i = 0; i < 6; i++) { known.push(await time(email)); missing.push(await time(unknown)); }
+    // Interleaved, and compared by median: one slow request (GC, a busy machine) moves neither side much.
+    for (let i = 0; i < 11; i++) { known.push(await time(email)); missing.push(await time(unknown)); }
     const median = (values: number[]) => values.sort((a, b) => a - b)[Math.floor(values.length / 2)];
     const ratio = median(known) / median(missing);
     expect(ratio).toBeGreaterThan(0.5); expect(ratio).toBeLessThan(2);
-  }, 20_000); // 12 timed argon2id logins plus a signup: the 5 s default is too short on a loaded machine
+  });
 });
 
 describe("AU-05 codes: 6 digits, purpose-bound, 10 minutes, 5 attempts, single use, 60 s cooldown", () => {

@@ -4,8 +4,12 @@ import { MOCK_NOW, mockApi } from "./mock-api";
 
 // Hides Next.js dev tooling from baselines; see screenshot.css.
 const stylePath = path.join(__dirname, "screenshot.css");
-// Avatar initials appear only after hydration (Radix renders the fallback in an effect); before it the circles are blank.
-const expectHydrated = (page: Page) => expect(page.getByRole("img", { name: "Ananya Iyer" })).toHaveText("AI");
+// /design settles late: avatar initials appear only after hydration (Radix renders the fallback in an effect), and the
+// sm: padding on <main> can apply after the heading's breakpoint size, shifting every line by 8 px if captured early.
+async function expectHydrated(page: Page) {
+  await expect(page.getByRole("img", { name: "Ananya Iyer" })).toHaveText("AI");
+  await expect(page.locator("main#main")).toHaveCSS("padding-left", (page.viewportSize()?.width ?? 0) >= 640 ? "24px" : "16px");
+}
 
 // Screenshot baselines live in e2e/__screenshots__ and are platform-specific (fonts render differently per OS).
 const pages = [

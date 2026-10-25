@@ -14,8 +14,11 @@ export const sessionCookieName = "bayana_session";
 
 export const OTP_TTL_MINUTES = 10, OTP_MAX_ATTEMPTS = 5, OTP_RESEND_SECONDS = 60, OTP_EMAIL_HOURLY_CAP = 10, OTP_IP_HOURLY_CAP = 30;
 const SESSION_SLIDING_DAYS = 30, SESSION_ABSOLUTE_DAYS = 90;
-// A real argon2id hash of a random throwaway value: verifying against it costs the same as a real check.
-const dummyHash = "$argon2id$v=19$m=65536,t=3,p=1$c2FsdHNhbHRzYWx0c2FsdA$k5HyjR2qTT1ntD+SaGo4ICUCU9vZQzC8ZwXzxcCVpKw";
+/** argon2id at 64 MiB and 3 passes. NODE_ENV=test alone uses the library minimum, so suites are not bound by hashing. */
+export const passwordHashOptions = (nodeEnv: typeof config.NODE_ENV) => ({ type: argon2.argon2id, parallelism: 1, ...(nodeEnv === "test" ? { memoryCost: 1024, timeCost: 1 } : { memoryCost: 65536, timeCost: 3 }) }) as const;
+// Hashed with the same options as real passwords, so verifying against it costs the same as a real check.
+let dummyHash: Promise<string> | undefined;
+const getDummyHash = () => (dummyHash ??= argon2.hash(randomBytes(16).toString("hex"), passwordHashOptions(config.NODE_ENV)));
 const commonPasswords = new Set(["passwordpassword", "1234567890", "qwertyuiop", "letmeinletmein", "welcome123", "password123", "iloveyou123", "qwerty12345"]);
 
 // One message per failure class, never revealing which part was wrong or whether the account exists.
@@ -30,10 +33,10 @@ export function validatePassword(password: string, email: string) {
   if (password.length < 10 || password.length > 128) throw new AppError(400, "INVALID_PASSWORD", "Use 10 to 128 characters for your password.");
   if (commonPasswords.has(password.toLowerCase()) || password.toLowerCase() === normalizeEmail(email)) throw new AppError(400, "INVALID_PASSWORD", "That password is too easy to guess. Choose a less common one.");
 }
-export const hashPassword = (password: string) => argon2.hash(password, { type: argon2.argon2id, memoryCost: 65536, timeCost: 3, parallelism: 1 });
+export const hashPassword = (password: string) => argon2.hash(password, passwordHashOptions(config.NODE_ENV));
 /** Always runs one argon2 verification, against a dummy hash when there is no real one, so timing does not reveal accounts. */
 export async function verifyPassword(hash: string | null | undefined, password: string) {
-  const ok = await argon2.verify(hash ?? dummyHash, password).catch(() => false);
+  const ok = await argon2.verify(hash ?? await getDummyHash(), password).catch(() => false);
   return Boolean(hash) && ok;
 }
 
