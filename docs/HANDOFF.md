@@ -1,6 +1,6 @@
 # Handoff (2026-10-25) — read this first, then docs/PROGRESS.md "Session handoff 3"
 
-**State:** branch `phase-10-hardening` (Phase 10 done, committed after `5db0c48`), pushed to origin by another session at the user's request; `origin/main` was fast-forwarded to `5db0c48`. Phases follow docs/CLAUDE_CODE_PHASES.md (SPEC 19.2 numbers them differently). `bayana_dev` and `bayana_test` both have migrations 001–019.
+**State:** Phase 10 is done on `phase-10-hardening` (`8b647fb`; origin has up to `5db0c48`, and `origin/main` was fast-forwarded to `5db0c48` by another session at the user's request). Branch **`hosting-ready`** (from `8b647fb`, not pushed) carries the Phase 11 deploy prep, adapted for Google sign-in and the staging hosts. Phases follow docs/CLAUDE_CODE_PHASES.md (SPEC 19.2 numbers them differently). `bayana_dev` and `bayana_test` both have migrations 001–019.
 
 ## Decisions not obvious from the code
 - **Status changes:** only `transitionBooking` (apps/api/src/booking-transition.ts) writes `bookings.status`, enforced by a grep test (test/unit/status-writes.test.ts). Same-status events (reschedules) use `recordChange`. Double booking is stopped by the vendor lock `pg_advisory_xact_lock` plus the exclusion constraint `bookings_no_overlap`.
@@ -21,7 +21,7 @@
 
 ## Open bugs and limitations
 - **Phase 10 localhost sign-off done** (docs/LOCALHOST_SIGNOFF.md): 11 of 12 PASS locally. Still for staging: Checkout payment, real webhook, real cold start, scheduled tick, mail DNS.
-- **Phase 11 deploy prep is uncommitted** in the worktree `C:\dev\bayana-phase11` (based on Phase 9; render.yaml, docs/DEPLOY.md, RESTORE.md, Neon compatibility, a backup workflow). Agreed plan: bring it onto a new branch `hosting-ready` from phase-10. Moving this repo breaks that worktree's link; run `git worktree repair`.
+- **Phase 11 deploy prep is on `hosting-ready`** (docs/DEPLOY.md is the deploy runbook). Staging = staging.bayana.in + api.staging.bayana.in, cookie domain `.staging.bayana.in`; Render staging deploys from `hosting-ready`. The worktree `C:devayana-phase11` was left untouched and can be removed once hosting-ready is merged (`git worktree remove`; it has uncommitted files, so check first).
 - **Untested:** a real Razorpay Checkout payment and the webhook through a tunnel (`RAZORPAY_WEBHOOK_SECRET` is empty); a real Google round trip; Brevo SMTP; GitHub Actions (never pushed).
 - **Test speed:** NODE_ENV=test hashes passwords with the argon2 minimum (`passwordHashOptions` in apps/api/src/auth.ts; unit test password-hashing.test.ts proves production keeps 64 MiB, t=3). `pnpm.cmd test` passed three times in a row. dashboard-admin.test.ts never hashed passwords; its old 5 s timeouts came from running gates alongside dev/build/Playwright. Run gates one at a time.
 - **Not built:**
@@ -48,9 +48,8 @@
 - **Before any migration on dev:** back up (command below).
 
 ## Next step
-1. Phase 10 is done (docs/LOCALHOST_SIGNOFF.md).
-2. Next: create branch `hosting-ready`, bring in the C:\dev\bayana-phase11 changes, adapt them to Google sign-in and Phase 10, test, and push only that branch. Never push to or merge into `main` without asking.
-Use the starter prompt the last session printed (it begins "Read docs/HANDOFF.md").
+1. Code fixes on `hosting-ready` (the user sends them next), all listed in docs/PROGRESS.md "hosting-ready": a per-environment session cookie name, `migrate.ts` running with database URLs alone, client IP for server-side calls from Vercel, and the `bayana_app` runtime role.
+2. Then push `hosting-ready` (ask first), apply render.yaml on Render, and follow docs/DEPLOY.md section by section. Never push to or merge into `main` without asking.
 
 ## Commands (PowerShell, always pnpm.cmd)
 - Run: `pnpm.cmd db:up` · `pnpm.cmd dev` (web 3000, API 4000, Mailpit 8025) · `pnpm.cmd run doctor`
