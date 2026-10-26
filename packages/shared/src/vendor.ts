@@ -3,6 +3,7 @@ import { advanceRuleProblem } from "./money.js";
 import { slugProblem } from "./slug.js";
 import { termsTemplateProblems } from "./terms.js";
 import { isIanaTimezone } from "./time.js";
+import { MAX_BOOKING_DAYS, MAX_BUFFER_DAYS } from "./days.js";
 
 // Request schemas shared by the API (validation) and the web forms (inline errors). Unknown fields are rejected.
 const text = (max: number) => z.string().trim().max(max);
@@ -39,24 +40,48 @@ export function cancellationTiersProblem(tiers: CancellationTier[]): string | nu
 export const cancellationTiersSchema = z.array(cancellationTierSchema).max(6, "Use at most 6 tiers.").superRefine((tiers, ctx) => { const problem = cancellationTiersProblem(tiers); if (problem) ctx.addIssue({ code: "custom", message: problem }); });
 export const termsTemplateSchema = z.string().max(10_000).superRefine((template, ctx) => { for (const problem of termsTemplateProblems(template)) ctx.addIssue({ code: "custom", message: problem }); });
 
-const serviceFields = z.object({
+// A service is charged per hour ("hourly": duration and buffers in minutes) or per day ("daily": price per day, a range of
+// days, buffer days). Each mode carries exactly its own fields; the other mode's must be absent or null (the database
+// enforces the same rule with services_mode_fields).
+export const BOOKING_MODES = ["hourly", "daily"] as const;
+export type BookingMode = typeof BOOKING_MODES[number];
+const serviceBase = {
   name: text(120).min(2, "Use at least 2 characters."), description: text(2000).default(""),
-  price_paise: z.number().int("Price must be in whole paise.").positive("Price must be more than zero.").max(1_000_000_000),
-  duration_minutes: z.number().int().min(5, "At least 5 minutes.").max(1440, "At most 24 hours."),
-  buffer_before_minutes: z.number().int().min(0).max(1440).default(0), buffer_after_minutes: z.number().int().min(0).max(1440).default(0),
-  booking_mode: z.enum(["TIMED", "FULL_DAY"]).default("TIMED"),
+  price_paise: z.number({ error: "Enter a price." }).int("Price must be in whole paise.").positive("Price must be more than zero.").max(1_000_000_000, "That price is too high."),
   advance_type: z.enum(["NONE", "PERCENT", "FIXED"]), advance_value: z.number().int().min(0),
   cancellation_tiers: cancellationTiersSchema.default([]), terms_template: termsTemplateSchema.default(""),
   customer_details_prompt: text(1000).default(""), active: z.boolean().default(true)
-}).strict();
-export const serviceCreateSchema = serviceFields.superRefine((value, ctx) => {
+};
+const hourlyFields = {
+  duration_minutes: z.number({ error: "Enter how long the service takes, in minutes." }).int("Use whole minutes.").min(5, "At least 5 minutes.").max(1440, "At most 24 hours."),
+  buffer_before_minutes: z.number().int().min(0).max(1440, "At most 24 hours.").default(0), buffer_after_minutes: z.number().int().min(0).max(1440, "At most 24 hours.").default(0)
+};
+const dailyFields = {
+  min_days: z.number({ error: "Enter the minimum number of days." }).int("Use whole days.").min(1, "At least 1 day.").max(MAX_BOOKING_DAYS, `At most ${MAX_BOOKING_DAYS} days.`).default(1),
+  max_days: z.number({ error: "Enter the maximum number of days." }).int("Use whole days.").min(1, "At least 1 day.").max(MAX_BOOKING_DAYS, `At most ${MAX_BOOKING_DAYS} days.`).default(1),
+  buffer_days: z.number().int("Use whole days.").min(0, "Use 0 or more days.").max(MAX_BUFFER_DAYS, `At most ${MAX_BUFFER_DAYS} days.`).default(0)
+};
+const notUsed = (message: string) => z.null({ error: message }).optional();
+const notForHourly = "Per-hour services do not use days. Remove it, or charge per day instead.";
+const notForDaily = "Per-day services do not use minutes. Remove it, or charge per hour instead.";
+const hourlyService = z.object({ ...serviceBase, booking_mode: z.literal("hourly"), ...hourlyFields, min_days: notUsed(notForHourly), max_days: notUsed(notForHourly), buffer_days: notUsed(notForHourly) }).strict();
+const dailyService = z.object({ ...serviceBase, booking_mode: z.literal("daily"), ...dailyFields, duration_minutes: notUsed(notForDaily), buffer_before_minutes: notUsed(notForDaily), buffer_after_minutes: notUsed(notForDaily) }).strict();
+// A body without booking_mode is an hourly service, as every service was before per-day pricing existed.
+const withMode = (value: unknown) => value && typeof value === "object" && !("booking_mode" in value) ? { ...value, booking_mode: "hourly" } : value;
+export const serviceCreateSchema = z.preprocess(withMode, z.discriminatedUnion("booking_mode", [hourlyService, dailyService], { error: "Choose how you charge: per hour or per day." })).superRefine((value, ctx) => {
   const problem = advanceRuleProblem(value.price_paise, value.advance_type, value.advance_value);
   if (problem) ctx.addIssue({ code: "custom", path: ["advance_value"], message: problem });
+  if (value.booking_mode === "daily" && value.max_days < value.min_days) ctx.addIssue({ code: "custom", path: ["max_days"], message: "The maximum must be at least the minimum number of days." });
 });
 /** PATCH bodies: any subset of fields. The API merges with the stored row and re-validates with serviceCreateSchema. */
-export const serviceUpdateSchema = serviceFields.partial();
+export const serviceUpdateSchema = z.object({
+  ...Object.fromEntries(Object.entries(serviceBase).map(([key, schema]) => [key, schema.optional()])) as { [K in keyof typeof serviceBase]: z.ZodOptional<typeof serviceBase[K]> },
+  booking_mode: z.enum(BOOKING_MODES, { error: "Choose how you charge: per hour or per day." }).optional(),
+  duration_minutes: hourlyFields.duration_minutes.nullable().optional(), buffer_before_minutes: z.number().int().min(0).max(1440).nullable().optional(), buffer_after_minutes: z.number().int().min(0).max(1440).nullable().optional(),
+  min_days: z.number().int().min(1).max(MAX_BOOKING_DAYS).nullable().optional(), max_days: z.number().int().min(1).max(MAX_BOOKING_DAYS).nullable().optional(), buffer_days: z.number().int().min(0).max(MAX_BUFFER_DAYS).nullable().optional()
+}).strict();
 export const serviceReorderSchema = z.object({ ids: z.array(z.string().uuid()).min(1).max(200) }).strict();
-export type ServiceInput = z.infer<typeof serviceFields>;
+export type ServiceInput = z.infer<typeof serviceCreateSchema>;
 
 const windowFields = { start_time: localTimeSchema, end_time: localTimeSchema };
 export const weeklyWindowSchema = z.object({ weekday: z.number().int().min(0).max(6), ...windowFields }).strict().refine(value => value.end_time > value.start_time, { message: "End time must be after the start time.", path: ["end_time"] });

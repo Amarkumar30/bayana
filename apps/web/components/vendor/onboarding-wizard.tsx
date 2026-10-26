@@ -39,7 +39,7 @@ export function OnboardingWizard() {
       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-primary">Step {Math.min(step + 1, 4)} of 4</p>
       {step === 0 && <ProfileStep onDone={() => void next(1)} />}
       {step === 1 && <div className="grid gap-4"><div className="grid gap-1"><h1 className="text-2xl">Add your first service</h1><p className="text-sm text-muted">What can clients book? You can add more and fine-tune refunds and terms later.</p></div><ServiceForm compact submitLabel="Save and continue" onSaved={() => void next(2)} /><Button variant="ghost" size="sm" className="w-fit" onClick={() => setStep(2)}>Skip for now</Button></div>}
-      {step === 2 && <HoursStep onDone={() => void next(3)} onSkip={() => setStep(3)} />}
+      {step === 2 && <HoursStep dailyOnly={Boolean(profile?.services.length) && profile!.services.every(service => service.booking_mode === "daily")} onDone={() => void next(3)} onSkip={() => setStep(3)} />}
       {step === 3 && profile && <PublishStep profile={profile} onBack={setStep} onPublished={() => void refresh()} />}
     </div>
   );
@@ -74,7 +74,8 @@ function ProfileStep({ onDone }: { onDone: () => void }) {
   );
 }
 
-function HoursStep({ onDone, onSkip }: { onDone: () => void; onSkip: () => void }) {
+/** Weekdays and hours. A vendor whose services are all per day only chooses open days (a day is open when it has any hours). */
+function HoursStep({ dailyOnly = false, onDone, onSkip }: { dailyOnly?: boolean; onDone: () => void; onSkip: () => void }) {
   const [days, setDays] = useState<boolean[]>([false, true, true, true, true, true, false]); const [from, setFrom] = useState("09:00"); const [to, setTo] = useState("18:00");
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   const windows = days.flatMap((on, weekday) => on ? [{ weekday, start_time: from, end_time: to }] : []);
@@ -87,11 +88,11 @@ function HoursStep({ onDone, onSkip }: { onDone: () => void; onSkip: () => void 
   };
   return (
     <form onSubmit={submit} className="grid gap-4">
-      <div className="grid gap-1"><h1 className="text-2xl">When do you take bookings?</h1><p className="text-sm text-muted">Start simple. You can add split hours, holidays and time off later.</p></div>
+      <div className="grid gap-1"><h1 className="text-2xl">{dailyOnly ? "Which days are you open?" : "When do you take bookings?"}</h1><p className="text-sm text-muted">{dailyOnly ? "Your services are booked by the whole day, so only open or closed matters. You can close single dates and add time off later." : "Start simple. You can add split hours, holidays and time off later."}</p></div>
       <fieldset className="grid gap-2"><legend className="mb-1 text-sm font-medium">Days</legend>
         <div className="flex flex-wrap gap-2">{weekdayNames.map((name, weekday) => <button key={name} type="button" aria-pressed={days[weekday]} onClick={() => setDays(days.map((value, at) => at === weekday ? !value : value))} className={`min-h-11 min-w-14 rounded-input px-3 text-sm font-semibold ring-1 transition-colors ${days[weekday] ? "bg-primary text-primary-foreground ring-primary" : "bg-surface text-ink ring-border"}`}>{name.slice(0, 3)}</button>)}</div>
       </fieldset>
-      <div className="grid grid-cols-2 gap-3"><Field label="From">{p => <Input {...p} type="time" value={from} onChange={event => setFrom(event.target.value)} />}</Field><Field label="To">{p => <Input {...p} type="time" value={to} onChange={event => setTo(event.target.value)} />}</Field></div>
+      {!dailyOnly && <div className="grid grid-cols-2 gap-3"><Field label="From">{p => <Input {...p} type="time" value={from} onChange={event => setFrom(event.target.value)} />}</Field><Field label="To">{p => <Input {...p} type="time" value={to} onChange={event => setTo(event.target.value)} />}</Field></div>}
       {error && <Notice tone="danger">{error}</Notice>}
       <Button size="lg" block loading={busy} loadingText="Saving…">Save and continue</Button>
       <Button type="button" variant="ghost" size="sm" className="w-fit" onClick={onSkip}>Skip for now</Button>

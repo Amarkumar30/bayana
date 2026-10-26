@@ -1,28 +1,34 @@
 "use client";
 import { Plus, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { TERMS_VARIABLES, advancePaise, advanceRuleProblem, formatINR, paiseFromRupees, rupeesFromPaise, serviceCreateSchema, type CancellationTier } from "@bayana/shared";
+import { MAX_BOOKING_DAYS, MAX_BUFFER_DAYS, TERMS_VARIABLES, advancePaise, advanceRuleProblem, formatINR, paiseFromRupees, rupeesFromPaise, serviceCreateSchema, type CancellationTier } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/display";
-import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/field";
+import { Checkbox, Field, Input, RadioCards, Select, Textarea } from "@/components/ui/field";
 import { api, fieldErrors, humanMessage } from "@/lib/api";
+import { dailyPreview } from "@/lib/service-label";
 import type { AdvanceType, Service } from "./types";
 
-type Draft = { name: string; description: string; price: string; duration: string; bufferBefore: string; bufferAfter: string; mode: "TIMED" | "FULL_DAY"; advanceType: AdvanceType; advanceValue: string; tiers: { hours: string; percent: string }[]; terms: string; active: boolean };
+type Mode = "hourly" | "daily";
+type Draft = { name: string; description: string; price: string; duration: string; bufferBefore: string; bufferAfter: string; mode: Mode; minDays: string; maxDays: string; bufferDays: string; advanceType: AdvanceType; advanceValue: string; tiers: { hours: string; percent: string }[]; terms: string; active: boolean };
 const fromService = (service?: Service): Draft => ({
   name: service?.name ?? "", description: service?.description ?? "", price: service ? rupeesFromPaise(Number(service.price_paise)) : "", duration: String(service?.duration_minutes ?? 60),
-  bufferBefore: String(service?.buffer_before_minutes ?? 0), bufferAfter: String(service?.buffer_after_minutes ?? 0), mode: service?.booking_mode ?? "TIMED",
+  bufferBefore: String(service?.buffer_before_minutes ?? 0), bufferAfter: String(service?.buffer_after_minutes ?? 0), mode: service?.booking_mode ?? "hourly",
+  minDays: String(service?.min_days ?? 1), maxDays: String(service?.max_days ?? 1), bufferDays: String(service?.buffer_days ?? 0),
   advanceType: service?.advance_type ?? "PERCENT", advanceValue: service ? (service.advance_type === "FIXED" ? rupeesFromPaise(service.advance_value) : String(service.advance_value)) : "25",
   tiers: (service?.cancellation_tiers ?? []).map(tier => ({ hours: String(tier.min_hours_before), percent: String(tier.refund_percent) })), terms: service?.terms_template ?? "", active: service?.active ?? true
 });
 const toNumber = (value: string) => value.trim() === "" ? NaN : Number(value);
 const rupeesToPaise = (value: string) => { try { return paiseFromRupees(value.trim()); } catch { return NaN; } };
 
-/** Builds the API body from the form; amounts are entered in rupees and sent as integer paise. */
+/** Builds the API body from the form: amounts in rupees become integer paise, and only the chosen mode's fields are sent. */
 function toBody(draft: Draft) {
   const price = rupeesToPaise(draft.price);
+  const modeFields = draft.mode === "daily"
+    ? { min_days: toNumber(draft.minDays), max_days: toNumber(draft.maxDays), buffer_days: toNumber(draft.bufferDays || "0") }
+    : { duration_minutes: toNumber(draft.duration), buffer_before_minutes: toNumber(draft.bufferBefore || "0"), buffer_after_minutes: toNumber(draft.bufferAfter || "0") };
   return {
-    name: draft.name, description: draft.description, price_paise: price, duration_minutes: toNumber(draft.duration), buffer_before_minutes: toNumber(draft.bufferBefore || "0"), buffer_after_minutes: toNumber(draft.bufferAfter || "0"),
+    name: draft.name, description: draft.description, price_paise: price, ...modeFields,
     booking_mode: draft.mode, advance_type: draft.advanceType, advance_value: draft.advanceType === "NONE" ? 0 : draft.advanceType === "FIXED" ? rupeesToPaise(draft.advanceValue) : toNumber(draft.advanceValue),
     cancellation_tiers: draft.tiers.map((tier): CancellationTier => ({ min_hours_before: toNumber(tier.hours), refund_percent: toNumber(tier.percent) })), terms_template: draft.terms, active: draft.active
   };
@@ -39,7 +45,9 @@ export function ServiceForm({ service, onSaved, compact = false, submitLabel }: 
   const errors = { ...(submitted ? clientErrors : {}), ...serverFields };
   const price = Number.isNaN(body.price_paise) ? 0 : body.price_paise;
   const advanceProblem = advanceRuleProblem(price, draft.advanceType, Number.isNaN(body.advance_value) ? -1 : body.advance_value);
+  const daily = draft.mode === "daily";
   const preview = price > 0 && !advanceProblem ? advancePaise(price, draft.advanceType, body.advance_value) : null;
+  const previewLine = daily ? dailyPreview(price, toNumber(draft.minDays), toNumber(draft.maxDays), draft.advanceType, draft.advanceType === "NONE" ? 0 : draft.advanceType === "FIXED" ? rupeesToPaise(draft.advanceValue) : toNumber(draft.advanceValue)) : preview !== null ? `Customers pay ${formatINR(preview)} now and ${formatINR(price - preview)} later.` : null;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setSubmitted(true); setServerFields({});
@@ -54,16 +62,30 @@ export function ServiceForm({ service, onSaved, compact = false, submitLabel }: 
     <form onSubmit={submit} noValidate className="grid gap-4 sm:grid-cols-2">
       <Field label="Service name" error={errors.name} className="sm:col-span-2">{p => <Input {...p} value={draft.name} onChange={event => set("name", event.target.value)} placeholder="Portrait session" />}</Field>
       {!compact && <Field label="Description" optional className="sm:col-span-2">{p => <Textarea {...p} value={draft.description} onChange={event => set("description", event.target.value)} />}</Field>}
-      <Field label="Price (₹)" error={errors.price_paise}>{p => <Input {...p} inputMode="decimal" value={draft.price} onChange={event => set("price", event.target.value)} placeholder="2500" />}</Field>
-      <Field label="Duration (minutes)" error={errors.duration_minutes}>{p => <Input {...p} type="number" min={5} value={draft.duration} onChange={event => set("duration", event.target.value)} />}</Field>
-      <Field label="Advance" error={errors.advance_type}>{p => <Select {...p} value={draft.advanceType} onChange={event => { set("advanceType", event.target.value as AdvanceType); set("advanceValue", event.target.value === "NONE" ? "0" : event.target.value === "PERCENT" ? "25" : ""); }}><option value="PERCENT">Percentage of price</option><option value="FIXED">Fixed amount</option><option value="NONE">No advance</option></Select>}</Field>
-      {draft.advanceType !== "NONE" && <Field label={draft.advanceType === "PERCENT" ? "Advance (%)" : "Advance (₹)"} error={errors.advance_value ?? (submitted ? advanceProblem ?? undefined : undefined)} hint={preview !== null ? `Customers pay ${formatINR(preview)} now and ${formatINR(price - preview)} later.` : undefined}>{p => <Input {...p} inputMode="decimal" value={draft.advanceValue} onChange={event => set("advanceValue", event.target.value)} />}</Field>}
-      {!compact && <>
-        <Field label="Booking type">{p => <Select {...p} value={draft.mode} onChange={event => set("mode", event.target.value as Draft["mode"])}><option value="TIMED">Timed slots</option><option value="FULL_DAY">Whole day</option></Select>}</Field>
+      <RadioCards legend="How do you charge?" name="booking_mode" value={draft.mode} onChange={mode => set("mode", mode)} className="sm:col-span-2" options={[
+        { value: "hourly", label: "Per hour", description: "Customers pick a time slot. You set how long it takes." },
+        { value: "daily", label: "Per day", description: "Customers pick dates, for one day or several. For shoots, events and decor." }
+      ]} />
+      <Field label={daily ? "Price per day (₹)" : "Price (₹)"} error={errors.price_paise}>{p => <Input {...p} inputMode="decimal" value={draft.price} onChange={event => set("price", event.target.value)} placeholder={daily ? "12000" : "2500"} />}</Field>
+      {daily ? (
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Buffer before (min)" error={errors.buffer_before_minutes}>{p => <Input {...p} type="number" min={0} value={draft.bufferBefore} onChange={event => set("bufferBefore", event.target.value)} />}</Field>
-          <Field label="Buffer after (min)" error={errors.buffer_after_minutes}>{p => <Input {...p} type="number" min={0} value={draft.bufferAfter} onChange={event => set("bufferAfter", event.target.value)} />}</Field>
+          <Field label="Minimum days" error={errors.min_days}>{p => <Input {...p} type="number" min={1} max={MAX_BOOKING_DAYS} value={draft.minDays} onChange={event => set("minDays", event.target.value)} />}</Field>
+          <Field label="Maximum days" error={errors.max_days} hint={`Up to ${MAX_BOOKING_DAYS}.`}>{p => <Input {...p} type="number" min={1} max={MAX_BOOKING_DAYS} value={draft.maxDays} onChange={event => set("maxDays", event.target.value)} />}</Field>
         </div>
+      ) : (
+        <Field label="Duration (minutes)" error={errors.duration_minutes}>{p => <Input {...p} type="number" min={5} value={draft.duration} onChange={event => set("duration", event.target.value)} />}</Field>
+      )}
+      <Field label="Advance" error={errors.advance_type}>{p => <Select {...p} value={draft.advanceType} onChange={event => { set("advanceType", event.target.value as AdvanceType); set("advanceValue", event.target.value === "NONE" ? "0" : event.target.value === "PERCENT" ? "25" : ""); }}><option value="PERCENT">Percentage of price</option><option value="FIXED">Fixed amount</option><option value="NONE">No advance</option></Select>}</Field>
+      {draft.advanceType !== "NONE" && <Field label={draft.advanceType === "PERCENT" ? "Advance (%)" : "Advance (₹)"} error={errors.advance_value ?? (submitted ? advanceProblem ?? undefined : undefined)} hint={previewLine ?? undefined}>{p => <Input {...p} inputMode="decimal" value={draft.advanceValue} onChange={event => set("advanceValue", event.target.value)} />}</Field>}
+      {!compact && <>
+        {daily ? (
+          <Field label="Buffer days" optional error={errors.buffer_days} hint="Days kept free before and after each booking, for travel or setup.">{p => <Input {...p} type="number" min={0} max={MAX_BUFFER_DAYS} value={draft.bufferDays} onChange={event => set("bufferDays", event.target.value)} />}</Field>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Buffer before (min)" error={errors.buffer_before_minutes}>{p => <Input {...p} type="number" min={0} value={draft.bufferBefore} onChange={event => set("bufferBefore", event.target.value)} />}</Field>
+            <Field label="Buffer after (min)" error={errors.buffer_after_minutes}>{p => <Input {...p} type="number" min={0} value={draft.bufferAfter} onChange={event => set("bufferAfter", event.target.value)} />}</Field>
+          </div>
+        )}
         <fieldset className="grid gap-2 sm:col-span-2">
           <legend className="mb-1 text-sm font-medium">Cancellation refunds</legend>
           <p className="text-xs text-muted">From the earliest cancellation to the latest. For example: 168 hours before → 100%, 48 hours → 50%, 0 → 0%.</p>

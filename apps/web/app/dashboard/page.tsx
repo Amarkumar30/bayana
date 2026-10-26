@@ -8,7 +8,7 @@ import { BookingList } from "@/components/dashboard/booking-list";
 import { NewBookingDialog } from "@/components/dashboard/booking-actions";
 import { Gate, useVendorData } from "@/components/dashboard/load";
 import type { Overview, TodoKind } from "@/components/dashboard/types";
-import { formatDate, formatTime, localDateKey } from "@/components/booking/time";
+import { formatBookingTime, formatDate, formatTime, localDateKey } from "@/components/booking/time";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, EmptyState, LoadingState, Money, Notice, Skeleton } from "@/components/ui/display";
 import { useToast } from "@/components/ui/toast";
@@ -68,7 +68,7 @@ export default function Dashboard() {
           <aside className="grid content-start gap-6 md:grid-cols-2 2xl:grid-cols-1">
             <Card><CardHeader title="To do" description={overview.todo.length ? undefined : "You're all caught up."} />
               {overview.todo.length > 0 && <ul className="grid gap-2">{overview.todo.map(item => { const copy = todoCopy[item.kind]; const Icon = copy.icon; return (
-                <li key={`${item.kind}-${item.id}`}><Link href={`/dashboard/bookings/${item.id}`} className="flex min-h-11 items-start gap-3 rounded-input px-2 py-2 text-sm text-ink no-underline hover:bg-surface-muted"><Icon className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden /><span className="grid"><span>{copy.text(item.client_name, item.amount_paise)}</span><span className="text-xs text-muted">{formatDate(item.starts_at, overview.timezone, "short")}, {formatTime(item.starts_at, overview.timezone)}</span></span></Link></li>
+                <li key={`${item.kind}-${item.id}`}><Link href={`/dashboard/bookings/${item.id}`} className="flex min-h-11 items-start gap-3 rounded-input px-2 py-2 text-sm text-ink no-underline hover:bg-surface-muted"><Icon className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden /><span className="grid"><span>{copy.text(item.client_name, item.amount_paise)}</span><span className="text-xs text-muted">{item.booking_mode === "daily" ? formatBookingTime(item, overview.timezone) : `${formatDate(item.starts_at, overview.timezone, "short")}, ${formatTime(item.starts_at, overview.timezone)}`}</span></span></Link></li>
               ); })}</ul>}
             </Card>
             <Card><CardHeader title="Your public page" description={profile.published ? "Live. Share it anywhere." : "Publish when the checklist is done."} />

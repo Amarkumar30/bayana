@@ -2,8 +2,8 @@ import type { CancellationTier } from "@bayana/shared";
 
 export type AdvanceType = "NONE" | "PERCENT" | "FIXED";
 export type Service = {
-  id: string; name: string; description: string; price_paise: string | number; duration_minutes: number; buffer_before_minutes: number; buffer_after_minutes: number;
-  booking_mode: "TIMED" | "FULL_DAY"; advance_type: AdvanceType; advance_value: number; cancellation_tiers: CancellationTier[]; terms_template: string; customer_details_prompt: string; active: boolean; sort_order: number;
+  id: string; name: string; description: string; price_paise: string | number; duration_minutes: number | null; buffer_before_minutes: number | null; buffer_after_minutes: number | null;
+  booking_mode: "hourly" | "daily"; min_days: number | null; max_days: number | null; buffer_days: number | null; advance_type: AdvanceType; advance_value: number; cancellation_tiers: CancellationTier[]; terms_template: string; customer_details_prompt: string; active: boolean; sort_order: number;
 };
 export type Profile = {
   id: string; slug: string; business_name: string; description: string; city: string; service_area: string | null; timezone: string; terms: string; cancellation_policy: string; rescheduling_policy: string;

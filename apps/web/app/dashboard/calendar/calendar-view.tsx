@@ -35,8 +35,13 @@ const kindWord = { confirmed: "Confirmed", held: "Held or awaiting advance", blo
 
 function entriesFor(date: string, data: CalendarData): Entry[] {
   const dayStart = localDateTimeToUtc(`${date}T00:00:00`, data.timezone), dayEnd = localDateTimeToUtc(`${shift(date, 1)}T00:00:00`, data.timezone);
-  const bookings = data.bookings.filter(booking => localDateKey(new Date(booking.starts_at), data.timezone) === date).map((booking): Entry => ({
-    key: booking.id, kind: booking.status === "CONFIRMED" || booking.status === "COMPLETED" ? "confirmed" : "held", label: `${formatTime(booking.starts_at, data.timezone)} ${booking.client_name}`, href: bookingHref(booking.id), status: booking.status
+  // A daily booking appears on every day it covers, as "All day"; an hourly one on its start day with its time.
+  const covers = (booking: CalendarData["bookings"][number]) => booking.booking_mode === "daily" && booking.first_date && booking.days_count
+    ? date >= booking.first_date && date < shift(booking.first_date, booking.days_count) : localDateKey(new Date(booking.starts_at), data.timezone) === date;
+  const label = (booking: CalendarData["bookings"][number]) => booking.booking_mode === "daily" && booking.first_date && booking.days_count
+    ? `All day${booking.days_count > 1 ? ` (day ${days(booking.first_date, date).length} of ${booking.days_count})` : ""} ${booking.client_name}` : `${formatTime(booking.starts_at, data.timezone)} ${booking.client_name}`;
+  const bookings = data.bookings.filter(covers).map((booking): Entry => ({
+    key: booking.id, kind: booking.status === "CONFIRMED" || booking.status === "COMPLETED" ? "confirmed" : "held", label: label(booking), href: bookingHref(booking.id), status: booking.status
   }));
   const blocked = dayStart && dayEnd ? data.blocked_periods.filter(period => new Date(period.starts_at) < dayEnd && new Date(period.ends_at) > dayStart).map((period): Entry => ({
     key: `${period.id}-${date}`, kind: "blocked", blockedId: period.id, label: `${new Date(period.starts_at) <= dayStart && new Date(period.ends_at) >= dayEnd ? "All day" : `${formatTime(period.starts_at, data.timezone)}–${formatTime(period.ends_at, data.timezone)}`}${period.reason ? ` ${period.reason}` : " Time off"}`

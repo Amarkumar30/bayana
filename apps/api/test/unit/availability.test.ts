@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { localDateTimeToUtc, openSpansFor, slotsForDate, type SlotEngineInput } from "../../src/availability.js";
+import { dailyRange, localDateTimeToUtc, openSpansFor, slotsForDate, type SlotEngineInput } from "../../src/availability.js";
 
 const input = (timezone = "Asia/Kolkata"): SlotEngineInput => ({
-  timezone, serviceDurationMinutes: 60, bufferBeforeMinutes: 15, bufferAfterMinutes: 15, bookingMode: "TIMED", slotStepMinutes: 30, minimumNoticeMinutes: 0, maximumDaysAhead: 30,
+  timezone, serviceDurationMinutes: 60, bufferBeforeMinutes: 15, bufferAfterMinutes: 15, bookingMode: "hourly", slotStepMinutes: 30, minimumNoticeMinutes: 0, maximumDaysAhead: 30,
   weeklyRules: new Map(Array.from({ length: 7 }, (_, weekday) => [weekday, [{ startTime: "09:00", endTime: "12:00" }]])), overrides: [], blockedPeriods: [], activeBookings: [], now: new Date("2026-03-01T00:00:00Z")
 });
 const starts = (date: string, value: SlotEngineInput) => slotsForDate(date, value).map(slot => slot.startsAt);
@@ -20,12 +20,13 @@ describe("slot engine", () => {
     expect(starts("2026-03-02", value)[0]).toBe("2026-03-02T04:30:00.000Z");
   });
   it("enforces the maximum booking window", () => { const value = input(); value.maximumDaysAhead = 5; expect(starts("2026-03-06", value).length).toBeGreaterThan(0); expect(starts("2026-03-07", value)).toEqual([]); });
-  it("makes DST-safe full-day intervals and requires local availability", () => {
-    const value = input("America/New_York"); value.bookingMode = "FULL_DAY";
-    const spring = slotsForDate("2026-03-08", value)[0]; const fall = slotsForDate("2026-11-01", { ...value, maximumDaysAhead: 300 })[0];
+  it("makes DST-safe full-day intervals and requires local availability (a one-day daily booking)", () => {
+    const value = input("America/New_York"); value.bookingMode = "daily"; value.daily = { minDays: 1, maxDays: 1, bufferDays: 0 };
+    expect(slotsForDate("2026-03-08", value)).toEqual([]);
+    const spring = dailyRange("2026-03-08", 1, value)!; const fall = dailyRange("2026-11-01", 1, { ...value, maximumDaysAhead: 300 })!;
     expect(new Date(spring.endsAt).getTime() - new Date(spring.startsAt).getTime()).toBe(23 * 3_600_000);
     expect(new Date(fall.endsAt).getTime() - new Date(fall.startsAt).getTime()).toBe(25 * 3_600_000);
-    value.weeklyRules.clear(); expect(slotsForDate("2026-03-08", value)).toEqual([]);
+    value.weeklyRules.clear(); expect(dailyRange("2026-03-08", 1, value)).toBeNull();
   });
 });
 

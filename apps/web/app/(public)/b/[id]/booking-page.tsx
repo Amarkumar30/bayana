@@ -12,7 +12,7 @@ import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/
 import { OfflinePaymentForm } from "@/components/booking/offline-payment-form";
 import { PaymentPanel } from "@/components/booking/payment-panel";
 import { HoldCountdown } from "@/components/booking/countdown";
-import { formatDate, formatDateTime, formatTime } from "@/components/booking/time";
+import { formatBookingWhen, formatDate, formatDateTime, formatTime } from "@/components/booking/time";
 import { tokenHeaders, type BookingView } from "@/components/booking/types";
 import { ApiError, api, humanMessage } from "@/lib/api";
 
@@ -51,7 +51,7 @@ export function BookingPage() {
       <div className="grid gap-2">
         <StatusBadge status={view.status} className="w-fit" />
         <h1 className="text-2xl sm:text-4xl">{headline[view.status] ?? "Your booking"}</h1>
-        <p className="text-muted">{view.service_name} · {formatDateTime(view.starts_at, view.timezone)} ({view.timezone})</p>
+        <p className="text-muted">{view.service_name} · {formatBookingWhen(view, view.timezone)} ({view.timezone})</p>
       </div>
       <StatusHelp view={view} token={token} finishHref={finishHref} onExpire={expire} onPaid={setView} />
 
@@ -120,7 +120,7 @@ function CancelCard({ view, token, onCancelled }: { view: BookingView; token: st
       <CardHeader title="Need to cancel?" description={tiersInWords(view.cancellation_tiers)} />
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger asChild><Button variant="secondary" className="w-fit">Cancel booking</Button></DialogTrigger>
-        <DialogContent title="Cancel this booking?" description={`${view.service_name}, ${formatDateTime(view.starts_at, view.timezone)}`}>
+        <DialogContent title="Cancel this booking?" description={`${view.service_name}, ${formatBookingWhen(view, view.timezone)}`}>
           <Notice tone={refund.refund_paise > 0 || refund.paid_paise === 0 ? "info" : "warning"}>{describeRefund(refund)}</Notice>
           {error && <Notice tone="danger">{error}</Notice>}
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"><DialogClose asChild><Button variant="secondary">Keep my booking</Button></DialogClose><Button variant="danger" loading={busy} loadingText="Cancelling…" onClick={() => void cancel()}>Yes, cancel</Button></div>

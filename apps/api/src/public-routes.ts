@@ -1,8 +1,8 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import { advancePaise } from "@bayana/shared";
-import { monthSummary, slotsForDate } from "./availability.js";
+import { addLocalDays, advancePaise, dailyTotalPaise, isLocalDate, localDaysBetween } from "@bayana/shared";
+import { dayCalendar, monthSummary, slotsForDate } from "./availability.js";
 import { paymentsEnabled } from "./payments/runtime.js";
 import { pool } from "./database.js";
 import { AppError } from "./errors.js";
@@ -28,15 +28,28 @@ publicRouter.get("/:slug", limit(120), handle(async (req, res) => {
   const { id } = await publishedVendorId(String(req.params.slug));
   const [vendor, services] = await Promise.all([
     pool.query("SELECT v.slug::text AS canonical_slug,v.slug::text AS slug,v.display_name,v.city,v.bio,v.service_area,v.timezone,v.terms,v.cancellation_policy,v.rescheduling_policy,v.phone_required,CASE WHEN v.public_contact_email THEN v.contact_email::text END AS contact_email,CASE WHEN v.public_contact_phone THEN v.contact_phone END AS contact_phone,COALESCE(array_agg(c.label ORDER BY c.label) FILTER (WHERE c.slug IS NOT NULL),'{}') AS categories FROM vendors v LEFT JOIN vendor_categories vc ON vc.vendor_id=v.id LEFT JOIN categories c ON c.slug=vc.category_slug WHERE v.id=$1 GROUP BY v.id", [id]),
-    pool.query<{ price_paise: string; advance_type: "NONE" | "PERCENT" | "FIXED"; advance_value: number }>("SELECT id,name,description,price_paise,duration_minutes,booking_mode,advance_type,advance_value,customer_details_prompt,cancellation_tiers FROM services WHERE vendor_id=$1 AND active ORDER BY sort_order,created_at", [id])
+    pool.query<{ price_paise: string; advance_type: "NONE" | "PERCENT" | "FIXED"; advance_value: number; booking_mode: "hourly" | "daily"; min_days: number | null }>("SELECT id,name,description,price_paise,duration_minutes,booking_mode,min_days,max_days,buffer_days,advance_type,advance_value,customer_details_prompt,cancellation_tiers FROM services WHERE vendor_id=$1 AND active ORDER BY sort_order,created_at", [id])
   ]);
-  res.json({ ...vendor.rows[0], payments_enabled: paymentsEnabled(), services: services.rows.map(service => { const price = Number(service.price_paise); const advance = advancePaise(price, service.advance_type, service.advance_value); return { ...service, advance_paise: advance, remaining_paise: price - advance }; }) });
+  res.json({ ...vendor.rows[0], payments_enabled: paymentsEnabled(), services: services.rows.map(service => { const price = service.booking_mode === "daily" ? dailyTotalPaise(Number(service.price_paise), service.min_days ?? 1) : Number(service.price_paise); const advance = advancePaise(price, service.advance_type, service.advance_value); return { ...service, advance_paise: advance, remaining_paise: price - advance }; }) });
 }));
 publicRouter.get("/:slug/availability/month", limit(60), handle(async (req, res) => {
   const query = z.object({ service_id: z.string().uuid(), month }).parse(req.query);
   const engine = await loadSlotEngineInput(pool, (await publishedVendorId(String(req.params.slug))).id, query.service_id);
   if (!engine) throw unavailable();
   res.json({ timezone: engine.timezone, days: monthSummary(query.month, engine) });
+}));
+/**
+ * Daily services: each date's status (available | booked | closed | past) and the longest booking that can start on it, for a
+ * month or a from..to range of at most 62 days. Never cached, so a page never shows a stale "available".
+ */
+publicRouter.get("/:slug/availability/days", limit(60), handle(async (req, res) => {
+  const query = z.object({ service_id: z.string().uuid(), month: month.optional(), from: localDate.optional(), to: localDate.optional() }).parse(req.query);
+  const engine = await loadSlotEngineInput(pool, (await publishedVendorId(String(req.params.slug))).id, query.service_id);
+  if (!engine) throw unavailable();
+  if (engine.bookingMode !== "daily" || !engine.daily) throw new AppError(400, "HOURLY_SERVICE", "This service is booked by the hour. Choose a time instead.");
+  const from = query.month ? `${query.month}-01` : query.from, to = query.month ? addLocalDays(addLocalDays(`${query.month}-01`, 31).slice(0, 7) + "-01", -1) : query.to;
+  if (!from || !to || !isLocalDate(from) || !isLocalDate(to) || to < from || localDaysBetween(from, to) > 61) throw new AppError(400, "INVALID_RANGE", "Ask for a month, or a range of at most 62 days.");
+  res.set("Cache-Control", "no-store").json({ timezone: engine.timezone, min_days: engine.daily.minDays, max_days: engine.daily.maxDays, days: dayCalendar(from, to, engine) });
 }));
 publicRouter.get("/:slug/availability/slots", limit(120), handle(async (req, res) => {
   const query = z.object({ service_id: z.string().uuid(), date: localDate }).parse(req.query);

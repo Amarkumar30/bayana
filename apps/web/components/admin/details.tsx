@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { AlertOctagon, AlertTriangle, ArrowLeft, CheckCircle2, Info } from "lucide-react";
-import { formatINR } from "@bayana/shared";
+import { formatINR, dayRangeLabel } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Badge, Card, CardHeader, Notice, StatusBadge } from "@/components/ui/display";
 import { api, humanMessage } from "@/lib/api";
@@ -11,7 +11,7 @@ import { AdminTable, Show, useAdmin, when } from "./admin-data";
 
 type Finding = { level: "ok" | "info" | "warning" | "problem"; text: string; action?: { kind: "reverify_payment" | "reprocess_webhook" | "retry_email" | "run_tick"; id?: string; label: string } };
 type Diagnosis = {
-  booking: { id: string; status: string; vendor_slug: string; vendor_name: string; vendor_email: string | null; timezone: string; client_name: string; client_email: string; client_phone: string; service_name: string | null; starts_at: string; ends_at: string; hold_expires_at: string | null; total_paise: string; advance_paise: string; created_at: string; terms_accepted_at: string | null };
+  booking: { booking_mode?: "hourly" | "daily"; days_count?: number | null; first_date?: string | null; vendor_timezone?: string; id: string; status: string; vendor_slug: string; vendor_name: string; vendor_email: string | null; timezone: string; client_name: string; client_email: string; client_phone: string; service_name: string | null; starts_at: string; ends_at: string; hold_expires_at: string | null; total_paise: string; advance_paise: string; created_at: string; terms_accepted_at: string | null };
   events: { from_status: string | null; to_status: string; actor: string; reason: string | null; meta: unknown; created_at: string }[];
   payments: { id: string; provider: string; kind: string; status: string; amount_paise: number; provider_order_id: string | null; provider_payment_id: string | null; method: string | null; failure_reason: string | null; created_at: string; verified_at: string | null }[];
   refunds: { id: string; amount_paise: number; status: string; provider_refund_id: string | null; reason: string; error: string | null; created_at: string; processed_at: string | null }[];
@@ -53,7 +53,7 @@ export function AdminBookingDetail({ id }: { id: string }) {
           </section>
           <Card><CardHeader title="Booking" />
             <Facts rows={[["Vendor", <Link key="v" href={`/admin/bookings?q=${encodeURIComponent(b.vendor_slug)}`}>{b.vendor_name} (/{b.vendor_slug})</Link>], ["Vendor email", b.vendor_email ?? "—"], ["Customer", `${b.client_name} · ${b.client_email}${b.client_phone ? ` · ${b.client_phone}` : ""}`], ["Service", b.service_name ?? "—"],
-              ["Starts", `${when(b.starts_at)} (vendor timezone ${b.timezone})`], ["Hold until", when(b.hold_expires_at)], ["Total / advance", `${formatINR(Number(b.total_paise))} / ${formatINR(Number(b.advance_paise))}`], ["Terms", data.contract ? `Agreed ${when(data.contract.accepted_at)} by ${data.contract.accepted_email}` : b.terms_accepted_at ? `Accepted ${when(b.terms_accepted_at)}` : "Not agreed"], ["Online payments", data.payments_enabled ? "On" : "Off"], ["Created", when(b.created_at)]]} />
+              ["Starts", b.booking_mode === "daily" && b.first_date && b.days_count ? `${dayRangeLabel(b.first_date, b.days_count)}, whole days from ${when(b.starts_at)} (${b.vendor_timezone})` : `${when(b.starts_at)} (vendor timezone ${b.timezone})`], ["Hold until", when(b.hold_expires_at)], ["Total / advance", `${formatINR(Number(b.total_paise))} / ${formatINR(Number(b.advance_paise))}`], ["Terms", data.contract ? `Agreed ${when(data.contract.accepted_at)} by ${data.contract.accepted_email}` : b.terms_accepted_at ? `Accepted ${when(b.terms_accepted_at)}` : "Not agreed"], ["Online payments", data.payments_enabled ? "On" : "Off"], ["Created", when(b.created_at)]]} />
           </Card>
           <section className="grid gap-3"><h2 className="text-lg">Events</h2><AdminTable rows={data.events} rowKey={row => row.created_at + row.to_status} caption="Events" empty="No events (a consistency problem)." columns={[{ label: "When", render: row => when(row.created_at) }, { label: "Change", render: row => `${row.from_status ?? "new"} → ${row.to_status}` }, { label: "By", render: row => row.actor }, { label: "Reason", render: row => row.reason ?? "—" }, { label: "Meta", render: row => <Json value={row.meta} /> }]} /></section>
           <section className="grid gap-3"><h2 className="text-lg">Payments</h2><AdminTable rows={data.payments} rowKey={row => row.id} caption="Payments" empty="No payment rows." columns={[{ label: "Status", render: row => <Badge tone={row.verified_at ? "success" : row.status === "failed" ? "danger" : "warning"}>{row.status}</Badge> }, { label: "Amount", render: row => `${formatINR(row.amount_paise)} · ${row.kind}` }, { label: "Provider", render: row => <>{row.provider}{row.method ? ` · ${row.method}` : ""}<span className="block break-all font-mono text-xs text-muted">{row.provider_order_id ?? ""} {row.provider_payment_id ?? ""}</span></> }, { label: "Failure", render: row => row.failure_reason ?? "—" }, { label: "Verified", render: row => when(row.verified_at) }]} /></section>

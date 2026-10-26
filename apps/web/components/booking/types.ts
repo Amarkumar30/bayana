@@ -1,7 +1,8 @@
 import type { CancellationTier } from "@bayana/shared";
+import type { DailyFields } from "./time";
 
 /** GET /v1/bookings/:id (apps/api/src/booking-routes.ts). */
-export type BookingView = {
+export type BookingView = DailyFields & {
   id: string; status: string; service_name: string | null; duration_minutes: number | null; starts_at: string; ends_at: string; hold_expires_at: string | null; timezone: string;
   vendor: { slug: string; display_name: string }; client_name: string;
   total_paise: number; advance_paise: number; paid_paise: number; balance_due_paise: number; payments_enabled: boolean; viewer: "customer" | "vendor";

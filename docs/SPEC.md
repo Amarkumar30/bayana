@@ -205,8 +205,26 @@ Each requirement has an ID, a priority and an acceptance test written so that it
 | AV-02  | P0      | Date overrides: block a day or range, or open extra hours on a date                                                                   | Override beats weekly rule for that date                      |
 | AV-03  | P0      | Minimum notice and maximum advance window (for example 24 h to 180 days)                                                              | Slots outside the window are not offered                      |
 | AV-04  | P0      | Slot engine returns only slots that fit duration plus buffers, are not overlapped by active bookings or blocks, and are in the future | Property tests in section 9.4 pass, including DST edge cases  |
-| AV-05  | P1      | Optional all-day booking mode for events (one booking per date)                                                                       | A second booking on the same date is impossible               |
+| AV-05  | P1      | Per-day booking mode (see "Service modes" below): a service is charged per hour or per day; daily bookings cover 1 to 30 whole local days | Overlap with any booking of the vendor is impossible (constraint) |
 | AV-06  | P1      | Calendar feed (iCal URL, read-only) for the vendor to subscribe in Google or Apple Calendar                                           | Feed lists confirmed bookings only, uses a secret token       |
+
+### Service modes, day boundaries and daily availability (added with migration 021)
+
+**Modes.** Each service has `booking_mode`: `hourly` (default) or `daily`.
+- `hourly`: `price_paise` is the price of one session of `duration_minutes`, with buffer minutes before and after. Unchanged.
+- `daily`: `price_paise` is the price **per day**; the vendor sets `min_days` (default 1) and `max_days` (default 1, at most 30) and optional `buffer_days` (0 to 7). Daily services have no duration or minute buffers. A database CHECK (`services_mode_fields`) requires exactly the chosen mode's fields and NULL for the other mode's. Services created before migration 021 as `TIMED` are `hourly`; `FULL_DAY` ones are `daily` with 1 to 1 day.
+
+**Day boundaries.** A day is a local calendar date in the vendor's IANA timezone. A daily booking of N days from local date D occupies the half-open range [start of D, start of D+N), stored in UTC (`starts_at`, `ends_at`). "Start of a date" is local midnight, or the first local minute that exists when a daylight-saving change skips midnight. Days therefore last 23, 24 or 25 hours, and back-to-back bookings touch without overlapping. Buffer days widen `block_start`/`block_end` by whole local days on each side; each booking keeps its own buffer. The exclusion constraint (8.3) applies unchanged, so a daily booking blocks every hourly booking of the same vendor on those days, and the reverse.
+
+**Daily availability.** For a daily service, a local date is:
+- `past` before today, or when its start falls inside the minimum notice;
+- `closed` beyond the maximum advance window, when it has no opening hours (a weekday is open if it has any weekly window, and a whole-day block override closes it), or when any time off touches it;
+- `booked` when any active booking or unexpired hold (any service, with its buffers) touches it;
+- otherwise `available`.
+
+A booking of N days from D needs every day D..D+N-1 available and its buffer days free of bookings (buffer days need not be open). `GET /v1/vendors/:slug/availability/days?service_id=&month=` (or `from`/`to`, at most 62 days) returns each date's status and `max_days`, the longest booking that can start there. It is never cached.
+
+**Holds and money.** The client sends only `service_id`, `date` and `days`. The server checks the service's stored mode and min/max, recomputes the range, and sets total = price per day x days (integer paise), with the advance from the service's rule (never above the total). The booking snapshots `booking_mode`, `days_count`, `service_price_paise` (per day), `total_paise`, `advance_paise` and `vendor_timezone`. Daily bookings are always shown as dates ("12 Nov to 13 Nov 2026 (2 days)"), never as a time; the calendar feed lists them as all-day events with an exclusive end date.
 
 ## 4.4 Booking (BK)
 

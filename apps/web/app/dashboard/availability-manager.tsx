@@ -5,7 +5,8 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { localDateTimeToUtc, weeklyScheduleSchema } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, EmptyState, LoadingState, Notice, Skeleton, StatusBadge } from "@/components/ui/display";
-import { Field, Input, Select } from "@/components/ui/field";
+import { Checkbox, Field, Input, Select } from "@/components/ui/field";
+import { formatBookingWhen, type DailyFields } from "@/components/booking/time";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/components/ui/toast";
 import { weekdayNames } from "@/components/vendor/types";
@@ -14,12 +15,15 @@ import { ApiError, api, humanMessage } from "@/lib/api";
 type Window = { start_time: string; end_time: string };
 type Override = { id: string; local_date: string; kind: "block" | "open"; start_time: string | null; end_time: string | null; note: string };
 type Period = { id: string; starts_at: string; ends_at: string; reason: string };
-type Booking = { id: string; status: string; starts_at: string };
+type Booking = DailyFields & { id: string; status: string; starts_at: string };
 type Data = { timezone: string; min_notice_minutes: number; max_advance_days: number; rules: ({ id: string; weekday: number } & Window)[]; overrides: Override[]; blocked_periods: Period[]; bookings: Booking[] };
 
 export function AvailabilityManager() {
   const toast = useToast();
   const [data, setData] = useState<Data>(); const [error, setError] = useState(""); const [needsProfile, setNeedsProfile] = useState(false);
+  // Vendors whose services are all booked by the day only choose open days (WeeklyEditor).
+  const [dailyOnly, setDailyOnly] = useState(false);
+  useEffect(() => { api<{ services: { booking_mode: string }[] }>("/v1/vendor/services").then(value => setDailyOnly(value.services.length > 0 && value.services.every(service => service.booking_mode === "daily"))).catch(() => setDailyOnly(false)); }, []);
   const load = useCallback(() => api<Data>("/v1/vendor/availability").then(value => { setData(value); setError(""); }).catch(failure => { if (failure instanceof ApiError && failure.code === "PROFILE_NOT_FOUND") setNeedsProfile(true); else setError(humanMessage(failure)); }), []);
   useEffect(() => { void load(); }, [load]);
   const saved = (title: string) => { toast({ title, tone: "success" }); void load(); };
@@ -32,19 +36,21 @@ export function AvailabilityManager() {
       {error && <Notice tone="danger">{error}</Notice>}
       <Tabs defaultValue="weekly">
         <TabsList aria-label="Availability sections"><TabsTrigger value="weekly">Weekly hours</TabsTrigger><TabsTrigger value="dates">Date changes</TabsTrigger><TabsTrigger value="blocked">Time off</TabsTrigger><TabsTrigger value="window">Booking window</TabsTrigger></TabsList>
-        <TabsContent value="weekly"><WeeklyEditor rules={data.rules} onSaved={() => saved("Weekly hours saved")} /></TabsContent>
+        <TabsContent value="weekly"><WeeklyEditor key={dailyOnly ? "daily" : "hourly"} rules={data.rules} dailyOnly={dailyOnly} onSaved={() => saved("Weekly hours saved")} /></TabsContent>
         <TabsContent value="dates"><OverridesEditor overrides={data.overrides} onChanged={saved} /></TabsContent>
         <TabsContent value="blocked"><BlockedEditor timezone={data.timezone} periods={data.blocked_periods} onChanged={saved} /></TabsContent>
         <TabsContent value="window"><WindowEditor notice={data.min_notice_minutes} days={data.max_advance_days} onSaved={() => saved("Booking window saved")} /></TabsContent>
       </Tabs>
       <Card><CardHeader title="Upcoming bookings and holds" description="These times are taken." />
-        {data.bookings.length ? <ul className="grid gap-2">{data.bookings.map(booking => <li key={booking.id} className="flex items-center gap-3 text-sm"><StatusBadge status={booking.status} /><span className="tabular-nums">{new Date(booking.starts_at).toLocaleString("en-IN", { timeZone: data.timezone, dateStyle: "medium", timeStyle: "short" })}</span></li>)}</ul> : <p className="text-sm text-muted">None yet.</p>}
+        {data.bookings.length ? <ul className="grid gap-2">{data.bookings.map(booking => <li key={booking.id} className="flex items-center gap-3 text-sm"><StatusBadge status={booking.status} /><span className="tabular-nums">{booking.booking_mode === "daily" ? formatBookingWhen(booking, data.timezone) : new Date(booking.starts_at).toLocaleString("en-IN", { timeZone: data.timezone, dateStyle: "medium", timeStyle: "short" })}</span></li>)}</ul> : <p className="text-sm text-muted">None yet.</p>}
       </Card>
     </div>
   );
 }
 
-function WeeklyEditor({ rules, onSaved }: { rules: Data["rules"]; onSaved: () => void }) {
+/** Per-day vendors (every service booked by the day) see open/closed per weekday; per-hour vendors set hours. A day is open when it has any hours. */
+function WeeklyEditor({ rules, dailyOnly = false, onSaved }: { rules: Data["rules"]; dailyOnly?: boolean; onSaved: () => void }) {
+  const [showHours, setShowHours] = useState(!dailyOnly);
   const [days, setDays] = useState<Window[][]>(() => weekdayNames.map((_, weekday) => rules.filter(rule => rule.weekday === weekday).map(({ start_time, end_time }) => ({ start_time, end_time }))));
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   const windows = days.flatMap((list, weekday) => list.map(window => ({ weekday, ...window })));
@@ -58,20 +64,22 @@ function WeeklyEditor({ rules, onSaved }: { rules: Data["rules"]; onSaved: () =>
   return (
     <Card>
       <form onSubmit={save} className="grid gap-4">
-        <CardHeader title="When you usually work" description="Add one or more windows per day. Leave a day empty if you're closed." />
+        <CardHeader title={showHours ? "When you usually work" : "Which days you are open"} description={showHours ? "Add one or more windows per day. Leave a day empty if you're closed." : "Your services are booked by the whole day, so only open or closed matters."} />
+        {dailyOnly && <Button type="button" variant="ghost" size="sm" className="w-fit" onClick={() => setShowHours(value => !value)}>{showHours ? "Just set open days" : "Set hours instead"}</Button>}
         <ul className="grid gap-3">{days.map((list, weekday) => (
           <li key={weekday} className="grid gap-2 border-b border-border pb-3 last:border-0 sm:grid-cols-[8rem_1fr]">
             <strong className="pt-2.5 text-sm">{weekdayNames[weekday]}</strong>
             <div className="grid gap-2">
-              {list.length === 0 && <p className="pt-2.5 text-sm text-muted">Closed</p>}
-              {list.map((window, index) => (
+              {!showHours && <Checkbox checked={list.length > 0} onChange={event => update(weekday, event.target.checked ? (list.length ? list : [{ start_time: "09:00", end_time: "18:00" }]) : [])} label={list.length ? "Open" : "Closed"} />}
+              {showHours && list.length === 0 && <p className="pt-2.5 text-sm text-muted">Closed</p>}
+              {showHours && list.map((window, index) => (
                 <div key={index} className="flex flex-wrap items-end gap-2">
                   <Field label="From" className="w-32">{p => <Input {...p} type="time" value={window.start_time} onChange={event => update(weekday, list.map((item, at) => at === index ? { ...item, start_time: event.target.value } : item))} />}</Field>
                   <Field label="To" className="w-32">{p => <Input {...p} type="time" value={window.end_time} onChange={event => update(weekday, list.map((item, at) => at === index ? { ...item, end_time: event.target.value } : item))} />}</Field>
                   <Button type="button" variant="ghost" size="icon" aria-label={`Remove ${weekdayNames[weekday]} window ${index + 1}`} onClick={() => update(weekday, list.filter((_, at) => at !== index))}><Trash2 aria-hidden /></Button>
                 </div>
               ))}
-              <Button type="button" variant="ghost" size="sm" className="w-fit" onClick={() => update(weekday, [...list, list.length ? { start_time: "14:00", end_time: "18:00" } : { start_time: "09:00", end_time: "17:00" }])}><Plus aria-hidden />Add hours</Button>
+              {showHours && <Button type="button" variant="ghost" size="sm" className="w-fit" onClick={() => update(weekday, [...list, list.length ? { start_time: "14:00", end_time: "18:00" } : { start_time: "09:00", end_time: "17:00" }])}><Plus aria-hidden />Add hours</Button>}
             </div>
           </li>
         ))}</ul>

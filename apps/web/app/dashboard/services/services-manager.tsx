@@ -10,6 +10,7 @@ import { useToast } from "@/components/ui/toast";
 import { ServiceForm } from "@/components/vendor/service-form";
 import type { Service } from "@/components/vendor/types";
 import { ApiError, api, humanMessage } from "@/lib/api";
+import { serviceLength } from "@/lib/service-label";
 
 export function ServicesManager() {
   const toast = useToast();
@@ -43,7 +44,7 @@ export function ServicesManager() {
           {services.map((service, index) => { const price = Number(service.price_paise); return (
             <li key={service.id} className="flex flex-wrap items-center gap-3 rounded-card bg-surface p-4 shadow-soft ring-1 ring-border/70">
               <div className="flex flex-col"><Button size="icon" variant="ghost" disabled={index === 0} aria-label={`Move ${service.name} up`} onClick={() => void move(index, -1)}><ArrowUp aria-hidden /></Button><Button size="icon" variant="ghost" disabled={index === services.length - 1} aria-label={`Move ${service.name} down`} onClick={() => void move(index, 1)}><ArrowDown aria-hidden /></Button></div>
-              <div className="grid min-w-0 flex-1 gap-0.5"><strong className="flex flex-wrap items-center gap-2">{service.name}{!service.active && <Badge>Hidden</Badge>}{service.cancellation_tiers.length > 0 && <Badge tone="primary">{service.cancellation_tiers.length} refund tier{service.cancellation_tiers.length > 1 ? "s" : ""}</Badge>}</strong><span className="text-sm text-muted">{service.duration_minutes} min · advance <Money paise={advancePaise(price, service.advance_type, service.advance_value)} size="sm" /></span></div>
+              <div className="grid min-w-0 flex-1 gap-0.5"><strong className="flex flex-wrap items-center gap-2">{service.name}{!service.active && <Badge>Hidden</Badge>}{service.cancellation_tiers.length > 0 && <Badge tone="primary">{service.cancellation_tiers.length} refund tier{service.cancellation_tiers.length > 1 ? "s" : ""}</Badge>}</strong><span className="text-sm text-muted">{service.booking_mode === "daily" ? `Per day · ${serviceLength(service)}` : serviceLength(service)} · advance <Money paise={advancePaise(price, service.advance_type, service.advance_value)} size="sm" /></span></div>
               <Money paise={price} className="font-semibold" />
               <div className="flex gap-1">
                 <Button size="icon" variant="ghost" aria-label={`Edit ${service.name}`} onClick={() => setEditing(service)}><Pencil aria-hidden /></Button>

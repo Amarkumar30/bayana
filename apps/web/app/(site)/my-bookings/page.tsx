@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { CalendarDays, Download } from "lucide-react";
-import { formatDateTime } from "@/components/booking/time";
+import { formatBookingWhen, type DailyFields } from "@/components/booking/time";
 import { PageHeader } from "@/components/layout/brand";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
@@ -10,7 +10,7 @@ import { Card, CardHeader, EmptyState, LoadingState, Money, Notice, Skeleton, St
 import { Field, Input } from "@/components/ui/field";
 import { ApiError, api, humanMessage, vendorMessage } from "@/lib/api";
 
-type ClientBooking = { id: string; starts_at: string; timezone: string; service_name: string | null; status: string; display_name: string; balance_due_paise: string | number };
+type ClientBooking = DailyFields & { id: string; starts_at: string; timezone: string; service_name: string | null; status: string; display_name: string; balance_due_paise: string | number };
 
 /** A customer's bookings across businesses, plus their privacy rights: download or erase their data (PV-02). */
 export default function MyBookings() {
@@ -26,7 +26,7 @@ export default function MyBookings() {
       <PageHeader eyebrow="Your account" title="Your bookings" />
       {data.bookings.length === 0 ? <EmptyState icon={<CalendarDays />} title="You have no bookings yet" description="When you book a service through a Bayana link, it will appear here." /> :
         <ul className="grid gap-3">{data.bookings.map(booking => <li key={booking.id}><Link className="flex flex-wrap items-center justify-between gap-3 rounded-card bg-surface p-4 text-ink no-underline shadow-soft ring-1 ring-border/70 hover:ring-primary/40" href={`/b/${booking.id}`}>
-          <div className="grid gap-0.5"><strong>{booking.display_name}</strong><span className="text-sm text-muted">{booking.service_name ? `${booking.service_name} · ` : ""}{formatDateTime(booking.starts_at, booking.timezone)}</span></div>
+          <div className="grid gap-0.5"><strong>{booking.display_name}</strong><span className="text-sm text-muted">{booking.service_name ? `${booking.service_name} · ` : ""}{formatBookingWhen(booking, booking.timezone)}</span></div>
           <div className="flex items-center gap-3"><StatusBadge status={booking.status} /><span className="text-sm"><Money paise={booking.balance_due_paise} className="font-semibold" /> due</span></div>
         </Link></li>)}</ul>}
       <YourData />

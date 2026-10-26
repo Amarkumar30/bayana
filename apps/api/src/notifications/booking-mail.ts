@@ -11,12 +11,14 @@ type Db = Pool | PoolClient;
 export const bookingUrl = (bookingId: string, token?: string) => `${config.WEB_ORIGINS[0]}/b/${bookingId}${token ? `?t=${encodeURIComponent(token)}` : ""}`;
 
 export async function bookingFacts(db: Db, bookingId: string) {
-  const row = (await db.query<{ client_name: string; client_email: string; service_name: string | null; starts_at: Date; total_paise: string; advance_paise: string; terms_snapshot: string | null; display_name: string; timezone: string; place: string | null; owner_email: string | null; paid: string; notify_prefs: Partial<NotifyPrefs> }>(
-    `SELECT b.client_name,b.client_email::text AS client_email,b.service_name,b.starts_at,b.total_paise,b.advance_paise,b.terms_snapshot,v.display_name,v.timezone,COALESCE(v.service_area,v.city) AS place,u.email::text AS owner_email,v.notify_prefs,
+  const row = (await db.query<{ client_name: string; client_email: string; service_name: string | null; starts_at: Date; booking_mode: "hourly" | "daily"; days_count: number | null; vendor_timezone: string; total_paise: string; advance_paise: string; terms_snapshot: string | null; display_name: string; timezone: string; place: string | null; owner_email: string | null; paid: string; notify_prefs: Partial<NotifyPrefs> }>(
+    `SELECT b.client_name,b.client_email::text AS client_email,b.service_name,b.starts_at,b.booking_mode,b.days_count,b.vendor_timezone,b.total_paise,b.advance_paise,b.terms_snapshot,v.display_name,v.timezone,COALESCE(v.service_area,v.city) AS place,u.email::text AS owner_email,v.notify_prefs,
        COALESCE((SELECT SUM(amount_paise) FROM payments WHERE booking_id=b.id AND status IN ('captured','refunded','partially_refunded') AND verified_at IS NOT NULL),0) - COALESCE((SELECT SUM(amount_paise) FROM refunds WHERE booking_id=b.id AND status='processed'),0) AS paid
      FROM bookings b JOIN vendors v ON v.id=b.vendor_id LEFT JOIN users u ON u.id=v.owner_user_id WHERE b.id=$1`, [bookingId])).rows[0];
   return {
-    facts: { businessName: row.display_name, customerName: row.client_name, service: row.service_name ?? "Booking", startsAt: row.starts_at, timezone: row.timezone, totalPaise: Number(row.total_paise), advancePaise: Number(row.advance_paise), paidPaise: Number(row.paid), link: bookingUrl(bookingId) },
+    facts: { businessName: row.display_name, customerName: row.client_name, service: row.service_name ?? "Booking", startsAt: row.starts_at,
+      // Daily bookings read in the timezone their days were computed in (the snapshot); hourly ones in the vendor's timezone, as before.
+      timezone: row.booking_mode === "daily" ? row.vendor_timezone : row.timezone, days: row.booking_mode === "daily" ? row.days_count : null, totalPaise: Number(row.total_paise), advancePaise: Number(row.advance_paise), paidPaise: Number(row.paid), link: bookingUrl(bookingId) },
     customerEmail: row.client_email, vendorEmail: row.owner_email,
     /** The vendor's own copy of an email, or null when they turned that email off in Settings (SPEC 5.3). */
     vendorEmailFor: (kind: keyof NotifyPrefs) => row.notify_prefs[kind] === false ? null : row.owner_email, place: row.place ?? "", cancellation: tiersInWords(parseSnapshot(row.terms_snapshot).cancellation_tiers)

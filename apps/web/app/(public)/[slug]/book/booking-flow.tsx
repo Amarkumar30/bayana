@@ -3,16 +3,18 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, CalendarCheck, CheckCircle2, ChevronDown, Lock, Mail } from "lucide-react";
-import { formatINR, tiersInWords } from "@bayana/shared";
+import { dayRangeLabel, formatINR, tiersInWords } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Card, EmptyState, LoadingState, Money, Notice, Skeleton, Stepper } from "@/components/ui/display";
 import { Checkbox, Field, Input, Textarea } from "@/components/ui/field";
 import { HoldCountdown } from "@/components/booking/countdown";
-import { dateLabel, formatDate, formatDateTime, formatTime, localDateKey, viewerTimezone } from "@/components/booking/time";
+import { DayStep, dailyQuote } from "@/components/booking/day-step";
+import { dateLabel, formatBookingWhen, formatDate, formatDateTime, formatTime, localDateKey, viewerTimezone } from "@/components/booking/time";
 import { PaymentPanel } from "@/components/booking/payment-panel";
 import { bookingPageHref, tokenHeaders, type BookingView } from "@/components/booking/types";
 import { ApiError, api, humanMessage } from "@/lib/api";
 import type { PublicService, PublicVendor } from "@/lib/public-vendor";
+import { priceUnit, serviceLength } from "@/lib/service-label";
 import { cn } from "@/lib/utils";
 
 const steps = ["Service", "Time", "Details", "Verify", "Review and agree", "Pay"];
@@ -31,6 +33,8 @@ export function BookingFlow() {
   const [step, setStep] = useState(0); const [message, setMessage] = useState("");
   const [serviceId, setServiceId] = useState(search.get("service") ?? "");
   const [slotDate, setSlotDate] = useState(""); const [slotStart, setSlotStart] = useState(""); const [slotsVersion, setSlotsVersion] = useState(0);
+  // Daily services: the number of days from slotDate (no time).
+  const [dayCount, setDayCount] = useState(0);
   const [details, setDetails] = useState({ name: "", email: "", phone: "", notes: "" });
   const [verified, setVerified] = useState(false);
   const [hold, setHold] = useState<Hold>(); const [holdExpired, setHoldExpired] = useState(false);
@@ -52,15 +56,16 @@ export function BookingFlow() {
   const service = vendor?.services.find(value => value.id === serviceId);
   const go = (to: number) => { setMessage(""); setStep(to); window.scrollTo({ top: 0 }); };
   // A new time or new details is a new booking request, so it gets a new idempotency key.
-  useEffect(() => { idempotencyKey.current = crypto.randomUUID(); }, [serviceId, slotStart, details.name, details.phone, details.notes]);
+  useEffect(() => { idempotencyKey.current = crypto.randomUUID(); }, [serviceId, slotStart, slotDate, dayCount, details.name, details.phone, details.notes]);
+  const daily = service?.booking_mode === "daily";
   const markExpired = useCallback(() => setHoldExpired(true), []);
   const learnHoldExpiry = useCallback((until: string) => setHold(current => current && !current.holdExpiresAt ? { ...current, holdExpiresAt: until } : current), []);
-  const restartFromTime = useCallback((copy: string) => { setHold(undefined); setHoldExpired(false); setSlotStart(""); setSlotsVersion(value => value + 1); setMessage(copy); setStep(1); }, []);
+  const restartFromTime = useCallback((copy: string) => { setHold(undefined); setHoldExpired(false); setSlotStart(""); setDayCount(0); setSlotsVersion(value => value + 1); setMessage(copy); setStep(1); }, []);
 
   const createHold = async () => {
     if (!vendor || !service) return;
     try {
-      const { booking } = await api<{ booking: { id: string; access_token?: string; hold_expires_at: string } }>("/v1/bookings", { body: { slug: vendor.slug, date: slotDate, service_id: service.id, starts_at: slotStart, name: details.name.trim(), phone: details.phone.trim() || undefined, notes: details.notes.trim() || undefined }, headers: { "Idempotency-Key": idempotencyKey.current } });
+      const { booking } = await api<{ booking: { id: string; access_token?: string; hold_expires_at: string } }>("/v1/bookings", { body: { slug: vendor.slug, date: slotDate, service_id: service.id, ...(daily ? { days: dayCount } : { starts_at: slotStart }), name: details.name.trim(), phone: details.phone.trim() || undefined, notes: details.notes.trim() || undefined }, headers: { "Idempotency-Key": idempotencyKey.current } });
       setHold({ id: booking.id, token: booking.access_token ?? null, holdExpiresAt: booking.hold_expires_at }); setHoldExpired(false); go(4);
     } catch (error) {
       if (error instanceof ApiError && error.code === "SLOT_TAKEN") restartFromTime(humanMessage(error));
@@ -77,15 +82,16 @@ export function BookingFlow() {
       <div className="grid gap-1">
         <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-primary"><Lock className="size-3.5" aria-hidden />Secure booking</p>
         <h1 className="text-2xl sm:text-4xl">Book {vendor.display_name}</h1>
-        <p className="text-sm text-muted">Step {step + 1} of {steps.length}: {steps[step]} · Times in {vendor.timezone}</p>
+        <p className="text-sm text-muted">Step {step + 1} of {steps.length}: {daily && step === 1 ? "Dates" : steps[step]} · {daily ? "Days" : "Times"} in {vendor.timezone}</p>
       </div>
       <Stepper steps={steps} current={step} />
-      {service && step > 0 && step < 5 && <Summary service={service} timezone={vendor.timezone} startsAt={slotStart} />}
+      {service && step > 0 && step < 5 && <Summary service={service} timezone={vendor.timezone} startsAt={slotStart} date={slotDate} days={dayCount} />}
       {hold && (step === 4 || step === 5 && vendor.payments_enabled && accepted?.booking.status === "PENDING") && !holdExpired && hold.holdExpiresAt && <HoldCountdown until={hold.holdExpiresAt} onExpire={markExpired} />}
       {message && <Notice tone="danger">{message}</Notice>}
 
-      {step === 0 && <ServiceStep services={vendor.services} selected={serviceId} onSelect={id => { setServiceId(id); setSlotStart(""); go(1); }} />}
-      {step === 1 && service && <TimeStep vendor={vendor} service={service} version={slotsVersion} date={slotDate} start={slotStart} onDate={setSlotDate} onStart={setSlotStart} onBack={() => go(0)} onNext={() => go(2)} />}
+      {step === 0 && <ServiceStep services={vendor.services} selected={serviceId} onSelect={id => { setServiceId(id); setSlotStart(""); setDayCount(0); go(1); }} />}
+      {step === 1 && service && daily && <DayStep vendor={vendor} service={service} version={slotsVersion} date={slotDate} days={dayCount} onDate={setSlotDate} onDays={setDayCount} onBack={() => go(0)} onNext={() => go(2)} />}
+      {step === 1 && service && !daily && <TimeStep vendor={vendor} service={service} version={slotsVersion} date={slotDate} start={slotStart} onDate={setSlotDate} onStart={setSlotStart} onBack={() => go(0)} onNext={() => go(2)} />}
       {step === 2 && <DetailsStep phoneRequired={vendor.phone_required} value={details} verified={verified} onChange={setDetails} onBack={() => go(1)} onNext={() => go(3)} />}
       {step === 3 && <VerifyStep email={details.email} verified={verified} onVerified={() => setVerified(true)} onHold={createHold} onBack={() => go(2)} />}
       {step === 4 && hold && (holdExpired
@@ -96,11 +102,13 @@ export function BookingFlow() {
   );
 }
 
-function Summary({ service, timezone, startsAt }: { service: PublicService; timezone: string; startsAt: string }) {
+function Summary({ service, timezone, startsAt, date, days }: { service: PublicService; timezone: string; startsAt: string; date: string; days: number }) {
+  // Daily: the dates and price x days; hourly: the time and the session price.
+  const daily = service.booking_mode === "daily", chosen = daily && date && days > 0;
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-input bg-surface-muted px-4 py-3 text-sm">
-      <span className="font-medium">{service.name}{startsAt && <span className="font-normal text-muted"> · {formatDateTime(startsAt, timezone)}</span>}</span>
-      <Money paise={service.price_paise} size="sm" className="font-semibold" />
+      <span className="font-medium">{service.name}{daily ? chosen && <span className="font-normal text-muted"> · {dayRangeLabel(date, days)}</span> : startsAt && <span className="font-normal text-muted"> · {formatDateTime(startsAt, timezone)}</span>}</span>
+      {chosen ? <Money paise={dailyQuote(service, days).total} size="sm" className="font-semibold" /> : <span className="inline-flex items-baseline gap-1"><Money paise={service.price_paise} size="sm" className="font-semibold" />{daily && <span className="text-xs text-muted">per day</span>}</span>}
     </div>
   );
 }
@@ -111,9 +119,9 @@ function ServiceStep({ services, selected, onSelect }: { services: PublicService
       <h2 id="choose-service" className="text-lg">Choose a service</h2>
       <ul className="grid gap-3">{services.map(service => (
         <li key={service.id}><button type="button" aria-pressed={selected === service.id} onClick={() => onSelect(service.id)} className={cn("grid w-full gap-2 rounded-card bg-surface p-4 text-left ring-1 transition-shadow hover:ring-primary", selected === service.id ? "ring-2 ring-primary" : "ring-border")}>
-          <span className="flex items-start justify-between gap-3"><strong>{service.name}</strong><Money paise={service.price_paise} className="font-semibold" /></span>
+          <span className="flex items-start justify-between gap-3"><strong>{service.name}</strong><span className="grid justify-items-end"><Money paise={service.price_paise} className="font-semibold" />{priceUnit(service) && <span className="text-xs text-muted">{priceUnit(service)}</span>}</span></span>
           {service.description && <span className="text-sm text-muted">{service.description}</span>}
-          <span className="text-sm text-muted">{service.booking_mode === "FULL_DAY" ? "Full day" : `${service.duration_minutes} min`} · {service.advance_paise > 0 ? `${formatINR(service.advance_paise)} now, ${formatINR(service.remaining_paise)} later` : "No advance"}</span>
+          <span className="text-sm text-muted">{serviceLength(service)} · {service.advance_paise > 0 ? `${formatINR(service.advance_paise)} now, ${formatINR(service.remaining_paise)} later` : "No advance"}</span>
         </button></li>
       ))}</ul>
     </section>
@@ -241,7 +249,7 @@ function ReviewStep({ hold, onHoldInfo, onExpired, onAccepted }: { hold: Hold; o
     <form onSubmit={submit} className="grid gap-4">
       <Card className="grid gap-4">
         <h2 className="text-lg">Key terms</h2>
-        <p className="text-sm">{view.service_name} with {view.vendor.display_name}, {formatDateTime(view.starts_at, view.timezone)} ({view.timezone})</p>
+        <p className="text-sm">{view.service_name} with {view.vendor.display_name}, {formatBookingWhen(view, view.timezone)} ({view.timezone})</p>
         <dl className="grid gap-2 text-sm">
           <div className="flex justify-between gap-4"><dt className="text-muted">Total price</dt><dd><Money paise={view.total_paise} size="sm" /></dd></div>
           <div className="flex justify-between gap-4 font-semibold"><dt>{view.advance_paise > 0 ? "Advance to confirm" : "Advance"}</dt><dd>{view.advance_paise > 0 ? <Money paise={view.advance_paise} size="sm" /> : "None"}</dd></div>

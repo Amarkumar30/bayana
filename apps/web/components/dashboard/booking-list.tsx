@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
-import { formatDate, formatTime } from "@/components/booking/time";
+import { formatBookingTime, formatDate, formatTime } from "@/components/booking/time";
 import { Money, StatusBadge, Table, Td, Th } from "@/components/ui/display";
 import type { BookingRow } from "./types";
 
-const when = (row: BookingRow, timezone: string) => `${formatDate(row.starts_at, timezone, "short")} · ${formatTime(row.starts_at, timezone)}`;
+// Daily bookings show their dates; hourly ones the date and time.
+const when = (row: BookingRow, timezone: string) => row.booking_mode === "daily" ? formatBookingTime(row, timezone) : `${formatDate(row.starts_at, timezone, "short")} · ${formatTime(row.starts_at, timezone)}`;
 export const bookingHref = (id: string) => `/dashboard/bookings/${id}`;
 
 /** Cards below the md breakpoint, a table from md up (SPEC 5.3: tables become cards on mobile). */
