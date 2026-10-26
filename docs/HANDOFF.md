@@ -58,10 +58,17 @@
 - **Before any migration on dev:** back up (command below).
 
 ## Next step
-0. Per-day booking: back up `bayana_dev`, run `pnpm.cmd db:migrate` (021), try a daily service, then merge `phase-daily-bookings` into `hosting-ready` (ask first). On Neon, branch the database first.
-1. Fill in `apps/web/lib/business-details.ts`, have a lawyer review the legal pages (list in docs/PROGRESS.md "Legal pages"), then set `LEGAL_REVIEWED=true` and `APP_ENV=production` on the production web app.
-2. Push `hosting-ready` (ask first), apply render.yaml on Render, and follow docs/DEPLOY.md section by section. Never push to or merge into `main` without asking.
-3. Still open: the runtime should connect as a member of `bayana_app`; server-side calls from Vercel would share Vercel's IP for per-IP rate limits (only once a page uses serverApi); test:visual should run on next build + next start.
+**Current state:** branch `phase-daily-bookings` at `0a2897b` (per-day booking DONE; not pushed, not merged). Migration 021 is applied to `bayana_test` only, not to `bayana_dev` or Neon. The next free migration number is **022**.
+**Key facts:** `services.booking_mode` is `hourly` | `daily` (renamed from TIMED | FULL_DAY). An hourly price is per session of `duration_minutes`, not per hour. Daily bookings occupy whole local days in the existing starts_at/ends_at (and block_start/block_end) columns, so the existing `bookings_no_overlap` constraint covers them. Buffers apply per booking (each booking keeps its own buffer minutes or buffer days).
+**Next planned phase (not started):** multi-block hourly booking. A customer books several consecutive sessions in one booking, with `min_blocks` and `max_blocks` on the service.
+**Open items, in order:**
+1. Back up `bayana_dev`, run `pnpm.cmd db:migrate` (021), do the 5-step local trial of a daily service (docs/PROGRESS.md "Per-day booking").
+2. Merge `phase-daily-bookings` into `hosting-ready` (the user's call).
+3. Create a Neon backup branch, then deploy staging with all migrations together: migrations first, then the API (Render), then the web app (Vercel).
+4. Google sign-in works on staging. Still pending on staging: OTP email via the Brevo API (`EMAIL_TRANSPORT=brevo_api`, `BREVO_API_KEY`) and the Razorpay test setup.
+5. The legal pages need lawyer review before Razorpay live; fill in `apps/web/lib/business-details.ts`; then `LEGAL_REVIEWED=true` and `APP_ENV=production` on the production web app.
+6. Still open: the runtime should connect as `bayana_app`; per-IP rate limits for server-side calls from Vercel; test:visual on a production build.
+Never push or merge into `main` without asking.
 
 ## Commands (PowerShell, always pnpm.cmd)
 - Run: `pnpm.cmd db:up` · `pnpm.cmd dev` (web 3000, API 4000, Mailpit 8025) · `pnpm.cmd run doctor`
