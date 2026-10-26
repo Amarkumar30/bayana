@@ -8,9 +8,13 @@ export type SlotEngineInput = {
   timezone: string; serviceDurationMinutes: number; bufferBeforeMinutes: number; bufferAfterMinutes: number; bookingMode: "hourly" | "daily"; slotStepMinutes: number;
   /** Daily services only: the range of days a booking may cover and the free days kept around it. */
   daily?: { minDays: number; maxDays: number; bufferDays: number } | null;
+  /** Hourly services: how many consecutive sessions of serviceDurationMinutes one booking may cover (absent: exactly one). */
+  blocks?: { minBlocks: number; maxBlocks: number } | null;
   minimumNoticeMinutes: number; maximumDaysAhead: number; weeklyRules: Map<number, LocalInterval[]>; overrides: AvailabilityOverride[]; blockedPeriods: BusyPeriod[]; activeBookings: BusyPeriod[]; now: Date;
 };
-export type Slot = { startsAt: string; endsAt: string; occupiedStartsAt: string; occupiedEndsAt: string };
+/** A bookable start. endsAt/occupied* describe the shortest booking from it (min_blocks sessions); maxBlocks is the longest. */
+export type Slot = { startsAt: string; endsAt: string; occupiedStartsAt: string; occupiedEndsAt: string; maxBlocks: number };
+type Range = Omit<Slot, "maxBlocks">;
 
 const localKey = (date: Date, timezone: string) => { const p = zonedParts(date, timezone); return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`; };
 const minuteOf = (time: string) => { const [hours, minutes] = time.slice(0, 5).split(":").map(Number); return hours * 60 + minutes; };
@@ -35,27 +39,79 @@ export function openSpansFor(date: string, input: Pick<SlotEngineInput, "weeklyR
   return spans;
 }
 
-/** Pure: every bookable slot on a local date, sorted, unique, inside open spans, outside busy periods, honouring notice and window. */
-export function slotsForDate(date: string, input: SlotEngineInput): Slot[] {
+/** Minutes since local midnight of an instant on `date` (1440 when it is the next local midnight); null on any other date. */
+function localMinuteOn(date: string, instant: Date, timezone: string) {
+  const p = zonedParts(instant, timezone), key = `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+  if (key === date) return p.hour * 60 + p.minute;
+  return key === addLocalDays(date, 1) && p.hour === 0 && p.minute === 0 ? 1440 : null;
+}
+
+type Start = { startsAt: Date; minute: number; spanEnd: number };
+type DayContext = { date: string; input: SlotEngineInput; busy: BusyPeriod[]; noticeAfter: Date };
+/** Grid starts inside the open spans of a local date (null when the date is outside the booking window or the service is daily). */
+function dayStarts(date: string, input: SlotEngineInput): { starts: Start[]; context: DayContext } | null {
   const today = localKey(input.now, input.timezone); const lastDate = new Date(`${today}T12:00:00Z`); lastDate.setUTCDate(lastDate.getUTCDate() + input.maximumDaysAhead);
-  if (date < today || date > lastDate.toISOString().slice(0, 10)) return [];
-  const busy = [...input.blockedPeriods, ...input.activeBookings];
-  const noticeAfter = new Date(input.now.getTime() + input.minimumNoticeMinutes * 60_000);
-  const spans = openSpansFor(date, input);
+  if (date < today || date > lastDate.toISOString().slice(0, 10)) return null;
   // Daily services have no time slots: they are booked by whole local days (dayStatus, dailyRange).
-  if (input.bookingMode === "daily") return [];
-  const slots: Slot[] = [];
-  for (const [start, end] of spans) {
+  if (input.bookingMode === "daily") return null;
+  const starts: Start[] = [];
+  for (const [start, end] of openSpansFor(date, input)) {
     for (let minute = start; minute + input.serviceDurationMinutes <= end; minute += input.slotStepMinutes) {
-      const startsAt = localDateTimeToUtc(dateAtMinute(date, minute), input.timezone); if (!startsAt) continue;
-      const endsAt = new Date(startsAt.getTime() + input.serviceDurationMinutes * 60_000);
-      const occupiedStartsAt = new Date(startsAt.getTime() - input.bufferBeforeMinutes * 60_000); const occupiedEndsAt = new Date(endsAt.getTime() + input.bufferAfterMinutes * 60_000);
-      if (startsAt < noticeAfter || busy.some(period => overlaps(occupiedStartsAt, occupiedEndsAt, period))) continue;
-      slots.push({ startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), occupiedStartsAt: occupiedStartsAt.toISOString(), occupiedEndsAt: occupiedEndsAt.toISOString() });
+      const startsAt = localDateTimeToUtc(dateAtMinute(date, minute), input.timezone); if (startsAt) starts.push({ startsAt, minute, spanEnd: end });
     }
+  }
+  return { starts, context: { date, input, busy: [...input.blockedPeriods, ...input.activeBookings], noticeAfter: new Date(input.now.getTime() + input.minimumNoticeMinutes * 60_000) } };
+}
+
+/**
+ * Where `blocks` consecutive sessions from a start would sit, buffers applied once around the whole range; null unless every
+ * session is inside the same open span (so no break, blocked hours or closing time inside it), the range stays on the local
+ * date (never past local midnight), the start is after the minimum notice, and nothing busy touches the buffered range.
+ */
+function rangeFrom(start: Start, blocks: number, { date, input, busy, noticeAfter }: DayContext): Range | null {
+  const minutes = blocks * input.serviceDurationMinutes;
+  if (start.minute + minutes > start.spanEnd || start.startsAt < noticeAfter) return null;
+  const endsAt = new Date(start.startsAt.getTime() + minutes * 60_000);
+  // Across a clock change the wall-clock end differs from start + minutes: check where the real end falls, too.
+  const endMinute = localMinuteOn(date, endsAt, input.timezone);
+  if (endMinute === null || endMinute > start.spanEnd) return null;
+  const occupiedStartsAt = new Date(start.startsAt.getTime() - input.bufferBeforeMinutes * 60_000), occupiedEndsAt = new Date(endsAt.getTime() + input.bufferAfterMinutes * 60_000);
+  if (busy.some(period => overlaps(occupiedStartsAt, occupiedEndsAt, period))) return null;
+  return { startsAt: start.startsAt.toISOString(), endsAt: endsAt.toISOString(), occupiedStartsAt: occupiedStartsAt.toISOString(), occupiedEndsAt: occupiedEndsAt.toISOString() };
+}
+
+const blockRules = (input: SlotEngineInput) => input.blocks ?? { minBlocks: 1, maxBlocks: 1 };
+/** The longest run of consecutive sessions (up to the service's maximum) from a start; 0 when not even one fits. */
+function maxBlocksAt(start: Start, context: DayContext) {
+  // A longer range contains a shorter one, so the first length that fails ends the search.
+  let blocks = 0;
+  while (blocks < blockRules(context.input).maxBlocks && rangeFrom(start, blocks + 1, context)) blocks++;
+  return blocks;
+}
+
+/**
+ * Pure: every bookable start on a local date, sorted, unique, inside open spans, outside busy periods, honouring notice and
+ * window. A start is bookable when at least min_blocks sessions fit from it; maxBlocks says how many do.
+ */
+export function slotsForDate(date: string, input: SlotEngineInput): Slot[] {
+  const day = dayStarts(date, input); if (!day) return [];
+  const { minBlocks } = blockRules(input), slots: Slot[] = [];
+  for (const start of day.starts) {
+    const maxBlocks = maxBlocksAt(start, day.context);
+    const shortest = maxBlocks >= minBlocks ? rangeFrom(start, minBlocks, day.context) : null;
+    if (shortest) slots.push({ ...shortest, maxBlocks });
   }
   // Spans are merged and ascending, but a DST fall-back can map two local minutes to one instant: keep output sorted and unique.
   return slots.filter((slot, index) => slots.findIndex(other => other.startsAt === slot.startsAt) === index).sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+}
+
+/** Where a booking of `blocks` sessions from exactly `startsAt` on `date` would sit; null unless it is allowed and entirely free. */
+export function hourlyRange(date: string, startsAt: string, blocks: number, input: SlotEngineInput): Range | null {
+  const { minBlocks, maxBlocks } = blockRules(input);
+  if (!Number.isInteger(blocks) || blocks < minBlocks || blocks > maxBlocks) return null;
+  const day = dayStarts(date, input); if (!day) return null;
+  const start = day.starts.find(item => item.startsAt.toISOString() === startsAt);
+  return start ? rangeFrom(start, blocks, day.context) : null;
 }
 export function monthSummary(month: string, input: SlotEngineInput) {
   const first = `${month}-01`, result: { date: string; available: boolean }[] = [];

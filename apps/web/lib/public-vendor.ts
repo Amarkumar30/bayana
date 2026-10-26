@@ -1,7 +1,7 @@
 import type { CancellationTier } from "@bayana/shared";
 import { env } from "@/env";
 
-export type PublicService = { id: string; name: string; description: string; price_paise: string; duration_minutes: number | null; booking_mode: "hourly" | "daily"; min_days: number | null; max_days: number | null; buffer_days: number | null; advance_type: "NONE" | "PERCENT" | "FIXED"; advance_value: number; advance_paise: number; remaining_paise: number; cancellation_tiers: CancellationTier[] };
+export type PublicService = { id: string; name: string; description: string; price_paise: string; duration_minutes: number | null; booking_mode: "hourly" | "daily"; min_days: number | null; max_days: number | null; buffer_days: number | null; min_blocks: number | null; max_blocks: number | null; advance_type: "NONE" | "PERCENT" | "FIXED"; advance_value: number; advance_paise: number; remaining_paise: number; cancellation_tiers: CancellationTier[] };
 export type PublicVendor = {
   slug: string; canonical_slug: string; display_name: string; city: string; bio: string; service_area: string | null; timezone: string; categories: string[];
   terms: string; cancellation_policy: string; rescheduling_policy: string; phone_required: boolean; payments_enabled: boolean;

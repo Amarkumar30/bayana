@@ -119,6 +119,15 @@ describe("outbox delivery (SPEC 15.1)", () => {
     const row = await until(() => pool.query<{ status: string; priority: number; text_body: string }>("SELECT status,priority,text_body FROM email_outbox WHERE recipient=$1", [email]).then(result => result.rows[0]), value => value?.status === "sent");
     expect(row).toEqual({ status: "sent", priority: 0, text_body: "[code removed after sending]" });
   });
+  it("a new login code is sent at once even behind a backlog of older urgent mail (more than one batch)", async () => {
+    // 15 older urgent emails are still queued (more than the 10 one urgent batch takes, oldest first).
+    for (let index = 0; index < 15; index++) await enqueue(pool, "otp", `backlog-${index}-${randomUUID().slice(0, 6)}@example.test`, sample.otp, { priority: PRIORITY.urgent });
+    const email = `late-code-${randomUUID().slice(0, 8)}@example.test`; const before = capturedEmails().length;
+    expect((await call("POST", "/v1/auth/booking/otp/request", { body: { email } })).status).toBe(202);
+    const message = await until(async () => capturedEmails().slice(before).find(item => item.to === email), Boolean);
+    expect(message?.subject).toMatch(/^Your Bayana code: \d{6}$/);
+    expect((await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM email_outbox WHERE status='queued' AND priority=0 AND recipient LIKE 'backlog-%'")).rows[0].n).toBe(0);
+  });
 });
 
 describe("tick (SPEC 15.3)", () => {

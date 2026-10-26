@@ -4,6 +4,7 @@ import { slugProblem } from "./slug.js";
 import { termsTemplateProblems } from "./terms.js";
 import { isIanaTimezone } from "./time.js";
 import { MAX_BOOKING_DAYS, MAX_BUFFER_DAYS } from "./days.js";
+import { MAX_BLOCKS } from "./blocks.js";
 
 // Request schemas shared by the API (validation) and the web forms (inline errors). Unknown fields are rejected.
 const text = (max: number) => z.string().trim().max(max);
@@ -40,8 +41,8 @@ export function cancellationTiersProblem(tiers: CancellationTier[]): string | nu
 export const cancellationTiersSchema = z.array(cancellationTierSchema).max(6, "Use at most 6 tiers.").superRefine((tiers, ctx) => { const problem = cancellationTiersProblem(tiers); if (problem) ctx.addIssue({ code: "custom", message: problem }); });
 export const termsTemplateSchema = z.string().max(10_000).superRefine((template, ctx) => { for (const problem of termsTemplateProblems(template)) ctx.addIssue({ code: "custom", message: problem }); });
 
-// A service is charged per hour ("hourly": duration and buffers in minutes) or per day ("daily": price per day, a range of
-// days, buffer days). Each mode carries exactly its own fields; the other mode's must be absent or null (the database
+// A service is charged per session ("hourly": a session of duration_minutes, 1 to 12 consecutive sessions per booking, buffers
+// in minutes) or per day ("daily": price per day, a range of days, buffer days). Each mode carries exactly its own fields; the other mode's must be absent or null (the database
 // enforces the same rule with services_mode_fields).
 export const BOOKING_MODES = ["hourly", "daily"] as const;
 export type BookingMode = typeof BOOKING_MODES[number];
@@ -54,7 +55,10 @@ const serviceBase = {
 };
 const hourlyFields = {
   duration_minutes: z.number({ error: "Enter how long the service takes, in minutes." }).int("Use whole minutes.").min(5, "At least 5 minutes.").max(1440, "At most 24 hours."),
-  buffer_before_minutes: z.number().int().min(0).max(1440, "At most 24 hours.").default(0), buffer_after_minutes: z.number().int().min(0).max(1440, "At most 24 hours.").default(0)
+  buffer_before_minutes: z.number().int().min(0).max(1440, "At most 24 hours.").default(0), buffer_after_minutes: z.number().int().min(0).max(1440, "At most 24 hours.").default(0),
+  // A booking is min_blocks..max_blocks consecutive sessions; 1 and 1 (the default) is one session, as before.
+  min_blocks: z.number({ error: "Enter the fewest sessions a customer can book." }).int("Use whole sessions.").min(1, "At least 1 session.").max(MAX_BLOCKS, `At most ${MAX_BLOCKS} sessions.`).default(1),
+  max_blocks: z.number({ error: "Enter the most sessions a customer can book." }).int("Use whole sessions.").min(1, "At least 1 session.").max(MAX_BLOCKS, `At most ${MAX_BLOCKS} sessions.`).default(1)
 };
 const dailyFields = {
   min_days: z.number({ error: "Enter the minimum number of days." }).int("Use whole days.").min(1, "At least 1 day.").max(MAX_BOOKING_DAYS, `At most ${MAX_BOOKING_DAYS} days.`).default(1),
@@ -64,20 +68,25 @@ const dailyFields = {
 const notUsed = (message: string) => z.null({ error: message }).optional();
 const notForHourly = "Per-hour services do not use days. Remove it, or charge per day instead.";
 const notForDaily = "Per-day services do not use minutes. Remove it, or charge per hour instead.";
+const sessionsNotForDaily = "Per-day services do not use sessions. Remove it, or charge per session instead.";
 const hourlyService = z.object({ ...serviceBase, booking_mode: z.literal("hourly"), ...hourlyFields, min_days: notUsed(notForHourly), max_days: notUsed(notForHourly), buffer_days: notUsed(notForHourly) }).strict();
-const dailyService = z.object({ ...serviceBase, booking_mode: z.literal("daily"), ...dailyFields, duration_minutes: notUsed(notForDaily), buffer_before_minutes: notUsed(notForDaily), buffer_after_minutes: notUsed(notForDaily) }).strict();
+const dailyService = z.object({ ...serviceBase, booking_mode: z.literal("daily"), ...dailyFields, duration_minutes: notUsed(notForDaily), buffer_before_minutes: notUsed(notForDaily), buffer_after_minutes: notUsed(notForDaily), min_blocks: notUsed(sessionsNotForDaily), max_blocks: notUsed(sessionsNotForDaily) }).strict();
 // A body without booking_mode is an hourly service, as every service was before per-day pricing existed.
 const withMode = (value: unknown) => value && typeof value === "object" && !("booking_mode" in value) ? { ...value, booking_mode: "hourly" } : value;
 export const serviceCreateSchema = z.preprocess(withMode, z.discriminatedUnion("booking_mode", [hourlyService, dailyService], { error: "Choose how you charge: per hour or per day." })).superRefine((value, ctx) => {
   const problem = advanceRuleProblem(value.price_paise, value.advance_type, value.advance_value);
   if (problem) ctx.addIssue({ code: "custom", path: ["advance_value"], message: problem });
   if (value.booking_mode === "daily" && value.max_days < value.min_days) ctx.addIssue({ code: "custom", path: ["max_days"], message: "The maximum must be at least the minimum number of days." });
+  if (value.booking_mode === "hourly" && value.max_blocks < value.min_blocks) ctx.addIssue({ code: "custom", path: ["max_blocks"], message: "The maximum must be at least the minimum number of sessions." });
+  // One booking stays on one local day, so the longest booking allowed must fit in 24 hours.
+  else if (value.booking_mode === "hourly" && value.duration_minutes * value.max_blocks > 1440) ctx.addIssue({ code: "custom", path: ["max_blocks"], message: `${value.max_blocks} sessions of ${value.duration_minutes} minutes is more than a day. Use fewer or shorter sessions.` });
 });
 /** PATCH bodies: any subset of fields. The API merges with the stored row and re-validates with serviceCreateSchema. */
 export const serviceUpdateSchema = z.object({
   ...Object.fromEntries(Object.entries(serviceBase).map(([key, schema]) => [key, schema.optional()])) as { [K in keyof typeof serviceBase]: z.ZodOptional<typeof serviceBase[K]> },
   booking_mode: z.enum(BOOKING_MODES, { error: "Choose how you charge: per hour or per day." }).optional(),
   duration_minutes: hourlyFields.duration_minutes.nullable().optional(), buffer_before_minutes: z.number().int().min(0).max(1440).nullable().optional(), buffer_after_minutes: z.number().int().min(0).max(1440).nullable().optional(),
+  min_blocks: z.number().int().min(1).max(MAX_BLOCKS).nullable().optional(), max_blocks: z.number().int().min(1).max(MAX_BLOCKS).nullable().optional(),
   min_days: z.number().int().min(1).max(MAX_BOOKING_DAYS).nullable().optional(), max_days: z.number().int().min(1).max(MAX_BOOKING_DAYS).nullable().optional(), buffer_days: z.number().int().min(0).max(MAX_BUFFER_DAYS).nullable().optional()
 }).strict();
 export const serviceReorderSchema = z.object({ ids: z.array(z.string().uuid()).min(1).max(200) }).strict();

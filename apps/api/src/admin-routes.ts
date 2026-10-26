@@ -122,7 +122,7 @@ adminRouter.get("/users/:id", handle(async (req, res) => {
   const [sessions, events, bookings] = await Promise.all([
     pool.query("SELECT id,created_at,last_used_at,revoked_at,expires_at,host(ip) AS ip,left(user_agent,120) AS user_agent,second_factor_at FROM sessions WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20", [id]),
     pool.query("SELECT type,created_at,host(ip) AS ip FROM auth_events WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30", [id]),
-    pool.query("SELECT b.id,b.status,b.starts_at,b.booking_mode,b.days_count,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.service_name,v.slug::text AS vendor_slug FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.client_user_id=$1 OR b.client_email=$2 ORDER BY b.created_at DESC LIMIT 30", [id, user.email])
+    pool.query("SELECT b.id,b.status,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.service_name,v.slug::text AS vendor_slug FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.client_user_id=$1 OR b.client_email=$2 ORDER BY b.created_at DESC LIMIT 30", [id, user.email])
   ]);
   await audited(res, "admin.view", "user", id);
   res.json({ user, sessions: sessions.rows, auth_events: events.rows, bookings: bookings.rows });
@@ -141,7 +141,7 @@ adminRouter.get("/vendors/:id", handle(async (req, res) => {
   if (!vendor) throw new AppError(404, "NOT_FOUND", "Vendor not found");
   const [services, bookings] = await Promise.all([
     pool.query("SELECT id,name,price_paise::int AS price_paise,duration_minutes,advance_type,advance_value,active FROM services WHERE vendor_id=$1 ORDER BY sort_order", [id]),
-    pool.query("SELECT id,status,starts_at,booking_mode,days_count,(starts_at AT TIME ZONE vendor_timezone)::date::text AS first_date,client_name,service_name FROM bookings WHERE vendor_id=$1 ORDER BY created_at DESC LIMIT 30", [id])
+    pool.query("SELECT id,status,starts_at,booking_mode,days_count,blocks_count,ends_at,(starts_at AT TIME ZONE vendor_timezone)::date::text AS first_date,client_name,service_name FROM bookings WHERE vendor_id=$1 ORDER BY created_at DESC LIMIT 30", [id])
   ]);
   await audited(res, "admin.view", "vendor", id);
   res.json({ vendor, services: services.rows, bookings: bookings.rows });
@@ -149,7 +149,7 @@ adminRouter.get("/vendors/:id", handle(async (req, res) => {
 adminRouter.get("/bookings", handle(async (req, res) => {
   const { q, status } = searchSchema.parse(req.query);
   // Search by customer email or name, vendor slug, or a booking id (full, or the start of one).
-  const rows = (await pool.query(`SELECT b.id,b.status,b.hold_expires_at,b.starts_at,b.booking_mode,b.days_count,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.client_name,b.client_email::text AS client_email,b.service_name,b.total_paise::int AS total_paise,b.advance_paise::int AS advance_paise,v.slug::text AS vendor_slug,b.created_at
+  const rows = (await pool.query(`SELECT b.id,b.status,b.hold_expires_at,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.client_name,b.client_email::text AS client_email,b.service_name,b.total_paise::int AS total_paise,b.advance_paise::int AS advance_paise,v.slug::text AS vendor_slug,b.created_at
     FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE ($1::text IS NULL OR b.client_email::text ILIKE $1 OR b.client_name ILIKE $1 OR v.slug::text ILIKE $1 OR b.id::text LIKE $2) AND ($3::text IS NULL OR b.status=$3)
     ORDER BY b.created_at DESC LIMIT ${PAGE}`, [q ? like(q) : null, q ? `${q.toLowerCase().replace(/[\\%_]/g, "")}%` : null, status ?? null])).rows;
   await audited(res, "admin.view", "bookings", "list", { q: q ?? null, status: status ?? null, count: rows.length });

@@ -1,8 +1,8 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
-import { advancePaise, dailyTotalPaise } from "@bayana/shared";
+import { advancePaise, dailyTotalPaise, sessionCount, sessionTotalPaise } from "@bayana/shared";
 import { config } from "./config.js";
-import { dailyRange, slotsForDate } from "./availability.js";
+import { dailyRange, hourlyRange } from "./availability.js";
 import { expireOverdueHolds, lockVendorSchedule, recordCreated, transitionBooking } from "./booking-transition.js";
 import { recordConsent } from "./consent.js";
 import { loadContract } from "./contract.js";
@@ -14,18 +14,19 @@ import { loadSlotEngineInput } from "./slot-data.js";
 
 export { transitionBooking } from "./booking-transition.js";
 
-type HoldInput = { slug: string; date: string; name: string; email: string; clientUserId: string; phone?: string; notes?: string; referral?: string; serviceId: string; startsAt?: string; days?: number; key: string };
-type Service = { id: string; name: string; price_paise: string; duration_minutes: number | null; buffer_before_minutes: number | null; buffer_after_minutes: number | null; booking_mode: "hourly" | "daily"; min_days: number | null; max_days: number | null; advance_type: "NONE" | "PERCENT" | "FIXED"; advance_value: number; terms_template: string; cancellation_tiers: unknown };
+type HoldInput = { slug: string; date: string; name: string; email: string; clientUserId: string; phone?: string; notes?: string; referral?: string; serviceId: string; startsAt?: string; days?: number; blocks?: number; key: string };
+type Service = { id: string; name: string; price_paise: string; duration_minutes: number | null; buffer_before_minutes: number | null; buffer_after_minutes: number | null; booking_mode: "hourly" | "daily"; min_days: number | null; max_days: number | null; min_blocks: number | null; max_blocks: number | null; advance_type: "NONE" | "PERCENT" | "FIXED"; advance_value: number; terms_template: string; cancellation_tiers: unknown };
 const bookingView = "id,vendor_id,status,service_id,service_name,starts_at,ends_at,total_paise,advance_paise,hold_expires_at,payment_required,created_at";
 const slotTaken = (daily = false) => new AppError(409, "SLOT_TAKEN", daily ? "Those dates are no longer free. Please choose other dates." : "That time was just taken. Please choose another time.");
+const rangeTaken = (blocks: number) => new AppError(409, "SLOT_TAKEN", `${sessionCount(blocks)} in a row are not free from that time: the range runs into closing time, a break or another booking. Choose fewer sessions or another time.`);
 
 /**
  * Creates a hold (SPEC 9.3): vendor lock, lazy expiry, idempotency, slot re-check with the engine, insert (the exclusion
  * constraint is the last guard), events. Times, price and advance come from the server; the client only names a slot (hourly)
- * or a start date and a number of days (daily). Which of the two applies is the service's stored mode, never the client's say.
+ * and a number of consecutive sessions (hourly), or a start date and a number of days (daily). Which of the two applies is the service's stored mode, never the client's say.
  */
 export async function createHold(db: PoolClient, input: HoldInput) {
-  const fingerprint = createHash("sha256").update(JSON.stringify({ slug: input.slug, date: input.date, name: input.name, phone: input.phone ?? "", notes: input.notes ?? "", referral: input.referral ?? "", serviceId: input.serviceId, startsAt: input.startsAt, clientUserId: input.clientUserId, ...(input.days === undefined ? {} : { days: input.days }) })).digest("hex");
+  const fingerprint = createHash("sha256").update(JSON.stringify({ slug: input.slug, date: input.date, name: input.name, phone: input.phone ?? "", notes: input.notes ?? "", referral: input.referral ?? "", serviceId: input.serviceId, startsAt: input.startsAt, clientUserId: input.clientUserId, ...(input.days === undefined ? {} : { days: input.days }), ...(input.blocks === undefined ? {} : { blocks: input.blocks }) })).digest("hex");
   const vendor = await db.query<{ id: string; phone_required: boolean; payment_required: boolean; owner_email: string | null; terms: string; cancellation_policy: string; rescheduling_policy: string }>("SELECT v.id,v.phone_required,v.payment_required,u.email::text AS owner_email,v.terms,v.cancellation_policy,v.rescheduling_policy FROM vendors v LEFT JOIN users u ON u.id=v.owner_user_id WHERE v.slug=$1 AND v.bookings_enabled AND v.published", [input.slug]);
   if (!vendor.rowCount) throw new AppError(404, "NOT_FOUND", "Vendor is unavailable");
   const p = vendor.rows[0];
@@ -37,27 +38,32 @@ export async function createHold(db: PoolClient, input: HoldInput) {
   }
   if (p.phone_required && !input.phone) throw new AppError(400, "PHONE_REQUIRED", "Phone number is required by this vendor");
   await expireOverdueHolds(db, p.id);
-  const serviceResult = await db.query<Service>("SELECT id,name,price_paise,duration_minutes,buffer_before_minutes,buffer_after_minutes,booking_mode,min_days,max_days,advance_type,advance_value,terms_template,cancellation_tiers FROM services WHERE id=$1 AND vendor_id=$2 AND active", [input.serviceId, p.id]);
+  const serviceResult = await db.query<Service>("SELECT id,name,price_paise,duration_minutes,buffer_before_minutes,buffer_after_minutes,booking_mode,min_days,max_days,min_blocks,max_blocks,advance_type,advance_value,terms_template,cancellation_tiers FROM services WHERE id=$1 AND vendor_id=$2 AND active", [input.serviceId, p.id]);
   if (!serviceResult.rowCount) throw new AppError(409, "SERVICE_UNAVAILABLE", "Service unavailable");
   const service = serviceResult.rows[0];
   const daily = service.booking_mode === "daily";
+  if (daily && input.blocks !== undefined) throw new AppError(400, "DAILY_SERVICE", "This service is booked by the day. Choose a start date and a number of days, not a number of sessions.");
   if (daily && input.startsAt !== undefined) throw new AppError(400, "DAILY_SERVICE", "This service is booked by the day. Choose a start date and a number of days, not a time.");
   if (!daily && input.days !== undefined) throw new AppError(400, "HOURLY_SERVICE", "This service is booked by the hour. Choose a time, not a number of days.");
   if (daily && input.days === undefined) throw new AppError(400, "DAYS_REQUIRED", "Choose how many days you need.");
   if (!daily && input.startsAt === undefined) throw new AppError(400, "TIME_REQUIRED", "Choose a time.");
   const days = input.days ?? 0, minDays = service.min_days ?? 1, maxDays = service.max_days ?? 1;
   if (daily && (days < minDays || days > maxDays)) throw new AppError(400, "INVALID_DAYS", minDays === maxDays ? `This service is booked for exactly ${minDays} ${minDays === 1 ? "day" : "days"}.` : `Choose between ${minDays} and ${maxDays} days.`, { min_days: minDays, max_days: maxDays });
+  // Hourly: one session unless the client asks for more; the service's stored limits decide what is allowed.
+  const blocks = input.blocks ?? 1, minBlocks = service.min_blocks ?? 1, maxBlocks = service.max_blocks ?? 1;
+  if (!daily && (blocks < minBlocks || blocks > maxBlocks)) throw new AppError(400, "INVALID_BLOCKS", minBlocks === maxBlocks ? `This service is booked for exactly ${sessionCount(minBlocks)}.` : `Choose between ${minBlocks} and ${maxBlocks} sessions.`, { min_blocks: minBlocks, max_blocks: maxBlocks });
   const engine = await loadSlotEngineInput(db, p.id, service.id);
   // Daily: every day of [date, date+days) must be open and free, and the buffer days free of bookings (dailyRange).
-  const slot = !engine ? undefined : daily ? dailyRange(input.date, days, engine) ?? undefined : slotsForDate(input.date, engine).find(value => value.startsAt === input.startsAt);
-  if (!slot || !engine) throw slotTaken(daily);
-  const total = daily ? dailyTotalPaise(Number(service.price_paise), days) : Number(service.price_paise), advance = advancePaise(total, service.advance_type, service.advance_value);
+  // Hourly: every session of [start, start + blocks x duration) inside one open span of the day and free (hourlyRange).
+  const slot = !engine ? undefined : daily ? dailyRange(input.date, days, engine) ?? undefined : hourlyRange(input.date, input.startsAt!, blocks, engine) ?? undefined;
+  if (!slot || !engine) throw blocks > 1 ? rangeTaken(blocks) : slotTaken(daily);
+  const total = daily ? dailyTotalPaise(Number(service.price_paise), days) : sessionTotalPaise(Number(service.price_paise), blocks), advance = advancePaise(total, service.advance_type, service.advance_value);
   if (advance > 0 && advance < config.MIN_ADVANCE_PAISE) throw new AppError(400, "INVALID_ADVANCE", "Invalid advance rule");
   const expires = new Date(Date.now() + config.HOLD_MINUTES * 60_000);
   const id = randomUUID(), accessToken = randomBytes(32).toString("base64url"), accessHash = createHash("sha256").update(`${config.SESSION_SECRET}:booking:${accessToken}`).digest("hex");
   const snapshot = { vendor: { terms: p.terms, cancellation_policy: p.cancellation_policy, rescheduling_policy: p.rescheduling_policy }, terms_template: service.terms_template, cancellation_tiers: service.cancellation_tiers };
   try {
-    await db.query("INSERT INTO bookings(id,vendor_id,client_user_id,event_date,client_name,client_email,client_phone,status,total_paise,advance_paise,hold_expires_at,idempotency_key,idempotency_fingerprint,access_token_hash,service_id,service_name,duration_minutes,local_start_time,starts_at,ends_at,block_start,block_end,customer_notes,referral,terms_accepted_at,payment_required,service_price_paise,service_advance_type,service_advance_value,buffer_before_minutes,buffer_after_minutes,terms_snapshot,booking_mode,days_count,vendor_timezone) VALUES($1,$2,$3,$4,$5,$6,$7,'HELD',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,NULL,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)", [id,p.id,input.clientUserId,input.date,input.name,input.email,input.phone ?? "",total,advance,expires,input.key,fingerprint,accessHash,service.id,service.name,service.duration_minutes,daily ? null : input.startsAt!.slice(11, 16),slot.startsAt,slot.endsAt,slot.occupiedStartsAt,slot.occupiedEndsAt,input.notes ?? null,input.referral ?? null,p.payment_required,Number(service.price_paise),service.advance_type,service.advance_value,service.buffer_before_minutes,service.buffer_after_minutes,JSON.stringify(snapshot),service.booking_mode,daily ? days : null,engine.timezone]);
+    await db.query("INSERT INTO bookings(id,vendor_id,client_user_id,event_date,client_name,client_email,client_phone,status,total_paise,advance_paise,hold_expires_at,idempotency_key,idempotency_fingerprint,access_token_hash,service_id,service_name,duration_minutes,local_start_time,starts_at,ends_at,block_start,block_end,customer_notes,referral,terms_accepted_at,payment_required,service_price_paise,service_advance_type,service_advance_value,buffer_before_minutes,buffer_after_minutes,terms_snapshot,booking_mode,days_count,vendor_timezone,blocks_count,block_minutes) VALUES($1,$2,$3,$4,$5,$6,$7,'HELD',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,NULL,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)", [id,p.id,input.clientUserId,input.date,input.name,input.email,input.phone ?? "",total,advance,expires,input.key,fingerprint,accessHash,service.id,service.name,daily ? service.duration_minutes : service.duration_minutes! * blocks,daily ? null : input.startsAt!.slice(11, 16),slot.startsAt,slot.endsAt,slot.occupiedStartsAt,slot.occupiedEndsAt,input.notes ?? null,input.referral ?? null,p.payment_required,Number(service.price_paise),service.advance_type,service.advance_value,service.buffer_before_minutes,service.buffer_after_minutes,JSON.stringify(snapshot),service.booking_mode,daily ? days : null,engine.timezone,daily ? null : blocks,daily ? null : service.duration_minutes]);
   } catch (error) {
     // 23P01: the exclusion constraint caught an overlap the engine check could not see (SPEC 8.3).
     if ((error as { code?: string }).code === "23P01") throw slotTaken(daily);

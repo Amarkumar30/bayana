@@ -60,7 +60,7 @@ async function assertSlugFree(db: Pool | PoolClient, slug: string, vendorId: str
   const taken = await db.query("SELECT 1 FROM vendors WHERE slug=$1 AND id IS DISTINCT FROM $2 UNION ALL SELECT 1 FROM vendor_slug_history WHERE slug=$1 AND vendor_id IS DISTINCT FROM $2 LIMIT 1", [slug, vendorId]);
   if (taken.rowCount) throw new AppError(409, "SLUG_TAKEN", "That address is already in use. Try another.");
 }
-const serviceColumns = "id,name,description,price_paise,duration_minutes,buffer_before_minutes,buffer_after_minutes,booking_mode,min_days,max_days,buffer_days,advance_type,advance_value,cancellation_tiers,terms_template,customer_details_prompt,active,sort_order,created_at";
+const serviceColumns = "id,name,description,price_paise,duration_minutes,buffer_before_minutes,buffer_after_minutes,booking_mode,min_days,max_days,buffer_days,min_blocks,max_blocks,advance_type,advance_value,cancellation_tiers,terms_template,customer_details_prompt,active,sort_order,created_at";
 const profileColumns = "id,slug::text AS slug,display_name AS business_name,bio AS description,city,service_area,timezone,terms,cancellation_policy,rescheduling_policy,phone_required,public_contact_email,public_contact_phone,published,min_notice_minutes,max_advance_days";
 
 export const vendorRouter = Router();
@@ -106,14 +106,14 @@ vendorRouter.get("/checklist", requireVendor, handle(async (_req, res) => {
 // ---- Services -----------------------------------------------------------------------------------------------
 /** The mode's own columns; the other mode's are stored as NULL (services_mode_fields enforces the same). */
 const modeColumns = (service: ServiceInput) => service.booking_mode === "daily"
-  ? { duration_minutes: null, buffer_before_minutes: null, buffer_after_minutes: null, min_days: service.min_days, max_days: service.max_days, buffer_days: service.buffer_days }
-  : { duration_minutes: service.duration_minutes, buffer_before_minutes: service.buffer_before_minutes, buffer_after_minutes: service.buffer_after_minutes, min_days: null, max_days: null, buffer_days: null };
+  ? { duration_minutes: null, buffer_before_minutes: null, buffer_after_minutes: null, min_blocks: null, max_blocks: null, min_days: service.min_days, max_days: service.max_days, buffer_days: service.buffer_days }
+  : { duration_minutes: service.duration_minutes, buffer_before_minutes: service.buffer_before_minutes, buffer_after_minutes: service.buffer_after_minutes, min_blocks: service.min_blocks, max_blocks: service.max_blocks, min_days: null, max_days: null, buffer_days: null };
 vendorRouter.get("/services", requireVendor, handle(async (_req, res) => { res.json({ services: (await pool.query(`SELECT ${serviceColumns} FROM services WHERE vendor_id=$1 ORDER BY sort_order,created_at`, [vendorOf(res).id])).rows }); }));
 vendorRouter.post("/services", requireVendor, handle(async (req, res) => {
   const body = serviceCreateSchema.parse(req.body); const mode = modeColumns(body);
-  const result = await pool.query(`INSERT INTO services(id,vendor_id,name,description,price_paise,duration_minutes,buffer_before_minutes,buffer_after_minutes,booking_mode,advance_type,advance_value,cancellation_tiers,terms_template,customer_details_prompt,active,min_days,max_days,buffer_days,sort_order)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,(SELECT COALESCE(MAX(sort_order)+1,0) FROM services WHERE vendor_id=$2)) RETURNING ${serviceColumns}`,
-    [randomUUID(), vendorOf(res).id, body.name, body.description, body.price_paise, mode.duration_minutes, mode.buffer_before_minutes, mode.buffer_after_minutes, body.booking_mode, body.advance_type, body.advance_value, JSON.stringify(body.cancellation_tiers), body.terms_template, body.customer_details_prompt, body.active, mode.min_days, mode.max_days, mode.buffer_days]);
+  const result = await pool.query(`INSERT INTO services(id,vendor_id,name,description,price_paise,duration_minutes,buffer_before_minutes,buffer_after_minutes,booking_mode,advance_type,advance_value,cancellation_tiers,terms_template,customer_details_prompt,active,min_days,max_days,buffer_days,min_blocks,max_blocks,sort_order)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,(SELECT COALESCE(MAX(sort_order)+1,0) FROM services WHERE vendor_id=$2)) RETURNING ${serviceColumns}`,
+    [randomUUID(), vendorOf(res).id, body.name, body.description, body.price_paise, mode.duration_minutes, mode.buffer_before_minutes, mode.buffer_after_minutes, body.booking_mode, body.advance_type, body.advance_value, JSON.stringify(body.cancellation_tiers), body.terms_template, body.customer_details_prompt, body.active, mode.min_days, mode.max_days, mode.buffer_days, mode.min_blocks, mode.max_blocks]);
   res.status(201).json(result.rows[0]);
 }));
 vendorRouter.patch("/services/:id", requireVendor, handle(async (req, res) => {
@@ -123,11 +123,11 @@ vendorRouter.patch("/services/:id", requireVendor, handle(async (req, res) => {
   const { id: _id, sort_order: _order, created_at: _created, ...stored } = existing.rows[0];
   // Switching mode drops the stored fields of the old mode; the patch supplies the new mode's (or their defaults).
   const switching = patch.booking_mode !== undefined && patch.booking_mode !== stored.booking_mode;
-  const kept = switching ? Object.fromEntries(Object.entries(stored).filter(([key]) => !["duration_minutes", "buffer_before_minutes", "buffer_after_minutes", "min_days", "max_days", "buffer_days"].includes(key))) : stored;
+  const kept = switching ? Object.fromEntries(Object.entries(stored).filter(([key]) => !["duration_minutes", "buffer_before_minutes", "buffer_after_minutes", "min_days", "max_days", "buffer_days", "min_blocks", "max_blocks"].includes(key))) : stored;
   const merged = serviceCreateSchema.parse(Object.fromEntries(Object.entries({ ...kept, price_paise: Number(stored.price_paise), ...patch }).filter(([, value]) => value !== null)));
   const mode = modeColumns(merged);
-  const result = await pool.query(`UPDATE services SET name=$1,description=$2,price_paise=$3,duration_minutes=$4,buffer_before_minutes=$5,buffer_after_minutes=$6,booking_mode=$7,advance_type=$8,advance_value=$9,cancellation_tiers=$10,terms_template=$11,customer_details_prompt=$12,active=$13,min_days=$16,max_days=$17,buffer_days=$18 WHERE id=$14 AND vendor_id=$15 RETURNING ${serviceColumns}`,
-    [merged.name, merged.description, merged.price_paise, mode.duration_minutes, mode.buffer_before_minutes, mode.buffer_after_minutes, merged.booking_mode, merged.advance_type, merged.advance_value, JSON.stringify(merged.cancellation_tiers), merged.terms_template, merged.customer_details_prompt, merged.active, id, vendorOf(res).id, mode.min_days, mode.max_days, mode.buffer_days]);
+  const result = await pool.query(`UPDATE services SET name=$1,description=$2,price_paise=$3,duration_minutes=$4,buffer_before_minutes=$5,buffer_after_minutes=$6,booking_mode=$7,advance_type=$8,advance_value=$9,cancellation_tiers=$10,terms_template=$11,customer_details_prompt=$12,active=$13,min_days=$16,max_days=$17,buffer_days=$18,min_blocks=$19,max_blocks=$20 WHERE id=$14 AND vendor_id=$15 RETURNING ${serviceColumns}`,
+    [merged.name, merged.description, merged.price_paise, mode.duration_minutes, mode.buffer_before_minutes, mode.buffer_after_minutes, merged.booking_mode, merged.advance_type, merged.advance_value, JSON.stringify(merged.cancellation_tiers), merged.terms_template, merged.customer_details_prompt, merged.active, id, vendorOf(res).id, mode.min_days, mode.max_days, mode.buffer_days, mode.min_blocks, mode.max_blocks]);
   res.json(result.rows[0]);
 }));
 vendorRouter.delete("/services/:id", requireVendor, handle(async (req, res) => {
@@ -161,7 +161,7 @@ vendorRouter.get("/availability", requireVendor, handle(async (_req, res) => {
     pool.query("SELECT id,weekday,to_char(start_time,'HH24:MI') AS start_time,to_char(end_time,'HH24:MI') AS end_time FROM availability_rules WHERE vendor_id=$1 ORDER BY weekday,start_time", [id]),
     pool.query("SELECT id,local_date::text AS local_date,kind,to_char(start_time,'HH24:MI') AS start_time,to_char(end_time,'HH24:MI') AS end_time,note FROM availability_overrides WHERE vendor_id=$1 AND local_date >= current_date - 1 ORDER BY local_date,start_time NULLS FIRST", [id]),
     pool.query("SELECT id,starts_at,ends_at,reason FROM blocked_periods WHERE vendor_id=$1 AND ends_at>now() ORDER BY starts_at", [id]),
-    pool.query("SELECT id,status,starts_at,ends_at,booking_mode,days_count,(starts_at AT TIME ZONE vendor_timezone)::date::text AS first_date,hold_expires_at FROM bookings WHERE vendor_id=$1 AND status IN ('HELD','PENDING','CONFIRMED') AND (status='CONFIRMED' OR hold_expires_at>now()) AND ends_at > now() ORDER BY starts_at", [id])
+    pool.query("SELECT id,status,starts_at,ends_at,booking_mode,days_count,blocks_count,(starts_at AT TIME ZONE vendor_timezone)::date::text AS first_date,hold_expires_at FROM bookings WHERE vendor_id=$1 AND status IN ('HELD','PENDING','CONFIRMED') AND (status='CONFIRMED' OR hold_expires_at>now()) AND ends_at > now() ORDER BY starts_at", [id])
   ]);
   res.json({ ...settings.rows[0], rules: rules.rows, overrides: overrides.rows, blocked_periods: blocked.rows, bookings: bookings.rows });
 }));

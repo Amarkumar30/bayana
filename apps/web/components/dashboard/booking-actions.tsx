@@ -16,7 +16,7 @@ import type { BookingDetail } from "./types";
 const firstErrors = (error: ZodError) => Object.fromEntries(Object.entries(error.flatten().fieldErrors).map(([key, list]) => [key, (list as string[] | undefined)?.[0] ?? ""]));
 const actionsRow = (children: ReactNode) => <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">{children}</div>;
 
-type ServiceOption = { id: string; name: string; price_paise: string | number; duration_minutes: number | null; booking_mode: "hourly" | "daily"; min_days: number | null; max_days: number | null; active: boolean };
+type ServiceOption = { id: string; name: string; price_paise: string | number; duration_minutes: number | null; booking_mode: "hourly" | "daily"; min_days: number | null; max_days: number | null; min_blocks?: number | null; max_blocks?: number | null; active: boolean };
 /** BK-13: a walk-in or phone booking. The server checks the time against other bookings and time off. */
 export function NewBookingDialog({ defaultDate, trigger, onCreated }: { defaultDate?: string; trigger?: ReactNode; onCreated?: (id: string) => void }) {
   const router = useRouter(); const toast = useToast();
@@ -24,6 +24,8 @@ export function NewBookingDialog({ defaultDate, trigger, onCreated }: { defaultD
   const [problem, setProblem] = useState(""); const [busy, setBusy] = useState(false); const [key, setKey] = useState("");
   // Daily services take a number of days instead of a start time.
   const [serviceId, setServiceId] = useState(""); const chosen = services?.find(service => service.id === serviceId); const daily = chosen?.booking_mode === "daily";
+  // Hourly services that allow several sessions in a row also take how many (one continuous range from the start time).
+  const sessions = !daily && (chosen?.max_blocks ?? 1) > 1;
   useEffect(() => {
     if (!open) return;
     setKey(crypto.randomUUID()); setProblem(""); setErrors({});
@@ -33,7 +35,7 @@ export function NewBookingDialog({ defaultDate, trigger, onCreated }: { defaultD
     event.preventDefault(); const form = new FormData(event.currentTarget);
     // A placeholder <option disabled> sends nothing in FormData, so every value is read as a string ("" when absent).
     const value = (key: string) => String(form.get(key) ?? "");
-    const parsed = manualBookingSchema.safeParse({ service_id: value("service_id"), date: value("date"), ...(daily ? { days: Number(value("days")) } : { time: value("time") || undefined }), name: value("name"), email: value("email"), phone: value("phone"), notes: value("notes") });
+    const parsed = manualBookingSchema.safeParse({ service_id: value("service_id"), date: value("date"), ...(daily ? { days: Number(value("days")) } : { time: value("time") || undefined, ...(sessions ? { blocks: Number(value("blocks")) } : {}) }), name: value("name"), email: value("email"), phone: value("phone"), notes: value("notes") });
     if (!parsed.success) { setErrors(firstErrors(parsed.error)); return; }
     setErrors({}); setProblem(""); setBusy(true);
     try {
@@ -54,6 +56,7 @@ export function NewBookingDialog({ defaultDate, trigger, onCreated }: { defaultD
               ? <Field label="Number of days" error={errors.days} hint={`${chosen?.min_days ?? 1} to ${chosen?.max_days ?? 1}, from the date.`}>{p => <Input {...p} key="days" name="days" type="number" min={chosen?.min_days ?? 1} max={chosen?.max_days ?? 1} defaultValue={chosen?.min_days ?? 1} required />}</Field>
               : <Field label="Start time" error={errors.time}>{p => <Input {...p} key="time" name="time" type="time" step={300} defaultValue="10:00" />}</Field>}
           </div>
+          {sessions && chosen && <Field label="Sessions in a row" error={errors.blocks} hint={`${chosen.min_blocks ?? 1} to ${chosen.max_blocks ?? 1} sessions of ${chosen.duration_minutes ?? 0} min, from the start time.`}>{p => <Input {...p} key={`blocks-${chosen.id}`} name="blocks" type="number" min={chosen.min_blocks ?? 1} max={chosen.max_blocks ?? 1} defaultValue={chosen.min_blocks ?? 1} required />}</Field>}
           <Field label="Customer name" error={errors.name}>{p => <Input {...p} name="name" autoComplete="off" required />}</Field>
           <Field label="Customer email" error={errors.email} hint="They get the confirmation and a private link to the booking.">{p => <Input {...p} name="email" type="email" autoComplete="off" required />}</Field>
           <Field label="Phone" optional error={errors.phone}>{p => <Input {...p} name="phone" type="tel" autoComplete="off" />}</Field>

@@ -4,8 +4,8 @@ import { formatBookingTime, formatDate, formatTime } from "@/components/booking/
 import { Money, StatusBadge, Table, Td, Th } from "@/components/ui/display";
 import type { BookingRow } from "./types";
 
-// Daily bookings show their dates; hourly ones the date and time.
-const when = (row: BookingRow, timezone: string) => row.booking_mode === "daily" ? formatBookingTime(row, timezone) : `${formatDate(row.starts_at, timezone, "short")} · ${formatTime(row.starts_at, timezone)}`;
+// Daily bookings show their dates; hourly ones the date and the time (the whole range for several sessions).
+const when = (row: BookingRow, timezone: string) => row.booking_mode === "daily" ? formatBookingTime(row, timezone) : `${formatDate(row.starts_at, timezone, "short")} · ${formatBookingTime(row, timezone)}`;
 export const bookingHref = (id: string) => `/dashboard/bookings/${id}`;
 
 /** Cards below the md breakpoint, a table from md up (SPEC 5.3: tables become cards on mobile). */

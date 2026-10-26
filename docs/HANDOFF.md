@@ -5,6 +5,7 @@
 ## Decisions not obvious from the code
 - **Status changes:** only `transitionBooking` (apps/api/src/booking-transition.ts) writes `bookings.status`, enforced by a grep test (test/unit/status-writes.test.ts). Same-status events (reschedules) use `recordChange`. Double booking is stopped by the vendor lock `pg_advisory_xact_lock` plus the exclusion constraint `bookings_no_overlap`.
 - **Per-day booking (migration 021, SPEC 4.3 "Service modes"):** `services.booking_mode` is `hourly` or `daily` (old TIMED -> hourly, FULL_DAY -> daily 1..1 days). Daily bookings store whole local days [start of D, start of D+N) in UTC, plus buffer days, in the same block_start/block_end, so `bookings_no_overlap` guards daily against hourly with no constraint change. Bookings snapshot `booking_mode`, `days_count` and `vendor_timezone`. API responses carry `first_date` (first local date) so the web shows dates without timezone maths. Day status rules: `availability.ts` `dayStatus` / `dailyRange` / `dayCalendar`.
+- **Sessions (migration 022, SPEC 4.3 "Sessions"):** an hourly service's `duration_minutes` is one session and `price_paise` the price of one session; `min_blocks`/`max_blocks` (1..12, both 1 by default) allow several sessions in a row. A booking is one continuous range on one local day inside one open span; buffers once around the whole range; total = price x sessions. Snapshot: `blocks_count`, `block_minutes`; `bookings.duration_minutes` is now the whole booked length (equal to the session for one session). Engine: `availability.ts` `slotsForDate` (each slot has `maxBlocks`) and `hourlyRange`. Display helpers: shared `blocks.ts`; one-session text is byte-identical (contract hashes unchanged). Insert triggers fill one session for raw inserts (seeds, fixtures).
 - **Append-only evidence:** triggers reject UPDATE/DELETE for every role on `booking_events`, `booking_contracts`, `audit_logs`, `consents` and `ledger_entries`. The ledger allows exactly one update: setting `reason` to `[personal details removed]` (erasure, migration 019).
 - **`bayana_app` role:** a NOLOGIN role without rewrite rights. The API still connects as `bayana`; production should connect as a member of `bayana_app` (open).
 - **Column renames:** 013 renamed `starts_at_utc`→`starts_at`, `occupied_*`→`block_*`, and the old `starts_at` (time)→`local_start_time`. 015 renamed `payments.raw_event`→`raw` and `webhook_events.provider_event_id`→`event_id`. Never edit an applied migration; add the next number.
@@ -58,16 +59,15 @@
 - **Before any migration on dev:** back up (command below).
 
 ## Next step
-**Current state:** branch `phase-daily-bookings` at `0a2897b` (per-day booking DONE; not pushed, not merged). Migration 021 is applied to `bayana_test` only, not to `bayana_dev` or Neon. The next free migration number is **022**.
-**Key facts:** `services.booking_mode` is `hourly` | `daily` (renamed from TIMED | FULL_DAY). An hourly price is per session of `duration_minutes`, not per hour. Daily bookings occupy whole local days in the existing starts_at/ends_at (and block_start/block_end) columns, so the existing `bookings_no_overlap` constraint covers them. Buffers apply per booking (each booking keeps its own buffer minutes or buffer days).
-**Next planned phase (not started):** multi-block hourly booking. A customer books several consecutive sessions in one booking, with `min_blocks` and `max_blocks` on the service.
+**Current state:** branch `phase-multi-block` (from `phase-daily-bookings` at `7915025`; not pushed, not merged) adds multi-session hourly booking with migration **022**. Migrations 021 and 022 are applied to `bayana_test` only, not to `bayana_dev` or Neon. The next free migration number is **023**.
+**Key facts:** `booking_mode` is `hourly` | `daily`. Hourly price = one session of `duration_minutes`, never per hour; a booking is 1..12 consecutive sessions (`min_blocks`..`max_blocks`) on one local day, total = price x sessions, buffers once. Daily bookings occupy whole local days. The existing `bookings_no_overlap` constraint guards both; it was not changed.
 **Open items, in order:**
-1. Back up `bayana_dev`, run `pnpm.cmd db:migrate` (021), do the 5-step local trial of a daily service (docs/PROGRESS.md "Per-day booking").
-2. Merge `phase-daily-bookings` into `hosting-ready` (the user's call).
+1. Back up `bayana_dev`, run `pnpm.cmd db:migrate` (021 and 022), do the local trials (docs/PROGRESS.md "Per-day booking" and "Multi-session booking").
+2. Merge `phase-daily-bookings` and `phase-multi-block` into `hosting-ready` (the user's call).
 3. Create a Neon backup branch, then deploy staging with all migrations together: migrations first, then the API (Render), then the web app (Vercel).
 4. Google sign-in works on staging. Still pending on staging: OTP email via the Brevo API (`EMAIL_TRANSPORT=brevo_api`, `BREVO_API_KEY`) and the Razorpay test setup.
 5. The legal pages need lawyer review before Razorpay live; fill in `apps/web/lib/business-details.ts`; then `LEGAL_REVIEWED=true` and `APP_ENV=production` on the production web app.
-6. Still open: the runtime should connect as `bayana_app`; per-IP rate limits for server-side calls from Vercel; test:visual on a production build.
+6. Still open: the runtime should connect as `bayana_app`; per-IP rate limits for server-side calls from Vercel; test:visual on a production build; customer-side reschedule; a multi-session discount (out of scope so far).
 Never push or merge into `main` without asking.
 
 ## Commands (PowerShell, always pnpm.cmd)

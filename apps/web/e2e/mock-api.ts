@@ -176,10 +176,12 @@ function mockDays(month: string) {
   }
   return out;
 }
+/** GET /v1/vendors/studio-sunday: the published page with its active services. */
+export const publicVendor = () => ({ ...sampleProfile(), canonical_slug: "studio-sunday", display_name: "Studio Sunday", bio: "Event styling and portraits across Mumbai.", categories: ["Photography"], payments_enabled: false, contact_email: null, contact_phone: null, services: [...sampleServices().filter(service => service.active).map(service => ({ ...service, advance_paise: 200000, remaining_paise: 600000 })), DAILY_PUBLIC_SERVICE] as unknown[] });
 /** Public reads for the booking flow and the customer booking page, shaped like GET /v1/vendors/:slug and GET /v1/bookings/:id. */
 function publicRoute(route: Route, path: string) {
   const url = new URL(route.request().url());
-  if (path === "/v1/vendors/studio-sunday") return route.fulfill({ json: { ...sampleProfile(), canonical_slug: "studio-sunday", display_name: "Studio Sunday", bio: "Event styling and portraits across Mumbai.", categories: ["Photography"], payments_enabled: false, contact_email: null, contact_phone: null, services: [...sampleServices().filter(service => service.active).map(service => ({ ...service, advance_paise: 200000, remaining_paise: 600000 })), DAILY_PUBLIC_SERVICE] } });
+  if (path === "/v1/vendors/studio-sunday") return route.fulfill({ json: publicVendor() });
   if (path === "/v1/vendors/studio-sunday/availability/month") return route.fulfill({ json: { timezone: "Asia/Kolkata", days: Array.from({ length: 40 }, (_, index) => ({ date: isoDay(index), available: index > 0 && index % 3 !== 0 })).filter(day => day.date.startsWith(url.searchParams.get("month") ?? "")) } });
   if (path === "/v1/vendors/studio-sunday/availability/days") return route.fulfill({ json: { timezone: "Asia/Kolkata", min_days: 1, max_days: 3, days: mockDays(url.searchParams.get("month") ?? "") } });
   if (path === "/v1/vendors/studio-sunday/availability/slots") return route.fulfill({ json: { timezone: "Asia/Kolkata", slots: ["04:30", "06:00", "08:30", "10:00"].map(time => ({ startsAt: `${url.searchParams.get("date")}T${time}:00.000Z`, endsAt: `${url.searchParams.get("date")}T${time}:00.000Z` })) } });

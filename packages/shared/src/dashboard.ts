@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { MAX_BOOKING_DAYS } from "./days.js";
+import { MAX_BLOCKS } from "./blocks.js";
 import { localDateSchema, localTimeSchema } from "./vendor.js";
 
 // Vendor dashboard actions (SPEC 4.4 BK-09..13, 5.3). Times are local to the vendor's timezone; the server converts them.
@@ -9,8 +10,10 @@ export const vendorCancelSchema = z.object({ reason: text(500).min(3, "Tell the 
 // Hourly bookings move to a date and time; daily bookings move to a new first date and keep their number of days.
 export const rescheduleSchema = z.object({ date: localDateSchema, time: localTimeSchema.optional() }).strict();
 export const manualBookingSchema = z.object({
-  // time for an hourly service, days for a daily one; the server checks which applies from the service itself.
+  // time (and optionally blocks, the number of sessions) for an hourly service, days for a daily one; the server checks which
+  // applies from the service itself.
   service_id: z.string().uuid("Choose a service."), date: localDateSchema, time: localTimeSchema.optional(), days: z.number().int().min(1, "At least 1 day.").max(MAX_BOOKING_DAYS, `At most ${MAX_BOOKING_DAYS} days.`).optional(),
+  blocks: z.number().int("Use whole sessions.").min(1, "At least 1 session.").max(MAX_BLOCKS, `At most ${MAX_BLOCKS} sessions.`).optional(),
   name: text(120).min(2, "Use at least 2 characters."), email: z.string().trim().email("Enter a valid email address.").max(254),
   phone: text(20).refine(value => value === "" || value.length >= 8, "Use at least 8 digits, or leave it empty.").default(""), notes: text(2000).default("")
 }).strict();

@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
-import { addLocalDays, dailyTotalPaise, localDateOf, localDateTimeToUtc, localDayRange, localDaysBetween, startOfLocalDay } from "@bayana/shared";
+import { addLocalDays, dailyTotalPaise, localDateOf, localDateTimeToUtc, localDayRange, localDaysBetween, sessionCount, sessionTotalPaise, startOfLocalDay, withinOneLocalDay } from "@bayana/shared";
 import { writeAudit } from "./audit.js";
 import { tokenHash } from "./booking-routes.js";
 import { expireOverdueHolds, lockVendorSchedule, recordChange, recordCreated, transitionBooking } from "./booking-transition.js";
@@ -18,14 +18,14 @@ const slotTaken = () => new AppError(409, "SLOT_TAKEN", "That time overlaps anot
 
 /** Locks one of the vendor's own bookings; any other id (another vendor's, or unknown) is the same 404. */
 async function ownBooking(db: PoolClient, actor: Actor, bookingId: string) {
-  const found = await db.query<{ id: string; status: string; starts_at: Date; ends_at: Date; block_start: Date; block_end: Date; service_id: string | null; timezone: string; booking_mode: "hourly" | "daily"; days_count: number | null }>(
-    "SELECT b.id,b.status,b.starts_at,b.ends_at,b.block_start,b.block_end,b.service_id,v.timezone,b.booking_mode,b.days_count FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.id=$1 AND b.vendor_id=$2 FOR UPDATE OF b", [bookingId, actor.vendorId]);
+  const found = await db.query<{ id: string; status: string; starts_at: Date; ends_at: Date; block_start: Date; block_end: Date; service_id: string | null; timezone: string; booking_mode: "hourly" | "daily"; days_count: number | null; blocks_count: number | null }>(
+    "SELECT b.id,b.status,b.starts_at,b.ends_at,b.block_start,b.block_end,b.service_id,v.timezone,b.booking_mode,b.days_count,b.blocks_count FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.id=$1 AND b.vendor_id=$2 FOR UPDATE OF b", [bookingId, actor.vendorId]);
   if (!found.rowCount) throw notFound();
   return found.rows[0];
 }
 
 type Times = { startsAt: Date; endsAt: Date; blockStart: Date; blockEnd: Date };
-type Shape = { mode: "hourly"; time: string; durationMinutes: number; bufferBeforeMinutes: number; bufferAfterMinutes: number } | { mode: "daily"; days: number; bufferDays: number };
+type Shape = { mode: "hourly"; time: string; durationMinutes: number; bufferBeforeMinutes: number; bufferAfterMinutes: number; /** Several sessions in a row must stay on one local day. */ oneDay?: boolean } | { mode: "daily"; days: number; bufferDays: number };
 /**
  * Server-side times in the vendor's timezone. Hourly: the local date and time, the duration and minute buffers. Daily: whole
  * local days [start of date, start of date+days), with buffer days either side. Must be in the future and outside time off.
@@ -41,6 +41,7 @@ async function placeTimes(db: PoolClient, vendorId: string, timezone: string, da
     endsAt = startsAt && new Date(startsAt.getTime() + shape.durationMinutes * 60_000);
     if (!startsAt || !endsAt) throw new AppError(400, "INVALID_TIME", "That local time does not exist (a clock change). Choose another time.");
     if (startsAt <= new Date()) throw new AppError(400, "TIME_IN_PAST", "Choose a time in the future.");
+    if (shape.oneDay && !withinOneLocalDay(startsAt, endsAt, timezone)) throw new AppError(400, "CROSSES_MIDNIGHT", "Those sessions would run past midnight. Choose an earlier time or fewer sessions.");
     blockStart = new Date(startsAt.getTime() - shape.bufferBeforeMinutes * 60_000); blockEnd = new Date(endsAt.getTime() + shape.bufferAfterMinutes * 60_000);
   }
   const off = await db.query("SELECT 1 FROM blocked_periods WHERE vendor_id=$1 AND tstzrange(starts_at,ends_at,'[)') && tstzrange($2::timestamptz,$3::timestamptz,'[)') LIMIT 1", [vendorId, blockStart, blockEnd]);
@@ -89,7 +90,7 @@ export async function vendorReschedule(actor: Actor, bookingId: string, date: st
     if (!daily && !time) throw new AppError(400, "TIME_REQUIRED", "Choose the new time.");
     const shape: Shape = daily
       ? { mode: "daily", days: booking.days_count ?? 1, bufferDays: localDaysBetween(localDateOf(booking.block_start, booking.timezone), localDateOf(booking.starts_at, booking.timezone)) }
-      : { mode: "hourly", time: time!, durationMinutes: minutes(booking.starts_at, booking.ends_at), bufferBeforeMinutes: minutes(booking.block_start, booking.starts_at), bufferAfterMinutes: minutes(booking.ends_at, booking.block_end) };
+      : { mode: "hourly", time: time!, durationMinutes: minutes(booking.starts_at, booking.ends_at), bufferBeforeMinutes: minutes(booking.block_start, booking.starts_at), bufferAfterMinutes: minutes(booking.ends_at, booking.block_end), oneDay: (booking.blocks_count ?? 1) > 1 };
     const times = await placeTimes(db, actor.vendorId, booking.timezone, date, shape);
     try {
       // A moved booking gets a fresh 24-hour reminder for its new time.
@@ -104,7 +105,7 @@ export async function vendorReschedule(actor: Actor, bookingId: string, date: st
   });
 }
 
-type ManualInput = { serviceId: string; date: string; time?: string; days?: number; name: string; email: string; phone: string; notes: string; key: string };
+type ManualInput = { serviceId: string; date: string; time?: string; days?: number; blocks?: number; name: string; email: string; phone: string; notes: string; key: string };
 /**
  * BK-13: a walk-in or phone booking. Same lock, same exclusion constraint, so it blocks the slot for customers at once.
  * No advance is asked online (advance 0, snapshotted price); the vendor records any money received on the booking page.
@@ -120,26 +121,29 @@ export async function vendorManualBooking(actor: Actor, input: ManualInput) {
       return { id: existing.rows[0].id, replayed: true };
     }
     await expireOverdueHolds(db, actor.vendorId);
-    const found = await db.query<{ name: string; price_paise: string; duration_minutes: number | null; buffer_before_minutes: number | null; buffer_after_minutes: number | null; booking_mode: "hourly" | "daily"; min_days: number | null; max_days: number | null; buffer_days: number | null; advance_type: string; advance_value: number; terms_template: string; cancellation_tiers: unknown; timezone: string; terms: string; cancellation_policy: string; rescheduling_policy: string }>(
-      "SELECT s.name,s.price_paise,s.duration_minutes,s.buffer_before_minutes,s.buffer_after_minutes,s.booking_mode,s.min_days,s.max_days,s.buffer_days,s.advance_type,s.advance_value,s.terms_template,s.cancellation_tiers,v.timezone,v.terms,v.cancellation_policy,v.rescheduling_policy FROM services s JOIN vendors v ON v.id=s.vendor_id WHERE s.id=$1 AND s.vendor_id=$2", [input.serviceId, actor.vendorId]);
+    const found = await db.query<{ name: string; price_paise: string; duration_minutes: number | null; buffer_before_minutes: number | null; buffer_after_minutes: number | null; booking_mode: "hourly" | "daily"; min_days: number | null; max_days: number | null; buffer_days: number | null; min_blocks: number | null; max_blocks: number | null; advance_type: string; advance_value: number; terms_template: string; cancellation_tiers: unknown; timezone: string; terms: string; cancellation_policy: string; rescheduling_policy: string }>(
+      "SELECT s.name,s.price_paise,s.duration_minutes,s.buffer_before_minutes,s.buffer_after_minutes,s.booking_mode,s.min_days,s.max_days,s.buffer_days,s.min_blocks,s.max_blocks,s.advance_type,s.advance_value,s.terms_template,s.cancellation_tiers,v.timezone,v.terms,v.cancellation_policy,v.rescheduling_policy FROM services s JOIN vendors v ON v.id=s.vendor_id WHERE s.id=$1 AND s.vendor_id=$2", [input.serviceId, actor.vendorId]);
     if (!found.rowCount) throw new AppError(404, "NOT_FOUND", "Service not found");
     const service = found.rows[0];
     const daily = service.booking_mode === "daily";
     if (daily && input.time !== undefined) throw new AppError(400, "DAILY_SERVICE", "This service is booked by the day. Choose a start date and a number of days, not a time.");
     if (!daily && input.days !== undefined) throw new AppError(400, "HOURLY_SERVICE", "This service is booked by the hour. Choose a time, not a number of days.");
+    if (daily && input.blocks !== undefined) throw new AppError(400, "DAILY_SERVICE", "This service is booked by the day. Choose a start date and a number of days, not a number of sessions.");
     if (!daily && !input.time) throw new AppError(400, "TIME_REQUIRED", "Choose a time.");
     const days = input.days ?? 0, minDays = service.min_days ?? 1, maxDays = service.max_days ?? 1;
     if (daily && (days < minDays || days > maxDays)) throw new AppError(400, "INVALID_DAYS", `Choose between ${minDays} and ${maxDays} days.`, { min_days: minDays, max_days: maxDays });
+    const blocks = input.blocks ?? service.min_blocks ?? 1, minBlocks = service.min_blocks ?? 1, maxBlocks = service.max_blocks ?? 1;
+    if (!daily && (blocks < minBlocks || blocks > maxBlocks)) throw new AppError(400, "INVALID_BLOCKS", minBlocks === maxBlocks ? `This service is booked for exactly ${sessionCount(minBlocks)}.` : `Choose between ${minBlocks} and ${maxBlocks} sessions.`, { min_blocks: minBlocks, max_blocks: maxBlocks });
     const times = await placeTimes(db, actor.vendorId, service.timezone, input.date, daily
       ? { mode: "daily", days, bufferDays: service.buffer_days ?? 0 }
-      : { mode: "hourly", time: input.time!, durationMinutes: service.duration_minutes ?? 60, bufferBeforeMinutes: service.buffer_before_minutes ?? 0, bufferAfterMinutes: service.buffer_after_minutes ?? 0 });
-    const total = daily ? dailyTotalPaise(Number(service.price_paise), days) : Number(service.price_paise);
+      : { mode: "hourly", time: input.time!, durationMinutes: (service.duration_minutes ?? 60) * blocks, bufferBeforeMinutes: service.buffer_before_minutes ?? 0, bufferAfterMinutes: service.buffer_after_minutes ?? 0, oneDay: blocks > 1 });
+    const total = daily ? dailyTotalPaise(Number(service.price_paise), days) : sessionTotalPaise(Number(service.price_paise), blocks);
     const id = randomUUID(), token = randomBytes(32).toString("base64url");
     const snapshot = { vendor: { terms: service.terms, cancellation_policy: service.cancellation_policy, rescheduling_policy: service.rescheduling_policy }, terms_template: service.terms_template, cancellation_tiers: service.cancellation_tiers };
     try {
-      await db.query(`INSERT INTO bookings(id,vendor_id,event_date,client_name,client_email,client_phone,status,total_paise,advance_paise,hold_expires_at,idempotency_key,idempotency_fingerprint,access_token_hash,service_id,service_name,duration_minutes,local_start_time,starts_at,ends_at,block_start,block_end,customer_notes,payment_required,service_price_paise,service_advance_type,service_advance_value,buffer_before_minutes,buffer_after_minutes,terms_snapshot,booking_mode,days_count,vendor_timezone)
-        VALUES($1,$2,$3,$4,$5,$6,'PENDING',$7,0,NULL,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,false,$25,$20,$21,$22,$23,$24,$26,$27,$28)`,
-        [id, actor.vendorId, input.date, input.name, input.email, input.phone, total, input.key, fingerprint, tokenHash(token), input.serviceId, service.name, service.duration_minutes, daily ? null : input.time, times.startsAt, times.endsAt, times.blockStart, times.blockEnd, input.notes || null, service.advance_type, service.advance_value, service.buffer_before_minutes, service.buffer_after_minutes, JSON.stringify(snapshot), Number(service.price_paise), service.booking_mode, daily ? days : null, service.timezone]);
+      await db.query(`INSERT INTO bookings(id,vendor_id,event_date,client_name,client_email,client_phone,status,total_paise,advance_paise,hold_expires_at,idempotency_key,idempotency_fingerprint,access_token_hash,service_id,service_name,duration_minutes,local_start_time,starts_at,ends_at,block_start,block_end,customer_notes,payment_required,service_price_paise,service_advance_type,service_advance_value,buffer_before_minutes,buffer_after_minutes,terms_snapshot,booking_mode,days_count,vendor_timezone,blocks_count,block_minutes)
+        VALUES($1,$2,$3,$4,$5,$6,'PENDING',$7,0,NULL,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,false,$25,$20,$21,$22,$23,$24,$26,$27,$28,$29,$30)`,
+        [id, actor.vendorId, input.date, input.name, input.email, input.phone, total, input.key, fingerprint, tokenHash(token), input.serviceId, service.name, daily ? service.duration_minutes : (service.duration_minutes ?? 60) * blocks, daily ? null : input.time, times.startsAt, times.endsAt, times.blockStart, times.blockEnd, input.notes || null, service.advance_type, service.advance_value, service.buffer_before_minutes, service.buffer_after_minutes, JSON.stringify(snapshot), Number(service.price_paise), service.booking_mode, daily ? days : null, service.timezone, daily ? null : blocks, daily ? null : service.duration_minutes]);
     } catch (error) {
       if ((error as { code?: string }).code === "23P01") throw slotTaken();
       throw error;

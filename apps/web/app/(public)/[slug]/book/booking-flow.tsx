@@ -3,14 +3,15 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, CalendarCheck, CheckCircle2, ChevronDown, Lock, Mail } from "lucide-react";
-import { dayRangeLabel, formatINR, tiersInWords } from "@bayana/shared";
+import { dayRangeLabel, formatINR, sessionRangeLabel, tiersInWords } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Card, EmptyState, LoadingState, Money, Notice, Skeleton, Stepper } from "@/components/ui/display";
-import { Checkbox, Field, Input, Textarea } from "@/components/ui/field";
+import { Checkbox, Field, Input, RadioCards, Textarea } from "@/components/ui/field";
 import { HoldCountdown } from "@/components/booking/countdown";
 import { DayStep, dailyQuote } from "@/components/booking/day-step";
 import { dateLabel, formatBookingWhen, formatDate, formatDateTime, formatTime, localDateKey, viewerTimezone } from "@/components/booking/time";
 import { PaymentPanel } from "@/components/booking/payment-panel";
+import { blockChoices, offersLength, rangeEnd, sessionQuote } from "@/components/booking/sessions";
 import { bookingPageHref, tokenHeaders, type BookingView } from "@/components/booking/types";
 import { ApiError, api, humanMessage } from "@/lib/api";
 import type { PublicService, PublicVendor } from "@/lib/public-vendor";
@@ -18,7 +19,8 @@ import { priceUnit, serviceLength } from "@/lib/service-label";
 import { cn } from "@/lib/utils";
 
 const steps = ["Service", "Time", "Details", "Verify", "Review and agree", "Pay"];
-type Slot = { startsAt: string; endsAt: string };
+/** maxBlocks: the most consecutive sessions free from this start (the API lists only starts where the minimum fits). */
+type Slot = { startsAt: string; endsAt: string; maxBlocks?: number };
 type Hold = { id: string; token: string | null; holdExpiresAt: string };
 type Accepted = { booking: { id: string; status: string; hold_expires_at: string | null; advance_paise: string } };
 const STRIP_DAYS = 14;
@@ -35,6 +37,8 @@ export function BookingFlow() {
   const [slotDate, setSlotDate] = useState(""); const [slotStart, setSlotStart] = useState(""); const [slotsVersion, setSlotsVersion] = useState(0);
   // Daily services: the number of days from slotDate (no time).
   const [dayCount, setDayCount] = useState(0);
+  // Hourly services: how many consecutive sessions from slotStart (one continuous range).
+  const [blockCount, setBlockCount] = useState(0);
   const [details, setDetails] = useState({ name: "", email: "", phone: "", notes: "" });
   const [verified, setVerified] = useState(false);
   const [hold, setHold] = useState<Hold>(); const [holdExpired, setHoldExpired] = useState(false);
@@ -56,16 +60,16 @@ export function BookingFlow() {
   const service = vendor?.services.find(value => value.id === serviceId);
   const go = (to: number) => { setMessage(""); setStep(to); window.scrollTo({ top: 0 }); };
   // A new time or new details is a new booking request, so it gets a new idempotency key.
-  useEffect(() => { idempotencyKey.current = crypto.randomUUID(); }, [serviceId, slotStart, slotDate, dayCount, details.name, details.phone, details.notes]);
+  useEffect(() => { idempotencyKey.current = crypto.randomUUID(); }, [serviceId, slotStart, slotDate, dayCount, blockCount, details.name, details.phone, details.notes]);
   const daily = service?.booking_mode === "daily";
   const markExpired = useCallback(() => setHoldExpired(true), []);
   const learnHoldExpiry = useCallback((until: string) => setHold(current => current && !current.holdExpiresAt ? { ...current, holdExpiresAt: until } : current), []);
-  const restartFromTime = useCallback((copy: string) => { setHold(undefined); setHoldExpired(false); setSlotStart(""); setDayCount(0); setSlotsVersion(value => value + 1); setMessage(copy); setStep(1); }, []);
+  const restartFromTime = useCallback((copy: string) => { setHold(undefined); setHoldExpired(false); setSlotStart(""); setDayCount(0); setBlockCount(0); setSlotsVersion(value => value + 1); setMessage(copy); setStep(1); }, []);
 
   const createHold = async () => {
     if (!vendor || !service) return;
     try {
-      const { booking } = await api<{ booking: { id: string; access_token?: string; hold_expires_at: string } }>("/v1/bookings", { body: { slug: vendor.slug, date: slotDate, service_id: service.id, ...(daily ? { days: dayCount } : { starts_at: slotStart }), name: details.name.trim(), phone: details.phone.trim() || undefined, notes: details.notes.trim() || undefined }, headers: { "Idempotency-Key": idempotencyKey.current } });
+      const { booking } = await api<{ booking: { id: string; access_token?: string; hold_expires_at: string } }>("/v1/bookings", { body: { slug: vendor.slug, date: slotDate, service_id: service.id, ...(daily ? { days: dayCount } : { starts_at: slotStart, ...((service.max_blocks ?? 1) > 1 ? { blocks: blockCount } : {}) }), name: details.name.trim(), phone: details.phone.trim() || undefined, notes: details.notes.trim() || undefined }, headers: { "Idempotency-Key": idempotencyKey.current } });
       setHold({ id: booking.id, token: booking.access_token ?? null, holdExpiresAt: booking.hold_expires_at }); setHoldExpired(false); go(4);
     } catch (error) {
       if (error instanceof ApiError && error.code === "SLOT_TAKEN") restartFromTime(humanMessage(error));
@@ -85,13 +89,13 @@ export function BookingFlow() {
         <p className="text-sm text-muted">Step {step + 1} of {steps.length}: {daily && step === 1 ? "Dates" : steps[step]} · {daily ? "Days" : "Times"} in {vendor.timezone}</p>
       </div>
       <Stepper steps={steps} current={step} />
-      {service && step > 0 && step < 5 && <Summary service={service} timezone={vendor.timezone} startsAt={slotStart} date={slotDate} days={dayCount} />}
+      {service && step > 0 && step < 5 && <Summary service={service} timezone={vendor.timezone} startsAt={slotStart} date={slotDate} days={dayCount} blocks={blockCount} />}
       {hold && (step === 4 || step === 5 && vendor.payments_enabled && accepted?.booking.status === "PENDING") && !holdExpired && hold.holdExpiresAt && <HoldCountdown until={hold.holdExpiresAt} onExpire={markExpired} />}
       {message && <Notice tone="danger">{message}</Notice>}
 
-      {step === 0 && <ServiceStep services={vendor.services} selected={serviceId} onSelect={id => { setServiceId(id); setSlotStart(""); setDayCount(0); go(1); }} />}
+      {step === 0 && <ServiceStep services={vendor.services} selected={serviceId} onSelect={id => { setServiceId(id); setSlotStart(""); setDayCount(0); setBlockCount(0); go(1); }} />}
       {step === 1 && service && daily && <DayStep vendor={vendor} service={service} version={slotsVersion} date={slotDate} days={dayCount} onDate={setSlotDate} onDays={setDayCount} onBack={() => go(0)} onNext={() => go(2)} />}
-      {step === 1 && service && !daily && <TimeStep vendor={vendor} service={service} version={slotsVersion} date={slotDate} start={slotStart} onDate={setSlotDate} onStart={setSlotStart} onBack={() => go(0)} onNext={() => go(2)} />}
+      {step === 1 && service && !daily && <TimeStep vendor={vendor} service={service} version={slotsVersion} date={slotDate} start={slotStart} blocks={blockCount} onDate={setSlotDate} onStart={setSlotStart} onBlocks={setBlockCount} onBack={() => go(0)} onNext={() => go(2)} />}
       {step === 2 && <DetailsStep phoneRequired={vendor.phone_required} value={details} verified={verified} onChange={setDetails} onBack={() => go(1)} onNext={() => go(3)} />}
       {step === 3 && <VerifyStep email={details.email} verified={verified} onVerified={() => setVerified(true)} onHold={createHold} onBack={() => go(2)} />}
       {step === 4 && hold && (holdExpired
@@ -102,13 +106,15 @@ export function BookingFlow() {
   );
 }
 
-function Summary({ service, timezone, startsAt, date, days }: { service: PublicService; timezone: string; startsAt: string; date: string; days: number }) {
-  // Daily: the dates and price x days; hourly: the time and the session price.
+function Summary({ service, timezone, startsAt, date, days, blocks }: { service: PublicService; timezone: string; startsAt: string; date: string; days: number; blocks: number }) {
+  // Daily: the dates and price x days. Hourly: the time and the session price, or for several sessions the whole range and
+  // price x sessions.
   const daily = service.booking_mode === "daily", chosen = daily && date && days > 0;
+  const sessions = !daily && startsAt && blocks > 1 ? blocks : 0, unit = priceUnit(service);
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-input bg-surface-muted px-4 py-3 text-sm">
-      <span className="font-medium">{service.name}{daily ? chosen && <span className="font-normal text-muted"> · {dayRangeLabel(date, days)}</span> : startsAt && <span className="font-normal text-muted"> · {formatDateTime(startsAt, timezone)}</span>}</span>
-      {chosen ? <Money paise={dailyQuote(service, days).total} size="sm" className="font-semibold" /> : <span className="inline-flex items-baseline gap-1"><Money paise={service.price_paise} size="sm" className="font-semibold" />{daily && <span className="text-xs text-muted">per day</span>}</span>}
+      <span className="font-medium">{service.name}{daily ? chosen && <span className="font-normal text-muted"> · {dayRangeLabel(date, days)}</span> : startsAt && <span className="font-normal text-muted"> · {sessions ? sessionRangeLabel(startsAt, rangeEnd(startsAt, sessions, service.duration_minutes ?? 0), timezone) : formatDateTime(startsAt, timezone)}</span>}</span>
+      {chosen ? <Money paise={dailyQuote(service, days).total} size="sm" className="font-semibold" /> : sessions ? <Money paise={sessionQuote(service, sessions).total} size="sm" className="font-semibold" /> : <span className="inline-flex items-baseline gap-1"><Money paise={service.price_paise} size="sm" className="font-semibold" />{unit && <span className="text-xs text-muted">{unit}</span>}</span>}
     </div>
   );
 }
@@ -128,7 +134,7 @@ function ServiceStep({ services, selected, onSelect }: { services: PublicService
   );
 }
 
-function TimeStep({ vendor, service, version, date, start, onDate, onStart, onBack, onNext }: { vendor: PublicVendor; service: PublicService; version: number; date: string; start: string; onDate: (date: string) => void; onStart: (start: string) => void; onBack: () => void; onNext: () => void }) {
+function TimeStep({ vendor, service, version, date, start, blocks, onDate, onStart, onBlocks, onBack, onNext }: { vendor: PublicVendor; service: PublicService; version: number; date: string; start: string; blocks: number; onDate: (date: string) => void; onStart: (start: string) => void; onBlocks: (blocks: number) => void; onBack: () => void; onNext: () => void }) {
   const [days, setDays] = useState<string[]>(); const [slots, setSlots] = useState<Slot[]>(); const [error, setError] = useState("");
   const viewerZone = useMemo(() => viewerTimezone(), []);
   // The next open days: this month and the next, so a strip of 14 never runs dry at a month's end.
@@ -145,10 +151,17 @@ function TimeStep({ vendor, service, version, date, start, onDate, onStart, onBa
     if (!date) return; setSlots(undefined);
     api<{ slots: Slot[] }>(`/v1/vendors/${vendor.slug}/availability/slots?service_id=${service.id}&date=${date}`).then(value => setSlots(value.slots)).catch(failure => setError(humanMessage(failure)));
   }, [vendor.slug, service.id, date, version]);
+  const minBlocks = service.min_blocks ?? 1, maxBlocks = service.max_blocks ?? 1, chosenSlot = slots?.find(slot => slot.startsAt === start);
+  const choices = chosenSlot ? blockChoices(service, chosenSlot.maxBlocks ?? minBlocks) : [];
+  // A start whose free run got shorter (fresh slots after a failed hold) cannot keep a longer choice.
+  useEffect(() => { if (start && choices.length && !choices.some(choice => choice.blocks === blocks)) onBlocks(choices[0].blocks); }, [start, blocks, choices.map(choice => choice.blocks).join(",")]);
+  const pick = (slot: Slot) => { onStart(slot.startsAt); onBlocks(minBlocks); };
+  const ready = Boolean(start) && (maxBlocks === 1 || choices.some(choice => choice.blocks === blocks));
   if (error) return <Notice tone="danger">{error}</Notice>;
   return (
     <section aria-labelledby="choose-time" className="grid gap-4">
-      <h2 id="choose-time" className="text-lg">Choose a date and time</h2>
+      <h2 id="choose-time" className="text-lg">{offersLength(service) ? "Choose a date and start time" : "Choose a date and time"}</h2>
+      {maxBlocks > 1 && <p className="text-sm text-muted">One booking is one continuous time on one day: {minBlocks === maxBlocks ? `${maxBlocks} sessions` : `${minBlocks} to ${maxBlocks} sessions`} of {serviceLength({ ...service, min_blocks: 1, max_blocks: 1 })} in a row. Sessions on different days need separate bookings.</p>}
       {!days ? <LoadingState label="Loading open days…" className="flex gap-2">{[0, 1, 2, 3, 4].map(index => <Skeleton key={index} className="h-16 w-14 shrink-0" />)}</LoadingState>
         : !days.length ? <EmptyState title="No open times in the next few weeks" description={`${vendor.display_name} has no free times soon. Please check back later or contact them directly.`} />
         : <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0"><ul className="flex gap-2" aria-label="Open days">{days.map(day => (
@@ -160,13 +173,21 @@ function TimeStep({ vendor, service, version, date, start, onDate, onStart, onBa
         <h3 className="text-sm font-semibold">{dateLabel(date, "full")}</h3>
         {!slots ? <LoadingState label="Loading times…" className="grid grid-cols-3 gap-2 sm:grid-cols-4">{[0, 1, 2, 3, 4, 5].map(index => <Skeleton key={index} className="h-11" />)}</LoadingState>
           : slots.length ? <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4" aria-label="Open times">{slots.map(slot => (
-              <li key={slot.startsAt}><button type="button" aria-pressed={start === slot.startsAt} onClick={() => onStart(slot.startsAt)} className={cn("grid min-h-11 w-full place-items-center rounded-input px-1 py-1.5 text-sm font-medium tabular-nums ring-1 transition-colors", start === slot.startsAt ? "bg-primary text-primary-foreground ring-primary" : "bg-surface text-ink ring-border hover:ring-primary")}>
+              <li key={slot.startsAt}><button type="button" aria-pressed={start === slot.startsAt} onClick={() => pick(slot)} className={cn("grid min-h-11 w-full place-items-center rounded-input px-1 py-1.5 text-sm font-medium tabular-nums ring-1 transition-colors", start === slot.startsAt ? "bg-primary text-primary-foreground ring-primary" : "bg-surface text-ink ring-border hover:ring-primary")}>
                 {formatTime(slot.startsAt, vendor.timezone)}{viewerZone !== vendor.timezone && <span className="text-[11px] font-normal opacity-80">{formatTime(slot.startsAt, viewerZone)} yours</span>}
               </button></li>
             ))}</ul>
           : <p className="text-sm text-muted">No times remain on this day. Choose another day above.</p>}
       </div>}
-      <div className="flex flex-wrap gap-2"><Button variant="ghost" onClick={onBack}><ArrowLeft aria-hidden />Service</Button><Button className="flex-1" size="lg" disabled={!start} title={!start ? "Choose a time to continue" : undefined} onClick={onNext}>Continue</Button></div>
+      {start && offersLength(service) && choices.length > 0 && (
+        <div aria-live="polite" className="grid gap-2">
+          <RadioCards legend={`How long, from ${formatTime(start, vendor.timezone)}?`} name="blocks" value={String(blocks)} onChange={value => onBlocks(Number(value))}
+            options={choices.map(choice => ({ value: String(choice.blocks), label: choice.label, description: `${formatTime(start, vendor.timezone)} to ${formatTime(rangeEnd(start, choice.blocks, service.duration_minutes ?? 0), vendor.timezone)} · ${formatINR(sessionQuote(service, choice.blocks).total)}` }))} />
+          {choices.length < maxBlocks - minBlocks + 1 && <p className="text-xs text-muted">Longer is not free from this time. Pick an earlier start for more.</p>}
+        </div>
+      )}
+      {start && blocks > 1 && <p className="rounded-input bg-surface-muted px-4 py-3 text-sm" data-testid="session-summary"><strong>{sessionRangeLabel(start, rangeEnd(start, blocks, service.duration_minutes ?? 0), vendor.timezone)}</strong> · Total {formatINR(sessionQuote(service, blocks).total)}{sessionQuote(service, blocks).advance > 0 ? ` · Advance ${formatINR(sessionQuote(service, blocks).advance)} now` : ""}</p>}
+      <div className="flex flex-wrap gap-2"><Button variant="ghost" onClick={onBack}><ArrowLeft aria-hidden />Service</Button><Button className="flex-1" size="lg" disabled={!ready} title={!ready ? "Choose a time to continue" : undefined} onClick={onNext}>Continue</Button></div>
     </section>
   );
 }

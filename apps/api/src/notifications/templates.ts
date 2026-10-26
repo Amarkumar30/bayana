@@ -1,4 +1,4 @@
-import { dayRangeLabel, formatINR, localDateOf } from "@bayana/shared";
+import { dayRangeLabel, durationLabel, formatINR, localDateOf } from "@bayana/shared";
 
 // Email templates (SPEC 15.2). Every email has a subject, a plain-text part and a small responsive HTML part:
 // table layout and inline styles (what mail clients understand), no images or tracking pixels, and the brand mark drawn
@@ -10,6 +10,14 @@ type Layout = { preheader: string; heading: string; paragraphs: string[]; rows?:
 
 const escape = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[char]!);
 export const when = (iso: Date | string, timezone: string) => `${new Intl.DateTimeFormat("en-IN", { timeZone: timezone, weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(iso))} (${timezone})`;
+
+/** A multi-session booking's full range: "Friday, 12 November 2026, 2:00 pm to 5:00 pm, 3 hours (Asia/Kolkata)". */
+export const whenRange = (start: Date | string, end: Date | string, timezone: string) => {
+  const from = new Date(start), to = new Date(end);
+  const date = new Intl.DateTimeFormat("en-IN", { timeZone: timezone, weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(from);
+  const time = (instant: Date) => new Intl.DateTimeFormat("en-IN", { timeZone: timezone, hour: "numeric", minute: "2-digit", hour12: true }).format(instant);
+  return `${date}, ${time(from)} to ${time(to)}, ${durationLabel(Math.round((to.getTime() - from.getTime()) / 60_000))} (${timezone})`;
+};
 
 const INK = "#101418", SAFFRON = "#D97A00", MUTED = "#5b6472", LINE = "#e6e4dc", PAGE = "#fafaf7", PRIMARY = "#3730a3";
 function html(layout: Layout) {
@@ -37,7 +45,7 @@ function text(layout: Layout) {
 const render = (subject: string, layout: Layout): Rendered => ({ subject, text: text(layout), html: html(layout) });
 
 // ---- Data each template needs ---------------------------------------------------------------------------------------
-type BookingFacts = { businessName: string; customerName: string; service: string; startsAt: Date | string; timezone: string; /** Daily bookings: how many days (shown as a date range, never a time). */ days?: number | null; totalPaise: number; advancePaise: number; paidPaise: number; link: string };
+type BookingFacts = { businessName: string; customerName: string; service: string; startsAt: Date | string; timezone: string; /** Daily bookings: how many days (shown as a date range, never a time). */ days?: number | null; /** Hourly bookings of more than one session: the range is shown, not just the start. */ blocks?: number | null; endsAt?: Date | string | null; totalPaise: number; advancePaise: number; paidPaise: number; link: string };
 export type TemplateData = {
   otp: { code: string; action: string; minutes: number };
   hold_started: BookingFacts & { holdUntil: Date | string; online: boolean };
@@ -55,7 +63,8 @@ export type TemplateName = keyof TemplateData;
 
 const money = (paise: number) => formatINR(paise);
 /** A daily booking reads as its dates ("12 Nov to 13 Nov 2026 (2 days)"); an hourly one as its date and time. */
-const whenOf = (data: { startsAt: Date | string; timezone: string; days?: number | null }) => data.days ? dayRangeLabel(localDateOf(new Date(data.startsAt), data.timezone), data.days) : when(data.startsAt, data.timezone);
+const whenOf = (data: { startsAt: Date | string; timezone: string; days?: number | null; blocks?: number | null; endsAt?: Date | string | null }) => data.days ? dayRangeLabel(localDateOf(new Date(data.startsAt), data.timezone), data.days)
+  : data.blocks && data.blocks > 1 && data.endsAt ? whenRange(data.startsAt, data.endsAt, data.timezone) : when(data.startsAt, data.timezone);
 const bookingRows = (data: BookingFacts): Row[] => [["Service", data.service], ["With", data.businessName], ["When", whenOf(data)], ["Total", money(data.totalPaise)], ["Paid so far", money(data.paidPaise)], ["Balance due", money(data.totalPaise - data.paidPaise)]];
 
 export const templates: { [K in TemplateName]: (data: TemplateData[K]) => Rendered } = {
@@ -94,6 +103,6 @@ export const templates: { [K in TemplateName]: (data: TemplateData[K]) => Render
   }),
   payment_review: data => render(`[Bayana review] ${data.problem}`, { preheader: data.problem, heading: "Needs a look", paragraphs: [data.problem, ...(data.bookingId ? [`Booking ${data.bookingId}`] : [])], rows: data.lines.map((line, index): Row => [`${index + 1}`, line]), note: "Nothing was changed automatically except where the payment rules say so (late-payment refunds). Run pnpm.cmd payments:reconcile for detail." }),
   payment_recorded: data => render(data.confirmed ? `Confirmed: ${data.service} with ${data.businessName}` : `Payment recorded: ${money(data.amountPaise)}`, { preheader: `${money(data.amountPaise)} ${data.kind}`, heading: data.confirmed ? "Your booking is confirmed" : "Payment recorded", paragraphs: [`${data.businessName} recorded your ${data.kind} payment of ${money(data.amountPaise)}.${data.confirmed ? " Your booking is confirmed." : ""}`], rows: bookingRows(data), action: { label: "View booking and receipt", url: data.link } }),
-  booking_rescheduled: data => render(`${data.days ? "New dates" : "New time"}: ${data.service} with ${data.businessName}`, { preheader: whenOf(data), heading: data.days ? "Your booking has new dates" : "Your booking has a new time", paragraphs: [`Hi ${data.customerName}, ${data.businessName} moved your booking. Your payments and agreed terms stay the same.`], rows: [["Service", data.service], [data.days ? "New dates" : "New time", whenOf(data)], ["Was", whenOf({ ...data, startsAt: data.previousStartsAt })], ["Balance due", money(data.totalPaise - data.paidPaise)]], action: { label: "View the booking", url: data.link }, note: "If the new time does not work for you, reply to the business directly." })
+  booking_rescheduled: data => render(`${data.days ? "New dates" : "New time"}: ${data.service} with ${data.businessName}`, { preheader: whenOf(data), heading: data.days ? "Your booking has new dates" : "Your booking has a new time", paragraphs: [`Hi ${data.customerName}, ${data.businessName} moved your booking. Your payments and agreed terms stay the same.`], rows: [["Service", data.service], [data.days ? "New dates" : "New time", whenOf(data)], ["Was", whenOf({ ...data, startsAt: data.previousStartsAt, endsAt: data.endsAt ? new Date(new Date(data.previousStartsAt).getTime() + new Date(data.endsAt).getTime() - new Date(data.startsAt).getTime()) : null })], ["Balance due", money(data.totalPaise - data.paidPaise)]], action: { label: "View the booking", url: data.link }, note: "If the new time does not work for you, reply to the business directly." })
 };
 export const renderTemplate = <K extends TemplateName>(name: K, data: TemplateData[K]) => templates[name](data);

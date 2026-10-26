@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { dayRangeLabel, localDateOf } from "@bayana/shared";
+import { dayRangeLabel, durationLabel, localDateOf } from "@bayana/shared";
 import { bookingReference } from "./service.js";
 
 // Payment receipts (PY-11): one PDF per verified payment. Totals come from the ledger, so the PDF always equals it.
@@ -10,14 +10,14 @@ export type ReceiptData = {
   vendor: { name: string; city: string; gstin: string | null };
   customer: { name: string; email: string };
   /** days: daily bookings only (shown as dates, never a time). */
-  booking: { reference: string; service: string; startsAt: Date; timezone: string; days?: number | null };
+  booking: { reference: string; service: string; startsAt: Date; timezone: string; days?: number | null; /** Hourly bookings of more than one session show their full range. */ blocks?: number | null; endsAt?: Date };
   payment: { amountPaise: number; kind: string; channel: string; method: string | null; providerPaymentId: string | null; paidAt: Date };
   totals: { totalPaise: number; paidToDatePaise: number; refundedPaise: number; balancePaise: number };
 };
 
 export async function receiptData(db: Pool | PoolClient, bookingId: string, paymentId: string): Promise<ReceiptData | null> {
-  const found = await db.query<{ amount_paise: string; kind: string; provider: string; method: string | null; provider_payment_id: string | null; verified_at: Date; total_paise: string; client_name: string; client_email: string; service_name: string | null; starts_at: Date; booking_mode: string; days_count: number | null; vendor_timezone: string; display_name: string; city: string; gstin: string | null; timezone: string; paid: string; refunded: string }>(
-    `SELECT p.amount_paise,p.kind,p.provider,p.method,p.provider_payment_id,p.verified_at,b.total_paise,b.client_name,b.client_email::text AS client_email,b.service_name,b.starts_at,b.booking_mode,b.days_count,b.vendor_timezone,v.display_name,v.city,v.gstin,v.timezone,
+  const found = await db.query<{ amount_paise: string; kind: string; provider: string; method: string | null; provider_payment_id: string | null; verified_at: Date; total_paise: string; client_name: string; client_email: string; service_name: string | null; starts_at: Date; ends_at: Date; booking_mode: string; days_count: number | null; blocks_count: number | null; vendor_timezone: string; display_name: string; city: string; gstin: string | null; timezone: string; paid: string; refunded: string }>(
+    `SELECT p.amount_paise,p.kind,p.provider,p.method,p.provider_payment_id,p.verified_at,b.total_paise,b.client_name,b.client_email::text AS client_email,b.service_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,b.vendor_timezone,v.display_name,v.city,v.gstin,v.timezone,
        COALESCE((SELECT -SUM(amount_paise) FROM ledger_entries WHERE booking_id=b.id AND kind='PAYMENT'),0) AS paid,
        COALESCE((SELECT SUM(amount_paise) FROM ledger_entries WHERE booking_id=b.id AND kind='REFUND'),0) AS refunded
      FROM payments p JOIN bookings b ON b.id=p.booking_id JOIN vendors v ON v.id=b.vendor_id WHERE p.id=$1 AND p.booking_id=$2 AND p.verified_at IS NOT NULL`, [paymentId, bookingId]);
@@ -28,7 +28,7 @@ export async function receiptData(db: Pool | PoolClient, bookingId: string, paym
     receiptNumber: `${bookingReference(bookingId).slice(3, 11).toUpperCase()}-${paymentId.slice(0, 8).toUpperCase()}`, issuedAt: new Date(),
     vendor: { name: row.display_name, city: row.city, gstin: row.gstin },
     customer: { name: row.client_name, email: row.client_email },
-    booking: { reference: bookingReference(bookingId), service: row.service_name ?? "Booking", startsAt: row.starts_at, timezone: row.booking_mode === "daily" ? row.vendor_timezone : row.timezone, days: row.booking_mode === "daily" ? row.days_count : null },
+    booking: { reference: bookingReference(bookingId), service: row.service_name ?? "Booking", startsAt: row.starts_at, timezone: row.booking_mode === "daily" ? row.vendor_timezone : row.timezone, days: row.booking_mode === "daily" ? row.days_count : null, blocks: row.booking_mode === "daily" ? null : row.blocks_count, endsAt: row.ends_at },
     payment: { amountPaise: Number(row.amount_paise), kind: row.kind, channel: row.provider, method: row.method, providerPaymentId: row.provider_payment_id, paidAt: row.verified_at },
     totals: { totalPaise: Number(row.total_paise), paidToDatePaise: paidToDate, refundedPaise: Number(row.refunded), balancePaise: Number(row.total_paise) - paidToDate }
   };
@@ -38,6 +38,12 @@ export async function receiptData(db: Pool | PoolClient, bookingId: string, paym
 const inr = (paise: number) => `INR ${new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(paise / 100)}`;
 const latin1 = (text: string) => [...text].map(char => char.charCodeAt(0) <= 0xff ? char : "?").join("");
 const when = (date: Date, timezone: string) => new Intl.DateTimeFormat("en-IN", { timeZone: timezone, dateStyle: "medium", timeStyle: "short" }).format(date);
+/** Several sessions in a row: "12 Nov 2026, 2:00 pm to 5:00 pm (3 hours)". */
+const whenRange = (start: Date, end: Date, timezone: string) => `${when(start, timezone)} to ${new Intl.DateTimeFormat("en-IN", { timeZone: timezone, timeStyle: "short" }).format(end)} (${durationLabel(Math.round((end.getTime() - start.getTime()) / 60_000))})`;
+
+/** The receipt's "Booking" line: dates for a daily booking, the full range for several sessions, else the start time. */
+export const bookingLine = (booking: ReceiptData["booking"]) => `${booking.service}, ${booking.days ? dayRangeLabel(localDateOf(booking.startsAt, booking.timezone), booking.days)
+  : booking.blocks && booking.blocks > 1 && booking.endsAt ? whenRange(booking.startsAt, booking.endsAt, booking.timezone) : when(booking.startsAt, booking.timezone)}`;
 
 export async function receiptPdf(data: ReceiptData) {
   const pdf = await PDFDocument.create();
@@ -54,7 +60,7 @@ export async function receiptPdf(data: ReceiptData) {
   line(data.vendor.name, { strong: true }); line(data.vendor.city, { gap: data.vendor.gstin ? 18 : 28 });
   if (data.vendor.gstin) line(`GSTIN ${data.vendor.gstin}`, { gap: 28 });
   row("Received from", `${data.customer.name} <${data.customer.email}>`);
-  row("Booking", `${data.booking.service}, ${data.booking.days ? dayRangeLabel(localDateOf(data.booking.startsAt, data.booking.timezone), data.booking.days) : when(data.booking.startsAt, data.booking.timezone)}`);
+  row("Booking", bookingLine(data.booking));
   row("Booking reference", data.booking.reference);
   y -= 10;
   row(`Amount received (${data.payment.kind})`, inr(data.payment.amountPaise), true);

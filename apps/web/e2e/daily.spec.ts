@@ -8,10 +8,10 @@ test("service form: choosing per day swaps duration for days and shows the live 
   await page.goto("/dashboard/services");
   await page.getByRole("button", { name: "Add service" }).first().click();
   const sheet = page.getByRole("dialog", { name: "Add a service" });
-  await expect(sheet.getByRole("radio", { name: /Per hour/ })).toBeChecked();
-  await expect(sheet.getByLabel("Duration (minutes)")).toBeVisible();
+  await expect(sheet.getByRole("radio", { name: /Per session/ })).toBeChecked();
+  await expect(sheet.getByLabel("Session length (minutes)")).toBeVisible();
   await sheet.getByRole("radio", { name: /Per day/ }).check();
-  await expect(sheet.getByLabel("Duration (minutes)")).toHaveCount(0);
+  await expect(sheet.getByLabel("Session length (minutes)")).toHaveCount(0);
   await sheet.getByLabel("Service name").fill("Wedding day");
   await sheet.getByLabel("Price per day (₹)").fill("12000");
   await sheet.getByLabel("Minimum days").fill("1");
@@ -21,8 +21,8 @@ test("service form: choosing per day swaps duration for days and shows the live 
   await sheet.getByLabel("Minimum days").fill("4");
   await sheet.getByRole("button", { name: "Add service" }).click();
   await expect(sheet.getByText("The maximum must be at least the minimum number of days.")).toBeVisible();
-  await sheet.getByRole("radio", { name: /Per hour/ }).check();
-  await expect(sheet.getByLabel("Duration (minutes)")).toBeVisible();
+  await sheet.getByRole("radio", { name: /Per session/ }).check();
+  await expect(sheet.getByLabel("Session length (minutes)")).toBeVisible();
   await expect(sheet.getByLabel("Minimum days")).toHaveCount(0);
 });
 
