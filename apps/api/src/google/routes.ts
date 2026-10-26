@@ -132,7 +132,7 @@ async function applyGoogle(db: Parameters<typeof rotateInto>[2], req: Request, r
     }
   }
   // Joining through Google (new account, or an existing address now becoming a Google account) agrees to the terms (PV-01).
-  if (kind !== "signin") await recordConsent(db, { userId: user.id, kinds: ["account_terms", "privacy_policy"], source: "signup_google", ip: req.ip, userAgent: req.header("user-agent") });
+  if (kind !== "signin") await recordConsent(db, { userId: user.id, kinds: ["account_terms", "vendor_terms", "privacy_policy"], source: "signup_google", ip: req.ip, userAgent: req.header("user-agent") });
   await rotateInto(req, res, db, user.id);
   await event(db, user.id, kind === "linked" ? "google_linked" : "login_google", req.ip, req.header("user-agent"));
   const hasProfile = (await db.query("SELECT 1 FROM vendors WHERE owner_user_id=$1", [user.id])).rowCount;

@@ -40,6 +40,7 @@ export function LoginForm() {
       <div className="grid gap-1"><h1 className="text-2xl">Welcome back</h1><p className="text-sm text-muted">Sign in to manage your bookings.</p></div>
       {googleError && <Notice tone="warning">{googleError}</Notice>}
       <GoogleButton next={next} />
+      {google && <p className="-mt-3 text-center text-xs text-muted">New to Bayana? Continuing with Google creates your account and agrees to the <Link href="/terms">terms</Link> and <Link href="/vendor-terms">vendor agreement</Link>; see the <Link href="/privacy">privacy policy</Link>.</p>}
       {google && <p className="flex items-center gap-3 text-xs uppercase tracking-wide text-muted" aria-hidden><span className="h-px flex-1 bg-border" />or<span className="h-px flex-1 bg-border" /></p>}
       {method === "code" ? (
         <form onSubmit={withCode} noValidate className="grid gap-4" aria-label="Sign in with an email code">

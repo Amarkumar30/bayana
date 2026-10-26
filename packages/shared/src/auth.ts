@@ -20,4 +20,4 @@ export const googleErrorCopy: Record<string, string> = {
  * Versions of the published policies a person agrees to (PV-01). Bump a version when the text of that page changes; each
  * consent row records the version that was in force.
  */
-export const POLICY_VERSIONS = { account_terms: "2026-10-25-draft", privacy_policy: "2026-10-25-draft", booking_terms: "2026-10-25-draft" } as const;
+export const POLICY_VERSIONS = { account_terms: "2026-10-26-draft", privacy_policy: "2026-10-26-draft", booking_terms: "2026-10-25-draft", refund_policy: "2026-10-26-draft", vendor_terms: "2026-10-26-draft" } as const;

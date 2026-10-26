@@ -86,7 +86,7 @@ describe("CSRF: origin check on state-changing requests", () => {
 });
 
 describe("consent rows (PV-01)", () => {
-  it("signup records the account terms and privacy policy versions; booking acceptance records the booking terms", async () => {
+  it("signup records the platform terms, vendor agreement and privacy policy versions; booking acceptance records the booking terms, platform terms, refund and privacy policies", async () => {
     const email = `consent-${randomUUID().slice(0, 8)}@example.test`, since = capturedEmails().length;
     await call("POST", "/v1/auth/otp/request", { body: { email, purpose: "signup" } });
     let code = "";
@@ -94,9 +94,11 @@ describe("consent rows (PV-01)", () => {
     const signup = await call("POST", "/v1/auth/signup", { body: { email, code }, headers: { "user-agent": "ConsentTest/1.0" } });
     expect(signup.status).toBe(201);
     const rows = (await pool.query("SELECT kind,policy_version,source,user_agent FROM consents WHERE user_id=$1 ORDER BY kind", [signup.body.user.id])).rows;
-    expect(rows).toEqual([{ kind: "account_terms", policy_version: POLICY_VERSIONS.account_terms, source: "signup_email", user_agent: "ConsentTest/1.0" }, { kind: "privacy_policy", policy_version: POLICY_VERSIONS.privacy_policy, source: "signup_email", user_agent: "ConsentTest/1.0" }]);
+    const signedUp = (kind: keyof typeof POLICY_VERSIONS) => ({ kind, policy_version: POLICY_VERSIONS[kind], source: "signup_email", user_agent: "ConsentTest/1.0" });
+    expect(rows).toEqual([signedUp("account_terms"), signedUp("privacy_policy"), signedUp("vendor_terms")]);
     const booking = await confirmed(await vendor());
-    expect((await pool.query("SELECT kind FROM consents WHERE booking_id=$1 ORDER BY kind", [booking.id])).rows.map(row => row.kind)).toEqual(["booking_terms", "privacy_policy"]);
+    const accepted = (await pool.query("SELECT kind,policy_version,source FROM consents WHERE booking_id=$1 ORDER BY kind", [booking.id])).rows;
+    expect(accepted).toEqual((["account_terms", "booking_terms", "privacy_policy", "refund_policy"] as const).map(kind => ({ kind, policy_version: POLICY_VERSIONS[kind], source: "booking_accept" })));
     await expect(pool.query("UPDATE consents SET policy_version='x' WHERE booking_id=$1", [booking.id])).rejects.toThrow();
   });
 });

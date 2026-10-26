@@ -92,7 +92,7 @@ authRouter.post("/signup", ...guard(20, 10), async (req, res, next) => {
         await event(db, existing.id, "login_via_signup", req.ip, req.header("user-agent"));
       }
       // The signup screen says that creating an account means agreeing to the terms and the privacy policy (PV-01).
-      await recordConsent(db, { userId: row.id, kinds: ["account_terms", "privacy_policy"], source: "signup_email", ip: req.ip, userAgent: req.header("user-agent") });
+      await recordConsent(db, { userId: row.id, kinds: ["account_terms", "vendor_terms", "privacy_policy"], source: "signup_email", ip: req.ip, userAgent: req.header("user-agent") });
       await rotateInto(req, res, db, row.id);
       return row;
     });
