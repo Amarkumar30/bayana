@@ -6,7 +6,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 
-// Starts the real entry point (src/server.ts) the way the container does, with NODE_ENV=production and an incomplete env, in an
+// Lives with the integration tests, which run one file at a time: it starts the whole API in a child process, which is too
+// slow to share the CPU with the parallel unit files. Starts the real entry point (src/server.ts) the way the container does, with NODE_ENV=production and an incomplete env, in an
 // empty folder so no .env file is read. It must refuse to start, name every problem, and never print a value it was given.
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const tsx = createRequire(path.join(apiRoot, "package.json")).resolve("tsx/cli");

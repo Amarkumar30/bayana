@@ -1,6 +1,6 @@
 # Handoff (2026-10-25) — read this first, then docs/PROGRESS.md "Session handoff 3"
 
-**State:** Phase 10 is done on `phase-10-hardening` (`8b647fb`; origin has up to `5db0c48`, and `origin/main` was fast-forwarded to `5db0c48` by another session at the user's request). Branch **`hosting-ready`** (from `8b647fb`, not pushed) carries the Phase 11 deploy prep plus the deploy-safety code fixes (cookie names, database-only migrate config, Neon pool, graceful shutdown, web build, HSTS). Phases follow docs/CLAUDE_CODE_PHASES.md (SPEC 19.2 numbers them differently). `bayana_dev` and `bayana_test` both have migrations 001–019.
+**State:** Phase 10 is done on `phase-10-hardening` (`8b647fb`; origin has up to `5db0c48`, and `origin/main` was fast-forwarded to `5db0c48` by another session at the user's request). Branch **`hosting-ready`** (from `8b647fb`, not pushed) carries the Phase 11 deploy prep plus the deploy-safety code fixes (cookie names, database-only migrate config, Neon pool, graceful shutdown, web build, HSTS). Phases follow docs/CLAUDE_CODE_PHASES.md (SPEC 19.2 numbers them differently). `bayana_dev` and `bayana_test` both have migrations 001–020 (dev backed up before 020 to backups/bayana_dev-pre-020-20261026-102203.dump).
 
 ## Decisions not obvious from the code
 - **Status changes:** only `transitionBooking` (apps/api/src/booking-transition.ts) writes `bookings.status`, enforced by a grep test (test/unit/status-writes.test.ts). Same-status events (reschedules) use `recordChange`. Double booking is stopped by the vendor lock `pg_advisory_xact_lock` plus the exclusion constraint `bookings_no_overlap`.
@@ -24,6 +24,9 @@
 - **CSP:** account pages render per request with a nonce. The cached public page `/[slug]` and static pages keep script `'unsafe-inline'` (cached HTML can't carry a nonce). `style-src 'unsafe-inline'` stays.
 - **Performance:** fonts use `display: optional`, CSS is inlined, and public links don't prefetch. The Lighthouse gate uses the measured LCP (median of 3, about 1.4 s); the simulated estimate (about 3.0 s) is printed too.
 - **Privacy:** erasure removes names, emails, phones and notes, and keeps money rows. Contracts are kept as legal evidence. Legal pages are drafts that need lawyer review.
+- **Legal pages (hosting-ready):** /terms, /vendor-terms, /privacy, /refunds, /shipping, /contact, /about, /pricing read the operator's identity and prices from `apps/web/lib/business-details.ts`. Its `[PLACEHOLDER]` values make a build with `APP_ENV=production` fail until they are filled in. The "needs lawyer review" banner shows until the web setting `LEGAL_REVIEWED=true`.
+  - Consent: vendors record account_terms + vendor_terms + privacy_policy at signup; bookings record booking_terms + account_terms + refund_policy + privacy_policy. Bump the version in `POLICY_VERSIONS` whenever a page's text changes.
+  - One footer (`components/layout/site-footer.tsx`) on the site, booking and auth layouts. `robots.txt` lets crawlers in only when APP_ENV=production.
 
 ## Open bugs and limitations
 - **Phase 10 localhost sign-off done** (docs/LOCALHOST_SIGNOFF.md): 11 of 12 PASS locally. Still for staging: Checkout payment, real webhook, real cold start, scheduled tick, mail DNS.
@@ -54,8 +57,9 @@
 - **Before any migration on dev:** back up (command below).
 
 ## Next step
-1. Push `hosting-ready` (ask first), apply render.yaml on Render, and follow docs/DEPLOY.md section by section. Never push to or merge into `main` without asking.
-2. Still open: the runtime should connect as a member of `bayana_app`; server-side calls from Vercel would share Vercel's IP for per-IP rate limits (only once a page uses serverApi); test:visual should run on next build + next start.
+1. Fill in `apps/web/lib/business-details.ts`, have a lawyer review the legal pages (list in docs/PROGRESS.md "Legal pages"), then set `LEGAL_REVIEWED=true` and `APP_ENV=production` on the production web app.
+2. Push `hosting-ready` (ask first), apply render.yaml on Render, and follow docs/DEPLOY.md section by section. Never push to or merge into `main` without asking.
+3. Still open: the runtime should connect as a member of `bayana_app`; server-side calls from Vercel would share Vercel's IP for per-IP rate limits (only once a page uses serverApi); test:visual should run on next build + next start.
 
 ## Commands (PowerShell, always pnpm.cmd)
 - Run: `pnpm.cmd db:up` · `pnpm.cmd dev` (web 3000, API 4000, Mailpit 8025) · `pnpm.cmd run doctor`
