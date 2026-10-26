@@ -118,7 +118,9 @@ test("a cancelled Google sign-in comes back with a human message", async ({ page
   await page.goto("/login?error=google_cancelled");
   await expect(page.getByText("Google sign-in was cancelled. Try again, or sign in with an email code.")).toBeVisible();
   await page.goto("/login?error=something-unknown");
-  await expect(page.getByText(/Google/)).toHaveCount(1); // only the button label, no stray message
+  // Only the button label and the sign-up consent line under it mention Google: no stray message for an unknown code.
+  await expect(page.getByText(/New to Bayana\? Continuing with Google creates your account/)).toHaveCount(1);
+  await expect(page.getByText(/Google/).filter({ hasNotText: "New to Bayana? Continuing with Google" })).toHaveCount(1);
 });
 
 test("settings lists sign-in methods and lets a vendor add a password", async ({ page }) => {
