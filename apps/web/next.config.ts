@@ -1,9 +1,14 @@
 import type { NextConfig } from "next";
 import { loadServerEnv, loadWebEnv } from "./env-schema";
+import { assertBusinessDetailsReady } from "./lib/business-details";
 import { securityHeaders as createSecurityHeaders } from "./security-headers";
 
-// Fail `next dev` and `next build` early, with variable names only, when the public env is missing or invalid.
-try { loadWebEnv(); loadServerEnv(); } catch (error) { process.stderr.write(`${error instanceof Error ? error.message : "Invalid web environment"}\n`); process.exit(1); }
+// Fail `next dev` and `next build` early, with variable names only, when the public env is missing or invalid, and refuse a
+// production build (NODE_ENV=production with APP_ENV=production) while lib/business-details.ts still has placeholders.
+try {
+  loadWebEnv();
+  assertBusinessDetailsReady({ nodeEnv: process.env.NODE_ENV, appEnv: loadServerEnv().APP_ENV });
+} catch (error) { process.stderr.write(`${error instanceof Error ? error.message : "Invalid web environment"}\n`); process.exit(1); }
 const securityHeaders = createSecurityHeaders(process.env.NODE_ENV === "production", process.env.NEXT_PUBLIC_SITE_URL);
 
 // The dev indicator floats over page content and would leak into screenshot baselines.

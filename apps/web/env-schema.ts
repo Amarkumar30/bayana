@@ -23,11 +23,25 @@ export function webEnvProblems(input: Record<string, string | undefined>) {
  * Server-only settings: never NEXT_PUBLIC_, so Next never inlines them into the browser bundle. SESSION_COOKIE_NAME must match
  * the API's (apps/api/src/config-schema.ts, same rule): bayana_session by default, bayana_staging_session on staging.
  */
-const serverSchema = z.object({ SESSION_COOKIE_NAME: z.preprocess(value => value === "" ? undefined : value, z.string().regex(/^[A-Za-z0-9_]{1,64}$/).default("bayana_session")) });
-export function loadServerEnv(input: Record<string, string | undefined> = { SESSION_COOKIE_NAME: process.env.SESSION_COOKIE_NAME }, envFile = "apps/web/.env.local") {
+const emptyIsUnset = (value: unknown) => value === "" ? undefined : value;
+const serverSchema = z.object({
+  SESSION_COOKIE_NAME: z.preprocess(emptyIsUnset, z.string().regex(/^[A-Za-z0-9_]{1,64}$/).default("bayana_session")),
+  // Which deployment this is. production alone may be indexed by search engines and must have no business-detail placeholders.
+  APP_ENV: z.preprocess(emptyIsUnset, z.enum(["local", "staging", "production"]).default("local")),
+  // "true" once a lawyer has reviewed the legal pages; until then they show a draft banner.
+  LEGAL_REVIEWED: z.preprocess(emptyIsUnset, z.enum(["true", "false"]).default("false"))
+});
+const serverAllowed: Record<keyof z.infer<typeof serverSchema>, string> = {
+  SESSION_COOKIE_NAME: "empty (bayana_session), or letters, digits and _ only, matching the API",
+  APP_ENV: "empty (local), staging or production",
+  LEGAL_REVIEWED: "empty (false), true or false"
+};
+const serverInput = () => ({ SESSION_COOKIE_NAME: process.env.SESSION_COOKIE_NAME, APP_ENV: process.env.APP_ENV, LEGAL_REVIEWED: process.env.LEGAL_REVIEWED });
+export function loadServerEnv(input: Record<string, string | undefined> = serverInput(), envFile = "apps/web/.env.local") {
   const parsed = serverSchema.safeParse(input);
   if (parsed.success) return parsed.data;
-  throw new Error(`Invalid web environment. Edit ${envFile} (compare with apps/web/.env.example):\n  - SESSION_COOKIE_NAME: must be empty (bayana_session), or letters, digits and _ only, matching the API`);
+  const names = [...new Set(parsed.error.issues.map(issue => String(issue.path[0])))] as (keyof typeof serverAllowed)[];
+  throw new Error([`Invalid web environment. Edit ${envFile} (compare with apps/web/.env.example):`, ...names.map(name => `  - ${name}: must be ${serverAllowed[name]}`)].join("\n"));
 }
 export function loadWebEnv(input: Record<string, string | undefined> = { NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL, NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL, NEXT_PUBLIC_RAZORPAY_KEY_ID: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID, NEXT_PUBLIC_SENTRY_DSN: process.env.NEXT_PUBLIC_SENTRY_DSN }, envFile = "apps/web/.env.local") {
   const problems = webEnvProblems(input);
