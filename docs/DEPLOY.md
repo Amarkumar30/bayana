@@ -259,8 +259,10 @@ API variables are validated at startup (`apps/api/src/config-schema.ts`) and the
 | `NEXT_PUBLIC_SITE_URL` | http://localhost:3000 | https://staging.bayana.in | https://bayana.in |
 | `NEXT_PUBLIC_RAZORPAY_KEY_ID` | empty or rzp_test_… | rzp_test_… | empty (the web build refuses live ids) |
 | `SESSION_COOKIE_NAME` (server-only, not `NEXT_PUBLIC_`) | empty (= bayana_session) | bayana_staging_session | bayana_session |
+| `APP_ENV` (server-only) | empty (= local) | staging | production |
+| `LEGAL_REVIEWED` (server-only) | empty (draft banner) | empty (draft banner) | `true` only after a lawyer has reviewed the legal pages |
 
-`SESSION_COOKIE_NAME` must be identical on the API and the web app of one environment. The web server uses it to forward the visitor's session to the API (`apps/web/lib/server-api.ts`).
+With `APP_ENV=production`, the web build **fails** while `apps/web/lib/business-details.ts` still has `[PLACEHOLDER]` values (legal name, address, grievance officer, prices...), and `robots.txt` lets search engines in; on staging it disallows everything. `SESSION_COOKIE_NAME` must be identical on the API and the web app of one environment. The web server uses it to forward the visitor's session to the API (`apps/web/lib/server-api.ts`).
 
 Every `NEXT_PUBLIC_*` value is public. Never put a secret there.
 

@@ -4,7 +4,7 @@ import { MOCK_NOW, SAMPLE_BOOKING_ID, mockApi } from "./mock-api";
 
 // WCAG 2.1 AA checks with axe on the key screens (mocked API). Serious and critical findings fail the test; the server-rendered
 // public vendor page needs the real API and is checked in e2e-live/a11y.spec.ts.
-const pages = ["/", "/login", "/signup", "/privacy", "/studio-sunday/book", `/b/${SAMPLE_BOOKING_ID}?t=sample-token`, "/my-bookings", "/dashboard", "/dashboard/calendar", "/dashboard/bookings", "/dashboard/bookings/7f3c2a10-0002-4000-8000-000000000002", "/dashboard/settings", "/dashboard/payments", "/admin", "/admin/bookings/7f3c2a10-0002-4000-8000-000000000002"];
+const pages = ["/", "/login", "/signup", "/privacy", "/terms", "/refunds", "/vendor-terms", "/contact", "/pricing", "/studio-sunday/book", `/b/${SAMPLE_BOOKING_ID}?t=sample-token`, "/my-bookings", "/dashboard", "/dashboard/calendar", "/dashboard/bookings", "/dashboard/bookings/7f3c2a10-0002-4000-8000-000000000002", "/dashboard/settings", "/dashboard/payments", "/admin", "/admin/bookings/7f3c2a10-0002-4000-8000-000000000002"];
 
 for (const path of pages) {
   test(`${path} has no serious or critical accessibility problems`, async ({ page }) => {

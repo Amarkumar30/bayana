@@ -1,4 +1,5 @@
-import { SiteFooter, SiteHeader } from "@/components/layout/site-chrome";
+import { SiteHeader } from "@/components/layout/site-chrome";
+import { SiteFooter } from "@/components/layout/site-footer";
 
 /** Marketing layout: header, page, footer. */
 export default function SiteLayout({ children }: { children: React.ReactNode }) {
