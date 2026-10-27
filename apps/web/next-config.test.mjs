@@ -18,6 +18,7 @@ describe("security headers", () => {
   it("next.config.ts serves exactly these headers", async () => {
     const text = await readFile(new URL("./next.config.ts", import.meta.url), "utf8");
     assert.match(text, /createSecurityHeaders\(process\.env\.NODE_ENV === "production", process\.env\.NEXT_PUBLIC_SITE_URL\)/);
-    assert.match(text, /headers: securityHeaders \}/);
+    // Every path gets the security headers (plus X-Robots-Tag: noindex when the site may not be indexed, lib/site.ts).
+    assert.match(text, /source: "\/:path\*", headers: \[\.\.\.securityHeaders, \.\.\.robotsHeaders\] \}/);
   });
 });

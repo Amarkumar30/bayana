@@ -215,6 +215,8 @@ Either way, `EMAIL_FROM` must use the authenticated domain, for example `Bayana 
 
 ## 7. Environment variable matrix
 
+Moving the existing deployment from the staging hostnames to `bayana.in` (one environment, not two): `docs/DOMAIN_SWITCH.md`. With `APP_ENV=production` the API refuses http/localhost origins, `_dev`/`_test` databases, a cookie domain that does not cover the web and API hosts, missing or placeholder secrets and live payments (`apps/api/src/config-schema.ts` `productionProblems`).
+
 API variables are validated at startup (`apps/api/src/config-schema.ts`) and the API exits with names-only messages if anything is wrong. Web variables are validated by `apps/web/env-schema.ts` at build time.
 
 ### API (Render dashboard; locally `apps/api/.env`)
@@ -227,7 +229,7 @@ API variables are validated at startup (`apps/api/src/config-schema.ts`) and the
 | `TRUST_PROXY` | 0 | 1 (in render.yaml) | 1 (in render.yaml) | no |
 | `WEB_ORIGINS` | http://localhost:3000 | https://staging.bayana.in | https://bayana.in (add `,https://www.bayana.in` only if www is ever served instead of redirected) | no |
 | `SESSION_COOKIE_DOMAIN` | empty (host-only) | .staging.bayana.in | .bayana.in | no |
-| `SESSION_COOKIE_NAME` | empty (= bayana_session) | bayana_staging_session (in render.yaml) | bayana_session | no |
+| `SESSION_COOKIE_NAME` | empty (= bayana_session) | bayana_staging_session (dashboard) | empty (= bayana_session) | no |
 | `DATABASE_URL` | Docker `bayana_dev` | Neon staging **pooled** | Neon prod **pooled** | yes |
 | `DATABASE_URL_DIRECT` | empty | Neon staging **direct** | Neon prod **direct** | yes |
 | `DATABASE_URL_TEST` | Docker `bayana_test` | not set | not set | no |
@@ -262,7 +264,7 @@ API variables are validated at startup (`apps/api/src/config-schema.ts`) and the
 | `APP_ENV` (server-only) | empty (= local) | staging | production |
 | `LEGAL_REVIEWED` (server-only) | empty (draft banner) | empty (draft banner) | `true` only after a lawyer has reviewed the legal pages |
 
-With `APP_ENV=production`, the web build **fails** while `apps/web/lib/business-details.ts` still has `[PLACEHOLDER]` values (legal name, address, grievance officer, prices...), and `robots.txt` lets search engines in; on staging it disallows everything. `SESSION_COOKIE_NAME` must be identical on the API and the web app of one environment. The web server uses it to forward the visitor's session to the API (`apps/web/lib/server-api.ts`).
+With `APP_ENV=production`, the web build **fails** while `apps/web/lib/business-details.ts` still has `[PLACEHOLDER]` values (legal name, address, grievance officer, prices...), and search engines are let in only when `LEGAL_REVIEWED=true` as well (`apps/web/lib/site.ts` `indexingAllowed`); otherwise robots.txt disallows everything and every response carries `X-Robots-Tag: noindex`. `SESSION_COOKIE_NAME` must be identical on the API and the web app of one environment. The web server uses it to forward the visitor's session to the API (`apps/web/lib/server-api.ts`).
 
 Every `NEXT_PUBLIC_*` value is public. Never put a secret there.
 

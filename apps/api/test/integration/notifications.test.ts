@@ -126,7 +126,10 @@ describe("outbox delivery (SPEC 15.1)", () => {
     expect((await call("POST", "/v1/auth/booking/otp/request", { body: { email } })).status).toBe(202);
     const message = await until(async () => capturedEmails().slice(before).find(item => item.to === email), Boolean);
     expect(message?.subject).toMatch(/^Your Bayana code: \d{6}$/);
-    expect((await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM email_outbox WHERE status='queued' AND priority=0 AND recipient LIKE 'backlog-%'")).rows[0].n).toBe(0);
+    // The same kick also drains the whole backlog, without a tick. Rows in one batch are sent in no fixed order, so the code
+    // may arrive just before the rest of its batch: wait for them (until() fails after 3 s) instead of reading once.
+    const queued = () => pool.query<{ n: number }>("SELECT count(*)::int AS n FROM email_outbox WHERE status='queued' AND priority=0 AND recipient LIKE 'backlog-%'").then(result => result.rows[0].n);
+    expect(await until(queued, count => count === 0)).toBe(0);
   });
 });
 

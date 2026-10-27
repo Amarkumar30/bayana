@@ -9,13 +9,14 @@ import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Badge, Card, EmptyState, Money } from "@/components/ui/display";
 import { priceUnit, serviceLength } from "@/lib/service-label";
+import { vendorUrl } from "@/lib/site";
 
 // Incremental Static Regeneration: rendered on first visit, cached, refreshed in the background every 5 minutes.
 export const revalidate = 300;
 export const dynamicParams = true;
 export function generateStaticParams() { return []; }
 
-const pageUrl = (slug: string) => `${env.NEXT_PUBLIC_SITE_URL}/${slug}`;
+const pageUrl = (slug: string) => vendorUrl(env.NEXT_PUBLIC_SITE_URL, slug);
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
   const vendor = await fetchPublicVendor(slug);

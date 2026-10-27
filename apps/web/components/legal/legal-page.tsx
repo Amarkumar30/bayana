@@ -2,10 +2,11 @@ import type { Metadata } from "next";
 import { PageHeader } from "@/components/layout/brand";
 import { Notice } from "@/components/ui/display";
 import { loadServerEnv } from "@/env-schema";
+import { indexingAllowed } from "@/lib/site";
 import { businessDetails as business } from "@/lib/business-details";
 
-/** Legal pages are public and indexable (robots.ts keeps staging out of search engines entirely). */
-export const legalMetadata = (title: string, description: string): Metadata => ({ title: `${title} | Bayana`, description, robots: { index: true, follow: true } });
+/** Legal pages are public; indexable only when the whole site is (APP_ENV=production and LEGAL_REVIEWED=true). */
+export const legalMetadata = (title: string, description: string): Metadata => ({ title: `${title} | Bayana`, description, robots: indexingAllowed(loadServerEnv()) ? { index: true, follow: true } : { index: false, follow: false } });
 
 /** A paragraph, or a bulleted list. */
 export type LegalBlock = string | { list: string[] };

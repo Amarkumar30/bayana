@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { randomBytes } from "node:crypto";
 import { loadConfig } from "../../src/config.js";
+import { cookieDomainCovers, looksLikePlaceholder } from "../../src/config-schema.js";
 
 const base = { NODE_ENV: "development", WEB_ORIGINS: "http://localhost:3000", DATABASE_URL: "postgres://user:password@localhost:5432/bayana_dev", SESSION_SECRET: "a".repeat(32), EMAIL_TRANSPORT: "log" };
 const production = { ...base, NODE_ENV: "production", EMAIL_TRANSPORT: "smtp", SMTP_URL: "smtp://mail.example.test:587", EMAIL_FROM: "Bayana <hello@example.test>", OTP_PEPPER: "p".repeat(32), DATABASE_URL_DIRECT: "postgres://user:password@db.example.test:5432/bayana", TICK_SECRET: "t".repeat(32) };
@@ -72,5 +74,54 @@ describe("configuration", () => {
     expect(result.stderr).toContain("SESSION_SECRET");
     expect(result.stderr).not.toContain("short-value-123");
     expect(result.stderr).not.toMatch(/\n\s+at /);
+  });
+});
+
+// APP_ENV=production is the public site on bayana.in (docs/DOMAIN_SWITCH.md). Values here are fakes, never real secrets.
+const random = () => randomBytes(32).toString("hex");
+const site = {
+  NODE_ENV: "production", APP_ENV: "production", TRUST_PROXY: "1", WEB_ORIGINS: "https://bayana.in", SESSION_COOKIE_DOMAIN: ".bayana.in",
+  DATABASE_URL: "postgres://app:pw@ep-fake-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require", DATABASE_URL_DIRECT: "postgres://app:pw@ep-fake.ap-southeast-1.aws.neon.tech/neondb?sslmode=require",
+  SESSION_SECRET: random(), OTP_PEPPER: random(), TICK_SECRET: random(), EMAIL_TRANSPORT: "brevo_api", BREVO_API_KEY: "k".repeat(40), EMAIL_FROM: "Bayana <bookings@bayana.in>",
+  GOOGLE_CLIENT_ID: "123-abc.apps.googleusercontent.com", GOOGLE_CLIENT_SECRET: "fake-google-client-value", GOOGLE_REDIRECT_URI: "https://api.bayana.in/v1/auth/google/callback"
+};
+const refusal = (overrides: Record<string, string | undefined>) => { try { loadConfig({ ...site, ...overrides }); return ""; } catch (error) { return (error as Error).message; } };
+
+describe("APP_ENV=production startup guard", () => {
+  it("accepts the bayana.in settings, and staging and local settings are unchanged", () => {
+    expect(loadConfig(site).WEB_ORIGINS).toEqual(["https://bayana.in"]);
+    const staging = { ...site, APP_ENV: "staging", WEB_ORIGINS: "https://staging.bayana.in", SESSION_COOKIE_DOMAIN: ".staging.bayana.in", SESSION_COOKIE_NAME: "bayana_staging_session", GOOGLE_REDIRECT_URI: "https://api.staging.bayana.in/v1/auth/google/callback" };
+    expect(loadConfig(staging).SESSION_COOKIE_NAME).toBe("bayana_staging_session");
+    // Staging is not held to the production rules (for example a copied secret or no cookie domain still loads).
+    expect(() => loadConfig({ ...staging, SESSION_COOKIE_DOMAIN: undefined, TICK_SECRET: "t".repeat(32) })).not.toThrow();
+    expect(loadConfig(base).APP_ENV).toBe("local");
+    expect(loadConfig(site).SESSION_COOKIE_NAME).toBe("bayana_session");
+  });
+  it.each([
+    ["NODE_ENV is not production", { NODE_ENV: "development", EMAIL_TRANSPORT: "smtp", SMTP_URL: "smtp://mail.example.test:587" }, "NODE_ENV: must be production when APP_ENV=production"],
+    ["an origin is http", { WEB_ORIGINS: "http://bayana.in" }, "WEB_ORIGINS: must list only https origins"],
+    ["an origin is localhost", { WEB_ORIGINS: "https://bayana.in,https://localhost:3000" }, "WEB_ORIGINS: must list only https origins"],
+    ["the Google redirect URI is localhost", { GOOGLE_REDIRECT_URI: "http://localhost:4000/v1/auth/google/callback" }, "GOOGLE_REDIRECT_URI: must be an https URL"],
+    ["the database is a _dev one", { DATABASE_URL: "postgres://bayana:pw@db.example.test:5432/bayana_dev" }, "DATABASE_URL: must not name a _dev or _test database"],
+    ["the direct database is a _test one", { DATABASE_URL_DIRECT: "postgres://bayana:pw@db.example.test:5432/bayana_test" }, "DATABASE_URL_DIRECT: must not name a _dev or _test database"],
+    ["the cookie domain is missing", { SESSION_COOKIE_DOMAIN: undefined }, "SESSION_COOKIE_DOMAIN: is required when APP_ENV=production"],
+    ["the cookie domain is staging's", { SESSION_COOKIE_DOMAIN: ".staging.bayana.in" }, "SESSION_COOKIE_DOMAIN: must cover the web host"],
+    ["the cookie domain does not cover the API host", { GOOGLE_REDIRECT_URI: "https://api.bayana.example/v1/auth/google/callback" }, "SESSION_COOKIE_DOMAIN: must also cover the API host"],
+    ["the session secret is a placeholder", { SESSION_SECRET: "change-me-to-a-long-random-value-please" }, "SESSION_SECRET: looks like a placeholder"],
+    ["the OTP pepper is missing", { OTP_PEPPER: undefined }, "OTP_PEPPER: is required"],
+    ["the tick secret is a repeated character", { TICK_SECRET: "t".repeat(40) }, "TICK_SECRET: looks like a placeholder"],
+    ["payments are live", { PAYMENT_MODE: "live", LIVE_PAYMENTS_ACK: "yes", RAZORPAY_KEY_ID: "rzp_live_fake0000", RAZORPAY_KEY_SECRET: "fake-live-secret", RAZORPAY_WEBHOOK_SECRET: "w".repeat(20) }, "PAYMENT_MODE: may not be live in this build"]
+  ])("refuses to start when %s", (_case, overrides, message) => {
+    const text = refusal(overrides);
+    expect(text).toContain(message);
+    for (const value of Object.values(overrides)) if (value && value.length > 8) expect(text).not.toContain(value);
+  });
+  it("matches cookie domains to hosts and spots copied placeholders", () => {
+    expect(cookieDomainCovers(".bayana.in", "bayana.in")).toBe(true); expect(cookieDomainCovers(".bayana.in", "api.bayana.in")).toBe(true);
+    expect(cookieDomainCovers("bayana.in", "www.bayana.in")).toBe(true);
+    expect(cookieDomainCovers(".staging.bayana.in", "bayana.in")).toBe(false); expect(cookieDomainCovers(".in", "bayana.in")).toBe(false);
+    expect(cookieDomainCovers(".bayana.in", "notbayana.in")).toBe(false);
+    for (const value of ["change-me", "<generate>", "your-secret-here", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "abababababababababababab", "placeholder-value"]) expect(looksLikePlaceholder(value)).toBe(true);
+    for (let index = 0; index < 20; index++) expect(looksLikePlaceholder(random())).toBe(false);
   });
 });

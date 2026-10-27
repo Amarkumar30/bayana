@@ -28,7 +28,7 @@ export type Config = Omit<Parsed, "WEB_ORIGIN" | "WEB_ORIGINS" | "DATABASE_URL" 
 export const allowedValues: Record<keyof Shape, string> = {
   NODE_ENV: "one of development, test, production", APP_ENV: "one of local, staging, production", PORT: "a port number from 1 to 65535 (4000 locally)", TRUST_PROXY: "a whole number of proxy hops from 0 to 10 (0 locally, 1 on Render)",
   WEB_ORIGINS: "comma-separated exact origins with no path or trailing slash, e.g. http://localhost:3000", WEB_ORIGIN: "an origin like http://localhost:3000 (old name; use WEB_ORIGINS)", SESSION_COOKIE_DOMAIN: "empty locally, or a domain like .bayana.in",
-  SESSION_COOKIE_NAME: "empty (bayana_session), or letters, digits and _ only; staging uses bayana_staging_session so its cookie never collides with production",
+  SESSION_COOKIE_NAME: "empty (bayana_session), or letters, digits and _ only (a separate deployment on the same domain needs its own name)",
   DATABASE_URL: "a postgres:// URL, e.g. postgres://bayana:bayana@localhost:5433/bayana_dev", DATABASE_URL_DIRECT: "a postgres:// URL for migrations (may be empty outside production)", DATABASE_URL_TEST: "a postgres:// URL whose database name ends in _test, e.g. .../bayana_test",
   HOLD_MINUTES: "a whole number of minutes, at least 1", REQUEST_HOLD_HOURS: "a whole number of hours from 1 to 168", MIN_ADVANCE_PAISE: "a positive whole number of paise",
   PAYMENT_MODE: "one of disabled, test, live (use disabled locally)", LIVE_PAYMENTS_ACK: "empty, or yes (production with live payments only)", RAZORPAY_KEY_ID: "an rzp_test_ key id with PAYMENT_MODE=test (may stay set, unused, while disabled); rzp_live_ only with PAYMENT_MODE=live",
@@ -40,7 +40,7 @@ export const allowedValues: Record<keyof Shape, string> = {
   GOOGLE_REDIRECT_URI: "the API callback URL registered in Google, e.g. http://localhost:4000/v1/auth/google/callback"
 };
 
-/** The Google sign-in state cookie follows the session cookie per environment: bayana_session -> bayana_google, bayana_staging_session -> bayana_staging_google. */
+/** The Google sign-in state cookie follows the session cookie name: bayana_session -> bayana_google, <prefix>_session -> <prefix>_google. */
 export const googleCookieName = (sessionCookieName: string) => `${sessionCookieName.replace(/_session$/, "")}_google`;
 
 export type EnvProblem = { name: string; rule: string };
@@ -83,6 +83,35 @@ export function loadDatabaseConfig(input: NodeJS.ProcessEnv = process.env, envFi
 }
 
 /** Validates every variable and reports all problems at once, by name and rule only; rejected values are never included. */
+const isLocalHost = (hostname: string) => hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "[::1]" || /^\d+\.\d+\.\d+\.\d+$/.test(hostname);
+const publicHttps = (value: string) => { try { const url = new URL(value); return url.protocol === "https:" && !isLocalHost(url.hostname); } catch { return false; } };
+const databaseNameOf = (value: string) => { try { return decodeURIComponent(new URL(value).pathname.slice(1)); } catch { return ""; } };
+/** Values copied from docs or left from setup (change-me, <...>, example, aaaa...) instead of a generated random secret. */
+export const looksLikePlaceholder = (value: string) => /change[-_ ]?me|placeholder|replace|example|your[-_ ]|todo|dummy|secret|password|[<>]/i.test(value) || /^(.{1,4})\1+$/.test(value);
+/** True when the cookie domain (".bayana.in" or "bayana.in") covers the host (bayana.in, api.bayana.in). */
+export const cookieDomainCovers = (domain: string, hostname: string) => { const bare = domain.replace(/^\./, "").toLowerCase(); return bare.includes(".") && (hostname === bare || hostname.endsWith(`.${bare}`)); };
+
+/**
+ * APP_ENV=production is the public site (https://bayana.in): refuse settings that belong on a laptop or a test database, a
+ * cookie the web host cannot read, missing or copied secrets, and live payments (still off in this build). Staging and local
+ * values are untouched: these rules apply to APP_ENV=production only. Names only, never values.
+ */
+export function productionProblems(v: Partial<Parsed>, webOrigins: string[] | undefined): EnvProblem[] {
+  if (v.APP_ENV !== "production") return [];
+  const out: EnvProblem[] = []; const add = (name: string, rule: string) => out.push({ name, rule });
+  if (v.NODE_ENV !== "production") add("NODE_ENV", "must be production when APP_ENV=production");
+  if (webOrigins && !webOrigins.every(publicHttps)) add("WEB_ORIGINS", "must list only https origins, none of them localhost, when APP_ENV=production");
+  if (v.GOOGLE_REDIRECT_URI && !publicHttps(v.GOOGLE_REDIRECT_URI)) add("GOOGLE_REDIRECT_URI", "must be an https URL that is not localhost when APP_ENV=production");
+  for (const name of ["DATABASE_URL", "DATABASE_URL_DIRECT"] as const) { const value = v[name]; const database = value ? databaseNameOf(value) : ""; if (database.endsWith("_dev") || database.endsWith("_test")) add(name, "must not name a _dev or _test database when APP_ENV=production"); }
+  const web = webOrigins?.[0] ? new URL(webOrigins[0]).hostname : null;
+  if (!v.SESSION_COOKIE_DOMAIN) add("SESSION_COOKIE_DOMAIN", "is required when APP_ENV=production (for example .bayana.in), so the web host can read the session cookie the API sets");
+  else if (web && !cookieDomainCovers(v.SESSION_COOKIE_DOMAIN, web)) add("SESSION_COOKIE_DOMAIN", "must cover the web host (the first WEB_ORIGINS entry), for example .bayana.in for https://bayana.in");
+  else if (v.GOOGLE_REDIRECT_URI && publicHttps(v.GOOGLE_REDIRECT_URI) && !cookieDomainCovers(v.SESSION_COOKIE_DOMAIN, new URL(v.GOOGLE_REDIRECT_URI).hostname)) add("SESSION_COOKIE_DOMAIN", "must also cover the API host (the GOOGLE_REDIRECT_URI host), for example .bayana.in for api.bayana.in");
+  for (const name of ["SESSION_SECRET", "OTP_PEPPER", "TICK_SECRET"] as const) { const value = v[name]; if (!value) add(name, "is required when APP_ENV=production"); else if (looksLikePlaceholder(value)) add(name, "looks like a placeholder; generate a random value (pnpm.cmd setup:env) when APP_ENV=production"); }
+  if (v.PAYMENT_MODE === "live") add("PAYMENT_MODE", "may not be live in this build; use disabled or test");
+  return out;
+}
+
 export function loadConfig(input: NodeJS.ProcessEnv = process.env, envFile = "apps/api/.env"): Config {
   const problems: EnvProblem[] = []; const value = {} as Record<string, unknown>;
   for (const [name, schema] of Object.entries(shape) as [keyof Shape, z.ZodTypeAny][]) {
@@ -121,6 +150,7 @@ export function loadConfig(input: NodeJS.ProcessEnv = process.env, envFile = "ap
   if (v.PAYMENT_MODE === "live" && (!production || v.LIVE_PAYMENTS_ACK !== "yes")) problem("PAYMENT_MODE", "may be live only with NODE_ENV=production and LIVE_PAYMENTS_ACK=yes");
   // Google sign-in is optional: without a client id it is simply off. With one, the secret and callback URL must be set too.
   if (v.GOOGLE_CLIENT_ID) for (const name of ["GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"] as const) if (!v[name]) problem(name, `is required when GOOGLE_CLIENT_ID is set; set it to ${allowedValues[name]}`);
+  for (const item of productionProblems(v, webOrigins)) problem(item.name, item.rule);
   if (problems.length || !webOrigins || !databaseUrl) throw new ConfigError(problems, envFile);
   const { WEB_ORIGIN: _legacyOrigin, WEB_ORIGINS: _origins, DATABASE_URL: _database, DATABASE_URL_DIRECT: direct, ...rest } = v as Parsed;
   return { ...rest, EMAIL_TRANSPORT: transport, WEB_ORIGINS: webOrigins, DATABASE_URL: databaseUrl, DATABASE_URL_DIRECT: v.NODE_ENV === "test" ? databaseUrl : direct ?? databaseUrl, OTP_PEPPER: v.OTP_PEPPER ?? (v as Parsed).SESSION_SECRET };

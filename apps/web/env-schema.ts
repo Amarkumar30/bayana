@@ -21,7 +21,7 @@ export function webEnvProblems(input: Record<string, string | undefined>) {
 }
 /**
  * Server-only settings: never NEXT_PUBLIC_, so Next never inlines them into the browser bundle. SESSION_COOKIE_NAME must match
- * the API's (apps/api/src/config-schema.ts, same rule): bayana_session by default, bayana_staging_session on staging.
+ * the API's (apps/api/src/config-schema.ts, same rule): bayana_session by default.
  */
 const emptyIsUnset = (value: unknown) => value === "" ? undefined : value;
 const serverSchema = z.object({

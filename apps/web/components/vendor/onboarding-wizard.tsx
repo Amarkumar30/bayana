@@ -10,6 +10,8 @@ import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { ApiError, api, fieldErrors, humanMessage, requirementCopy } from "@/lib/api";
 import { ServiceForm } from "./service-form";
 import { categories, timezones, weekdayNames, type Checklist, type Profile } from "./types";
+import { vendorLinkLabel } from "@/lib/site";
+import { env } from "@/env";
 
 const steps = ["Your business", "First service", "Your hours", "Publish"];
 
@@ -63,7 +65,7 @@ function ProfileStep({ onDone }: { onDone: () => void }) {
     <form onSubmit={submit} noValidate className="grid gap-4">
       <div className="grid gap-1"><h1 className="text-2xl">Tell clients who you are</h1><p className="text-sm text-muted">This appears at the top of your booking page.</p></div>
       <Field label="Business name" error={shown("business_name")}>{p => <Input {...p} value={form.business_name} onChange={event => setForm({ ...form, business_name: event.target.value })} placeholder="Studio Sunday" autoFocus />}</Field>
-      <Field label="Your link" error={shown("slug")} hint={!shown("slug") && slug ? `bayana.in/${slug}` : "Lowercase letters, numbers and hyphens."}>{p => <Input {...p} value={slug} onChange={event => { setSlugEdited(true); setForm({ ...form, slug: event.target.value.toLowerCase() }); setServer({}); }} placeholder="studio-sunday" />}</Field>
+      <Field label="Your link" error={shown("slug")} hint={!shown("slug") && slug ? vendorLinkLabel(env.NEXT_PUBLIC_SITE_URL, slug) : "Lowercase letters, numbers and hyphens."}>{p => <Input {...p} value={slug} onChange={event => { setSlugEdited(true); setForm({ ...form, slug: event.target.value.toLowerCase() }); setServer({}); }} placeholder="studio-sunday" />}</Field>
       <Field label="Category">{p => <Select {...p} value={form.category} onChange={event => setForm({ ...form, category: event.target.value })}>{categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select>}</Field>
       <Field label="City" error={shown("city")}>{p => <Input {...p} value={form.city} onChange={event => setForm({ ...form, city: event.target.value })} placeholder="Mumbai" />}</Field>
       <Field label="Timezone" hint="Your hours and bookings use this timezone.">{p => <Select {...p} value={form.timezone} onChange={event => setForm({ ...form, timezone: event.target.value })}>{timezones.map(zone => <option key={zone}>{zone}</option>)}</Select>}</Field>
@@ -107,7 +109,7 @@ function PublishStep({ profile, onBack, onPublished }: { profile: Profile; onBac
     <div className="grid justify-items-center gap-4 py-4 text-center">
       <CheckCircle2 className="size-12 text-success" aria-hidden />
       <h1 className="text-2xl">Your page is live</h1>
-      <p className="break-all rounded-input bg-surface-muted px-3 py-2.5 font-mono text-sm">bayana.in/{profile.slug}</p>
+      <p className="break-all rounded-input bg-surface-muted px-3 py-2.5 font-mono text-sm">{vendorLinkLabel(env.NEXT_PUBLIC_SITE_URL, profile.slug)}</p>
       <div className="flex flex-wrap justify-center gap-2"><Button asChild variant="secondary"><a href={`/${profile.slug}`} target="_blank" rel="noreferrer"><ExternalLink aria-hidden />View page</a></Button><Button asChild><Link href="/dashboard">Go to dashboard</Link></Button></div>
     </div>
   );

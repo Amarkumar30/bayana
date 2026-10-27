@@ -3,6 +3,8 @@ import Link from "next/link";
 import { PageHeader } from "@/components/layout/brand";
 import { Card } from "@/components/ui/display";
 import { businessDetails as business } from "@/lib/business-details";
+import { siteHost } from "@/lib/site";
+import { env } from "@/env";
 
 export const metadata: Metadata = { title: "About | Bayana", description: "Why Bayana exists and how it works: advance bookings for independent service professionals in India." };
 
@@ -16,7 +18,7 @@ export default function About() {
         <Card className="text-base">
           <h2 className="mb-3 text-lg text-ink">How it works</h2>
           <ul className="grid list-disc gap-2 pl-5">
-            <li>Photographers, salons, tutors, consultants, trainers, event planners and repair professionals publish a booking page at bayana.in/your-name.</li>
+            <li>Photographers, salons, tutors, consultants, trainers, event planners and repair professionals publish a booking page at {siteHost(env.NEXT_PUBLIC_SITE_URL)}/your-name.</li>
             <li>A customer picks a service and a time, confirms their email, and agrees to the business&apos;s terms. We keep an exact copy of what was agreed.</li>
             <li>The advance is paid online through Razorpay, or directly to the business, which records it. The booking is confirmed only once the money is in.</li>
             <li>Both sides see the same booking, payments and refunds, and both get emails at each step.</li>
