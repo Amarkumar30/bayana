@@ -62,7 +62,16 @@ export async function sendOutbox(options: { limit?: number; urgentOnly?: boolean
 /**
  * Called after a transaction that queued urgent mail commits: sends due priority-0 emails (codes, payments,
  * confirmations) now instead of at the next tick. Fire and forget; a failure just leaves the row for the tick.
+ * Batches continue while they come back full (at most URGENT_BATCHES), so a backlog of older urgent mail never keeps a
+ * new sign-in code waiting for the next tick.
  */
+const URGENT_BATCH = 10, URGENT_BATCHES = 5;
+export async function sendUrgentNow() {
+  for (let batch = 0; batch < URGENT_BATCHES; batch++) {
+    const result = await sendOutbox({ urgentOnly: true, limit: URGENT_BATCH });
+    if (result.sent + result.retrying + result.failed < URGENT_BATCH) return;
+  }
+}
 export function kickUrgent() {
-  setImmediate(() => { sendOutbox({ urgentOnly: true, limit: 10 }).catch(error => log("error", "email.kick_failed", { err: error instanceof Error ? error.message : String(error) })); });
+  setImmediate(() => { sendUrgentNow().catch(error => log("error", "email.kick_failed", { err: error instanceof Error ? error.message : String(error) })); });
 }

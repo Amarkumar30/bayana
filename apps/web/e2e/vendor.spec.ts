@@ -21,7 +21,7 @@ test("a new vendor sees the three-step checklist on the dashboard", async ({ pag
   await expect(steps.nth(0).getByRole("link", { name: "Add a service" })).toHaveAttribute("href", "/dashboard/services");
 });
 
-test("onboarding wizard: profile, first service, hours, publish", async ({ page }) => {
+test("onboarding wizard: profile, first service, hours, publish", async ({ page, baseURL }) => {
   const state = await mockApi(page, brandNewVendor());
   await page.goto("/onboarding");
   await expect(page.getByRole("heading", { name: "Tell clients who you are" })).toBeVisible();
@@ -59,7 +59,8 @@ test("onboarding wizard: profile, first service, hours, publish", async ({ page 
   await page.getByLabel("Rescheduling policy").fill("One free reschedule.");
   await page.getByRole("button", { name: "Publish my page" }).click();
   await expect(page.getByRole("heading", { name: "Your page is live" })).toBeVisible();
-  await expect(page.getByText("bayana.in/studio-sunday")).toBeVisible();
+  // The link is built from NEXT_PUBLIC_SITE_URL (the test server's origin here, https://bayana.in in production).
+  await expect(page.getByText(`${new URL(baseURL!).host}/studio-sunday`)).toBeVisible();
 });
 
 test("services page lists services and validates the advance before saving", async ({ page }) => {

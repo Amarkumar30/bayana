@@ -19,7 +19,7 @@ const nineIst = `${day}T03:30:00.000Z`, tenIst = `${day}T04:30:00.000Z`;
 async function bookableVendor(advance: { type: "PERCENT" | "NONE"; value: number } = { type: "PERCENT", value: 20 }) {
   const owner = await createUser(pool); const vendorId = randomUUID(), serviceId = randomUUID(), slug = `engine-${randomUUID().slice(0, 8)}`;
   await pool.query("INSERT INTO vendors(id,owner_user_id,slug,display_name,city,bio,base_price_paise,advance_type,advance_value,published,bookings_enabled,timezone,min_notice_minutes,max_advance_days,terms) VALUES($1,$2,$3,'Engine test','Delhi','',100000,'PERCENT',20,true,true,'Asia/Kolkata',0,365,'Advance confirms the date.')", [vendorId, owner.id, slug]);
-  await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value) VALUES($1,$2,'Session',100000,60,'TIMED',$3,$4)", [serviceId, vendorId, advance.type, advance.value]);
+  await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value) VALUES($1,$2,'Session',100000,60,'hourly',$3,$4)", [serviceId, vendorId, advance.type, advance.value]);
   for (let weekday = 0; weekday < 7; weekday++) await pool.query("INSERT INTO availability_rules(id,vendor_id,weekday,start_time,end_time) VALUES($1,$2,$3,'09:00','18:00')", [randomUUID(), vendorId, weekday]);
   return { vendorId, serviceId, slug, ownerId: owner.id };
 }

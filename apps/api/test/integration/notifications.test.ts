@@ -32,7 +32,7 @@ const until = async <T>(read: () => Promise<T>, done: (value: T) => boolean) => 
 async function vendor() {
   const owner = await createUser(pool); const id = randomUUID(), serviceId = randomUUID(), slug = `mail-${randomUUID().slice(0, 8)}`;
   await pool.query("INSERT INTO vendors(id,owner_user_id,slug,display_name,city,bio,base_price_paise,advance_type,advance_value,published,bookings_enabled,timezone,min_notice_minutes,max_advance_days,terms,phone_required) VALUES($1,$2,$3,'Studio Mail','Pune','',100000,'PERCENT',20,true,true,'Asia/Kolkata',0,365,'Advance confirms.',false)", [id, owner.id, slug]);
-  await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value) VALUES($1,$2,'Session',100000,60,'TIMED','PERCENT',20)", [serviceId, id]);
+  await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value) VALUES($1,$2,'Session',100000,60,'hourly','PERCENT',20)", [serviceId, id]);
   for (let weekday = 0; weekday < 7; weekday++) await pool.query("INSERT INTO availability_rules(id,vendor_id,weekday,start_time,end_time) VALUES($1,$2,$3,'09:00','18:00')", [randomUUID(), id, weekday]);
   return { id, serviceId, slug, ownerEmail: owner.email };
 }
@@ -118,6 +118,18 @@ describe("outbox delivery (SPEC 15.1)", () => {
     expect(message?.subject).toMatch(/^Your Bayana code: \d{6}$/);
     const row = await until(() => pool.query<{ status: string; priority: number; text_body: string }>("SELECT status,priority,text_body FROM email_outbox WHERE recipient=$1", [email]).then(result => result.rows[0]), value => value?.status === "sent");
     expect(row).toEqual({ status: "sent", priority: 0, text_body: "[code removed after sending]" });
+  });
+  it("a new login code is sent at once even behind a backlog of older urgent mail (more than one batch)", async () => {
+    // 15 older urgent emails are still queued (more than the 10 one urgent batch takes, oldest first).
+    for (let index = 0; index < 15; index++) await enqueue(pool, "otp", `backlog-${index}-${randomUUID().slice(0, 6)}@example.test`, sample.otp, { priority: PRIORITY.urgent });
+    const email = `late-code-${randomUUID().slice(0, 8)}@example.test`; const before = capturedEmails().length;
+    expect((await call("POST", "/v1/auth/booking/otp/request", { body: { email } })).status).toBe(202);
+    const message = await until(async () => capturedEmails().slice(before).find(item => item.to === email), Boolean);
+    expect(message?.subject).toMatch(/^Your Bayana code: \d{6}$/);
+    // The same kick also drains the whole backlog, without a tick. Rows in one batch are sent in no fixed order, so the code
+    // may arrive just before the rest of its batch: wait for them (until() fails after 3 s) instead of reading once.
+    const queued = () => pool.query<{ n: number }>("SELECT count(*)::int AS n FROM email_outbox WHERE status='queued' AND priority=0 AND recipient LIKE 'backlog-%'").then(result => result.rows[0].n);
+    expect(await until(queued, count => count === 0)).toBe(0);
   });
 });
 

@@ -28,7 +28,7 @@ const at = (time: string) => { const [h, m] = time.split(":").map(Number); retur
 async function vendor() {
   const owner = await createUser(pool); const id = randomUUID(), serviceId = randomUUID(), slug = `dash-${randomUUID().slice(0, 8)}`;
   await pool.query("INSERT INTO vendors(id,owner_user_id,slug,display_name,city,bio,base_price_paise,advance_type,advance_value,published,bookings_enabled,timezone,min_notice_minutes,max_advance_days,terms,phone_required) VALUES($1,$2,$3,'Studio Dash','Pune','',100000,'PERCENT',20,true,true,'Asia/Kolkata',0,365,'Advance confirms.',false)", [id, owner.id, slug]);
-  await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value,cancellation_tiers) VALUES($1,$2,'Session',100000,60,'TIMED','PERCENT',20,$3)", [serviceId, id, JSON.stringify([{ min_hours_before: 48, refund_percent: 50 }])]);
+  await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value,cancellation_tiers) VALUES($1,$2,'Session',100000,60,'hourly','PERCENT',20,$3)", [serviceId, id, JSON.stringify([{ min_hours_before: 48, refund_percent: 50 }])]);
   for (let weekday = 0; weekday < 7; weekday++) await pool.query("INSERT INTO availability_rules(id,vendor_id,weekday,start_time,end_time) VALUES($1,$2,$3,'09:00','18:00')", [randomUUID(), id, weekday]);
   return { id, serviceId, slug, ownerId: owner.id, ownerEmail: owner.email, cookie: await sessionFor(owner.id) };
 }

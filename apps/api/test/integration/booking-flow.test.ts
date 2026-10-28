@@ -25,7 +25,7 @@ const sessionFor = async (userId: string) => `bayana_session=${await transaction
 async function vendor(template = "Pay {{advance}} now for {{service_name}} on {{date}}.", tiers: unknown[] = [{ min_hours_before: 48, refund_percent: 50 }]) {
   const owner = await createUser(pool); const id = randomUUID(), serviceId = randomUUID(), slug = `flow-${randomUUID().slice(0, 8)}`;
   await pool.query("INSERT INTO vendors(id,owner_user_id,slug,display_name,city,bio,base_price_paise,advance_type,advance_value,published,bookings_enabled,timezone,min_notice_minutes,max_advance_days,terms,cancellation_policy,rescheduling_policy,phone_required) VALUES($1,$2,$3,'Studio Flow','Pune','',100000,'PERCENT',20,true,true,'Asia/Kolkata',0,365,'The advance confirms the date.','See the refund tiers.','One free reschedule.',false)", [id, owner.id, slug]);
-  await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value,terms_template,cancellation_tiers) VALUES($1,$2,'Session',100000,60,'TIMED','PERCENT',20,$3,$4)", [serviceId, id, template, JSON.stringify(tiers)]);
+  await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value,terms_template,cancellation_tiers) VALUES($1,$2,'Session',100000,60,'hourly','PERCENT',20,$3,$4)", [serviceId, id, template, JSON.stringify(tiers)]);
   for (let weekday = 0; weekday < 7; weekday++) await pool.query("INSERT INTO availability_rules(id,vendor_id,weekday,start_time,end_time) VALUES($1,$2,$3,'09:00','18:00')", [randomUUID(), id, weekday]);
   return { id, serviceId, slug, ownerCookie: await sessionFor(owner.id) };
 }

@@ -19,7 +19,7 @@ const messages: Record<string, string> = {
 /** Server-authored messages are already human for these codes (for example password rules). */
 const passThrough = new Set(["INVALID_PASSWORD", "SLUG_TAKEN", "PROFILE_EXISTS", "WINDOW_OVERLAP", "SERVICE_IN_USE", "BOOKING_CONFLICT", "PUBLISH_CHECKLIST_INCOMPLETE", "NOT_FOUND",
   "INVALID_TRANSITION", "TIME_IN_PAST", "INVALID_TIME", "ACTIVE_BOOKINGS", "CONFIRMATION_MISMATCH", "AMOUNT_EXCEEDS_BALANCE", "BOOKING_NOT_PAYABLE", "TERMS_REQUIRED",
-  "SECOND_FACTOR_REQUIRED", "ALREADY_ENROLLED", "NOT_ENROLLED", "NOT_RETRYABLE", "ALREADY_PROCESSED", "NOT_ONLINE", "PAYMENTS_DISABLED"]);
+  "SECOND_FACTOR_REQUIRED", "ALREADY_ENROLLED", "NOT_ENROLLED", "NOT_RETRYABLE", "ALREADY_PROCESSED", "NOT_ONLINE", "PAYMENTS_DISABLED", "INVALID_BLOCKS", "CROSSES_MIDNIGHT"]);
 /** For the vendor's own actions the server's sentence fits better than the customer copy (for example SLOT_TAKEN). */
 export const vendorMessage = (error: unknown) => error instanceof ApiError && error.status < 500 && error.code !== "VALIDATION_ERROR" && error.code !== "AUTHENTICATION_REQUIRED" ? error.message : humanMessage(error);
 

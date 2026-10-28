@@ -8,13 +8,15 @@ import { fetchPublicVendor, type PublicVendor } from "@/lib/public-vendor";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Badge, Card, EmptyState, Money } from "@/components/ui/display";
+import { priceUnit, serviceLength } from "@/lib/service-label";
+import { vendorUrl } from "@/lib/site";
 
 // Incremental Static Regeneration: rendered on first visit, cached, refreshed in the background every 5 minutes.
 export const revalidate = 300;
 export const dynamicParams = true;
 export function generateStaticParams() { return []; }
 
-const pageUrl = (slug: string) => `${env.NEXT_PUBLIC_SITE_URL}/${slug}`;
+const pageUrl = (slug: string) => vendorUrl(env.NEXT_PUBLIC_SITE_URL, slug);
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
   const vendor = await fetchPublicVendor(slug);
@@ -65,7 +67,7 @@ export default async function VendorPage({ params }: { params: Promise<{ slug: s
           <ul className="grid gap-3">{vendor.services.map(service => (
             <li key={service.id}>
               <Link prefetch={false} href={`${bookHref}?service=${service.id}`} className="group block rounded-card bg-surface p-5 text-ink no-underline shadow-soft ring-1 ring-border/70 transition-shadow hover:shadow-raised hover:ring-primary/40">
-                <div className="flex items-start justify-between gap-4"><div className="grid gap-1"><strong className="text-base">{service.name}</strong>{service.description && <p className="text-sm text-muted">{service.description}</p>}<span className="text-sm text-muted">{service.booking_mode === "FULL_DAY" ? "Full day" : `${service.duration_minutes} min`}</span></div><div className="grid shrink-0 justify-items-end gap-1"><Money paise={service.price_paise} size="lg" /><span className="inline-flex items-center gap-0.5 text-sm font-semibold text-primary">Book<ChevronRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden /></span></div></div>
+                <div className="flex items-start justify-between gap-4"><div className="grid gap-1"><strong className="text-base">{service.name}</strong>{service.description && <p className="text-sm text-muted">{service.description}</p>}<span className="text-sm text-muted">{service.booking_mode === "daily" ? `Booked by the day · ${serviceLength(service)}` : serviceLength(service)}</span></div><div className="grid shrink-0 justify-items-end gap-1"><Money paise={service.price_paise} size="lg" />{priceUnit(service) && <span className="text-xs text-muted">{priceUnit(service)}</span>}<span className="inline-flex items-center gap-0.5 text-sm font-semibold text-primary">Book<ChevronRight className="size-4 transition-transform group-hover:translate-x-0.5" aria-hidden /></span></div></div>
                 <p className="mt-3 border-t border-border pt-3 text-sm text-muted">{service.advance_paise > 0 ? <>Pay <Money paise={service.advance_paise} size="sm" className="font-semibold text-ink" /> now · <Money paise={service.remaining_paise} size="sm" /> later</> : "No advance needed"}</p>
               </Link>
             </li>

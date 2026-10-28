@@ -207,9 +207,15 @@ Rules:
   - Send one booking email to the address mail-tester.com gives you, and confirm SPF, DKIM and DMARC all pass (staging check 11).
   - Send one email from Zoho to Gmail and confirm "Show original" still shows SPF, DKIM and DMARC as PASS.
 
-Brevo SMTP for the API is `SMTP_URL=smtp://<login>:<smtp-key>@smtp-relay.brevo.com:587`. URL-encode the login, because its `@` becomes `%40`. `EMAIL_FROM` must use the authenticated domain, for example `Bayana <bookings@bayana.in>`, with replies going to the Zoho mailbox.
+**Sending from the API: use Brevo's HTTPS API.** Set `EMAIL_TRANSPORT=brevo_api` and `BREVO_API_KEY` (Brevo > SMTP & API > **API keys**, a key starting `xkeysib-`; not the SMTP key). Mail then goes over HTTPS on port 443 (`POST https://api.brevo.com/v3/smtp/email`, `apps/api/src/email-brevo.ts`), so it doesn't depend on the host allowing outbound SMTP ports. Behaviour is the same as SMTP: same templates and outbox. A non-2xx answer, a network error or no answer within 10 s leaves the email queued with the usual backoff (1, 5, 30, 120 minutes). Logs show only `email.sent` with Brevo's status and message id; the key, addresses and bodies are never logged.
+
+SMTP still works as an alternative: `EMAIL_TRANSPORT=smtp` with `SMTP_URL=smtp://<login>:<smtp-key>@smtp-relay.brevo.com:587`. URL-encode the login, because its `@` becomes `%40`.
+
+Either way, `EMAIL_FROM` must use the authenticated domain, for example `Bayana <bookings@bayana.in>`, with replies going to the Zoho mailbox. Brevo receives the display name and address parsed from it, including the per-vendor "Studio via Bayana" names.
 
 ## 7. Environment variable matrix
+
+Moving the existing deployment from the staging hostnames to `bayana.in` (one environment, not two): `docs/DOMAIN_SWITCH.md`. With `APP_ENV=production` the API refuses http/localhost origins, `_dev`/`_test` databases, a cookie domain that does not cover the web and API hosts, missing or placeholder secrets and live payments (`apps/api/src/config-schema.ts` `productionProblems`).
 
 API variables are validated at startup (`apps/api/src/config-schema.ts`) and the API exits with names-only messages if anything is wrong. Web variables are validated by `apps/web/env-schema.ts` at build time.
 
@@ -223,7 +229,7 @@ API variables are validated at startup (`apps/api/src/config-schema.ts`) and the
 | `TRUST_PROXY` | 0 | 1 (in render.yaml) | 1 (in render.yaml) | no |
 | `WEB_ORIGINS` | http://localhost:3000 | https://staging.bayana.in | https://bayana.in (add `,https://www.bayana.in` only if www is ever served instead of redirected) | no |
 | `SESSION_COOKIE_DOMAIN` | empty (host-only) | .staging.bayana.in | .bayana.in | no |
-| `SESSION_COOKIE_NAME` | empty (= bayana_session) | bayana_staging_session (in render.yaml) | bayana_session | no |
+| `SESSION_COOKIE_NAME` | empty (= bayana_session) | bayana_staging_session (dashboard) | empty (= bayana_session) | no |
 | `DATABASE_URL` | Docker `bayana_dev` | Neon staging **pooled** | Neon prod **pooled** | yes |
 | `DATABASE_URL_DIRECT` | empty | Neon staging **direct** | Neon prod **direct** | yes |
 | `DATABASE_URL_TEST` | Docker `bayana_test` | not set | not set | no |
@@ -231,8 +237,9 @@ API variables are validated at startup (`apps/api/src/config-schema.ts`) and the
 | `OTP_PEPPER` | generated | new random | new random | yes |
 | `TICK_SECRET` | generated | new random (= GitHub secret) | new random (= GitHub secret) | yes |
 | `OPS_EMAIL` | optional | your inbox | your inbox | no |
-| `EMAIL_TRANSPORT` | smtp (Mailpit) | smtp | smtp | no |
-| `SMTP_URL` | smtp://localhost:1025 | Brevo SMTP URL | Brevo SMTP URL | yes |
+| `EMAIL_TRANSPORT` | smtp (Mailpit) | brevo_api | brevo_api | no |
+| `BREVO_API_KEY` | empty | Brevo API key | Brevo API key | yes |
+| `SMTP_URL` | smtp://localhost:1025 | empty (only with `EMAIL_TRANSPORT=smtp`) | empty (only with `EMAIL_TRANSPORT=smtp`) | yes |
 | `EMAIL_FROM` | Bayana <hello@bayana.local> | Bayana Staging <bookings@bayana.in> | Bayana <bookings@bayana.in> | no |
 | `PAYMENT_MODE` | disabled or test | test | disabled (live only after section 9) | no |
 | `RAZORPAY_KEY_ID` | rzp_test_… | rzp_test_… | empty while disabled | no |
@@ -254,8 +261,10 @@ API variables are validated at startup (`apps/api/src/config-schema.ts`) and the
 | `NEXT_PUBLIC_SITE_URL` | http://localhost:3000 | https://staging.bayana.in | https://bayana.in |
 | `NEXT_PUBLIC_RAZORPAY_KEY_ID` | empty or rzp_test_… | rzp_test_… | empty (the web build refuses live ids) |
 | `SESSION_COOKIE_NAME` (server-only, not `NEXT_PUBLIC_`) | empty (= bayana_session) | bayana_staging_session | bayana_session |
+| `APP_ENV` (server-only) | empty (= local) | staging | production |
+| `LEGAL_REVIEWED` (server-only) | empty (draft banner) | empty (draft banner) | `true` only after a lawyer has reviewed the legal pages |
 
-`SESSION_COOKIE_NAME` must be identical on the API and the web app of one environment. The web server uses it to forward the visitor's session to the API (`apps/web/lib/server-api.ts`).
+With `APP_ENV=production`, the web build **fails** while `apps/web/lib/business-details.ts` still has `[PLACEHOLDER]` values (legal name, address, grievance officer, prices...), and search engines are let in only when `LEGAL_REVIEWED=true` as well (`apps/web/lib/site.ts` `indexingAllowed`); otherwise robots.txt disallows everything and every response carries `X-Robots-Tag: noindex`. `SESSION_COOKIE_NAME` must be identical on the API and the web app of one environment. The web server uses it to forward the visitor's session to the API (`apps/web/lib/server-api.ts`).
 
 Every `NEXT_PUBLIC_*` value is public. Never put a secret there.
 

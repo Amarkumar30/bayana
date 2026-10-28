@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import { config } from "./config.js";
+import { sendViaBrevo } from "./email-brevo.js";
 import { log } from "./logger.js";
 
 export type Email = { from: string; to: string; subject: string; text: string; html?: string };
@@ -19,6 +20,12 @@ export async function sendEmail(message: Email) {
   if (testTransport) return testTransport(message);
   if (config.EMAIL_TRANSPORT === "capture") { captured.push(message); return; }
   if (config.EMAIL_TRANSPORT === "log") { log("info", "email.queued", { to: message.to, subject: message.subject }); return; }
+  if (config.EMAIL_TRANSPORT === "brevo_api") {
+    // Only the status and Brevo's message id are logged: never the key, the address or the body.
+    const sent = await sendViaBrevo(message, { apiKey: config.BREVO_API_KEY! });
+    log("info", "email.sent", { transport: "brevo_api", status: sent.status, messageId: sent.messageId });
+    return;
+  }
   smtp ??= nodemailer.createTransport(config.SMTP_URL!);
   await smtp.sendMail(message);
 }

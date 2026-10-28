@@ -39,7 +39,7 @@ const at = (time: string) => { const [h, m] = time.split(":").map(Number); retur
 async function vendor() {
   const owner = await createUser(pool); const id = randomUUID(), serviceId = randomUUID(), slug = `hard-${randomUUID().slice(0, 8)}`;
   await pool.query("INSERT INTO vendors(id,owner_user_id,slug,display_name,city,bio,base_price_paise,advance_type,advance_value,published,bookings_enabled,timezone,min_notice_minutes,max_advance_days,terms,phone_required) VALUES($1,$2,$3,'Hard Studio','Pune','',100000,'PERCENT',20,true,true,'Asia/Kolkata',0,365,'Advance confirms.',false)", [id, owner.id, slug]);
-  await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value) VALUES($1,$2,'Session',100000,60,'TIMED','PERCENT',20)", [serviceId, id]);
+  await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value) VALUES($1,$2,'Session',100000,60,'hourly','PERCENT',20)", [serviceId, id]);
   for (let weekday = 0; weekday < 7; weekday++) await pool.query("INSERT INTO availability_rules(id,vendor_id,weekday,start_time,end_time) VALUES($1,$2,$3,'09:00','18:00')", [randomUUID(), id, weekday]);
   return { id, serviceId, slug, ownerId: owner.id, cookie: await sessionFor(owner.id) };
 }
@@ -86,7 +86,7 @@ describe("CSRF: origin check on state-changing requests", () => {
 });
 
 describe("consent rows (PV-01)", () => {
-  it("signup records the account terms and privacy policy versions; booking acceptance records the booking terms", async () => {
+  it("signup records the platform terms, vendor agreement and privacy policy versions; booking acceptance records the booking terms, platform terms, refund and privacy policies", async () => {
     const email = `consent-${randomUUID().slice(0, 8)}@example.test`, since = capturedEmails().length;
     await call("POST", "/v1/auth/otp/request", { body: { email, purpose: "signup" } });
     let code = "";
@@ -94,9 +94,11 @@ describe("consent rows (PV-01)", () => {
     const signup = await call("POST", "/v1/auth/signup", { body: { email, code }, headers: { "user-agent": "ConsentTest/1.0" } });
     expect(signup.status).toBe(201);
     const rows = (await pool.query("SELECT kind,policy_version,source,user_agent FROM consents WHERE user_id=$1 ORDER BY kind", [signup.body.user.id])).rows;
-    expect(rows).toEqual([{ kind: "account_terms", policy_version: POLICY_VERSIONS.account_terms, source: "signup_email", user_agent: "ConsentTest/1.0" }, { kind: "privacy_policy", policy_version: POLICY_VERSIONS.privacy_policy, source: "signup_email", user_agent: "ConsentTest/1.0" }]);
+    const signedUp = (kind: keyof typeof POLICY_VERSIONS) => ({ kind, policy_version: POLICY_VERSIONS[kind], source: "signup_email", user_agent: "ConsentTest/1.0" });
+    expect(rows).toEqual([signedUp("account_terms"), signedUp("privacy_policy"), signedUp("vendor_terms")]);
     const booking = await confirmed(await vendor());
-    expect((await pool.query("SELECT kind FROM consents WHERE booking_id=$1 ORDER BY kind", [booking.id])).rows.map(row => row.kind)).toEqual(["booking_terms", "privacy_policy"]);
+    const accepted = (await pool.query("SELECT kind,policy_version,source FROM consents WHERE booking_id=$1 ORDER BY kind", [booking.id])).rows;
+    expect(accepted).toEqual((["account_terms", "booking_terms", "privacy_policy", "refund_policy"] as const).map(kind => ({ kind, policy_version: POLICY_VERSIONS[kind], source: "booking_accept" })));
     await expect(pool.query("UPDATE consents SET policy_version='x' WHERE booking_id=$1", [booking.id])).rejects.toThrow();
   });
 });

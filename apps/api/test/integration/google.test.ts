@@ -1,6 +1,7 @@
 import type { AddressInfo } from "node:net";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { POLICY_VERSIONS } from "@bayana/shared";
 import { app } from "../../src/app.js";
 import { hashPassword, startSession } from "../../src/auth.js";
 import { config } from "../../src/config.js";
@@ -60,6 +61,9 @@ describe("Google sign-in: account rules", () => {
     expect(await identities(who.email)).toBe(1);
     // No tokens are kept: the identity row holds only the subject and the email at link time.
     expect(Object.keys((await pool.query("SELECT * FROM auth_identities WHERE email_at_link=$1", [who.email])).rows[0]).sort()).toEqual(["created_at", "email_at_link", "id", "provider", "provider_subject", "user_id"]);
+    // Joining through Google agrees to the current platform terms, vendor agreement and privacy policy (PV-01).
+    const consents = (await pool.query("SELECT kind,policy_version,source FROM consents WHERE user_id=$1 ORDER BY kind", [user!.id])).rows;
+    expect(consents).toEqual((["account_terms", "privacy_policy", "vendor_terms"] as const).map(kind => ({ kind, policy_version: POLICY_VERSIONS[kind], source: "signup_google" })));
   });
 
   it("an existing email-code account is linked, not duplicated, and the next sign-in uses the identity", async () => {

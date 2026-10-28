@@ -31,15 +31,16 @@ services:
       # Entered in the dashboard (names only here).
       - key: APP_ENV
         sync: false
-      # Staging: WEB_ORIGINS=https://staging.bayana.in (site origin first: Google sign-in returns there) and
-      # SESSION_COOKIE_DOMAIN=.staging.bayana.in, so the staging cookie never reaches production (docs/DEPLOY.md section 7).
+      # WEB_ORIGINS: the site origin first (emailed links and the Google sign-in return use it), e.g. https://bayana.in.
+      # SESSION_COOKIE_DOMAIN: covers both the web and API hosts, e.g. .bayana.in. Before/after values: docs/DOMAIN_SWITCH.md.
       - key: WEB_ORIGINS
         sync: false
       - key: SESSION_COOKIE_DOMAIN
         sync: false
-      # Staging: bayana_staging_session (production: bayana_session). Same value in Vercel's staging env.
+      # Empty means bayana_session (the Google state cookie is then bayana_google). Same value in Vercel. Set in the dashboard,
+      # never pinned here, so no deployment name is baked into the repository.
       - key: SESSION_COOKIE_NAME
-        value: bayana_staging_session
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_URL_DIRECT
@@ -55,6 +56,9 @@ services:
       - key: EMAIL_TRANSPORT
         sync: false
       - key: SMTP_URL
+        sync: false
+      # With EMAIL_TRANSPORT=brevo_api (HTTPS, recommended here) set BREVO_API_KEY and leave SMTP_URL empty.
+      - key: BREVO_API_KEY
         sync: false
       - key: EMAIL_FROM
         sync: false
@@ -73,7 +77,7 @@ services:
       - key: MIN_ADVANCE_PAISE
         sync: false
       # Google sign-in (docs/DEPLOY.md section 7). Leave all three empty to keep Google off; set all three to turn it on.
-      # Staging redirect URI: https://api.staging.bayana.in/v1/auth/google/callback
+      # Redirect URI: <API origin>/v1/auth/google/callback, e.g. https://api.bayana.in/v1/auth/google/callback
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET

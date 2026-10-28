@@ -3,6 +3,8 @@ export * from "./money.js";
 export * from "./slug.js";
 export * from "./terms.js";
 export * from "./time.js";
+export * from "./days.js";
+export * from "./blocks.js";
 export * from "./vendor.js";
 export * from "./dashboard.js";
 export * from "./auth.js";

@@ -5,8 +5,8 @@ export const MOCK_API_URL = "http://api.bayana.invalid";
 
 type Service = Record<string, unknown> & { id: string };
 const sampleServices = (): Service[] => [
-  { id: "11111111-1111-4111-8111-111111111111", name: "Portrait session", description: "90 minutes, two outfits.", price_paise: "800000", duration_minutes: 90, buffer_before_minutes: 0, buffer_after_minutes: 15, booking_mode: "TIMED", advance_type: "PERCENT", advance_value: 25, cancellation_tiers: [{ min_hours_before: 168, refund_percent: 100 }, { min_hours_before: 48, refund_percent: 50 }], terms_template: "", customer_details_prompt: "", active: true, sort_order: 0 },
-  { id: "22222222-2222-4222-8222-222222222222", name: "Event coverage", description: "Full day.", price_paise: "3500000", duration_minutes: 480, buffer_before_minutes: 0, buffer_after_minutes: 0, booking_mode: "FULL_DAY", advance_type: "FIXED", advance_value: 1000000, cancellation_tiers: [], terms_template: "", customer_details_prompt: "", active: false, sort_order: 1 }
+  { id: "11111111-1111-4111-8111-111111111111", name: "Portrait session", description: "90 minutes, two outfits.", price_paise: "800000", duration_minutes: 90, buffer_before_minutes: 0, buffer_after_minutes: 15, booking_mode: "hourly", min_days: null, max_days: null, buffer_days: null, advance_type: "PERCENT", advance_value: 25, cancellation_tiers: [{ min_hours_before: 168, refund_percent: 100 }, { min_hours_before: 48, refund_percent: 50 }], terms_template: "", customer_details_prompt: "", active: true, sort_order: 0 },
+  { id: "22222222-2222-4222-8222-222222222222", name: "Event coverage", description: "Full day.", price_paise: "3500000", duration_minutes: null, buffer_before_minutes: null, buffer_after_minutes: null, booking_mode: "daily", min_days: 1, max_days: 3, buffer_days: 0, advance_type: "FIXED", advance_value: 1000000, cancellation_tiers: [], terms_template: "", customer_details_prompt: "", active: false, sort_order: 1 }
 ];
 const sampleProfile = () => ({
   id: "v1", slug: "studio-sunday", business_name: "Studio Sunday", description: "Event styling and portraits across Mumbai.", city: "Mumbai", service_area: "Mumbai and Thane", timezone: "Asia/Kolkata",
@@ -43,7 +43,7 @@ function vendorRoute(route: Route, path: string, state: VendorState) {
   if (path === "/v1/vendor/me" && method === "PATCH") { Object.assign(state.profile, body); return route.fulfill({ json: state.profile }); }
   if (path === "/v1/vendor/checklist") return route.fulfill({ json: { published: state.profile.published, missing, steps: [{ key: "service", label: "Add your first service", done: state.services.some(service => service.active) }, { key: "availability", label: "Set the hours you take bookings", done: hasAvailability }, { key: "publish", label: "Publish your booking page", done: state.profile.published }] } });
   if (path === "/v1/vendor/services" && method === "GET") return route.fulfill({ json: { services: state.services } });
-  if (path === "/v1/vendor/services" && method === "POST") { const service = { id: `33333333-3333-4333-8333-${String(state.services.length).padStart(12, "0")}`, buffer_before_minutes: 0, buffer_after_minutes: 0, booking_mode: "TIMED", cancellation_tiers: [], terms_template: "", customer_details_prompt: "", active: true, sort_order: state.services.length, ...body }; state.services.push(service); return route.fulfill({ status: 201, json: service }); }
+  if (path === "/v1/vendor/services" && method === "POST") { const service = { id: `33333333-3333-4333-8333-${String(state.services.length).padStart(12, "0")}`, buffer_before_minutes: 0, buffer_after_minutes: 0, booking_mode: "hourly", min_days: null, max_days: null, buffer_days: null, cancellation_tiers: [], terms_template: "", customer_details_prompt: "", active: true, sort_order: state.services.length, ...body }; state.services.push(service); return route.fulfill({ status: 201, json: service }); }
   if (path === "/v1/vendor/availability" && method === "GET") return route.fulfill({ json: { timezone: state.profile.timezone, min_notice_minutes: state.profile.min_notice_minutes, max_advance_days: state.profile.max_advance_days, rules: state.rules, overrides: state.overrides, blocked_periods: state.blocked, bookings: [] } });
   if (path === "/v1/vendor/availability/rules" && method === "PUT") { state.rules = (body.windows as { weekday: number; start_time: string; end_time: string }[]).map((window, index) => ({ id: `r${index}`, ...window })); return route.fulfill({ json: { rules: state.rules } }); }
   const dashboard = dashboardRoute(route, path, method, body, state);
@@ -160,11 +160,30 @@ function authRoute(route: Route, path: string) {
 
 export const SAMPLE_BOOKING_ID = "7f3c2a10-0001-4000-8000-000000000001";
 const isoDay = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+/** An active per-day service on the public page (GET /v1/vendors/:slug). */
+export const DAILY_PUBLIC_SERVICE = { id: "44444444-4444-4444-8444-444444444444", name: "Wedding day", description: "Two photographers, all day.", price_paise: "1200000", duration_minutes: null, buffer_before_minutes: null, buffer_after_minutes: null, booking_mode: "daily", min_days: 1, max_days: 3, buffer_days: 0, advance_type: "PERCENT", advance_value: 25, cancellation_tiers: [], terms_template: "", customer_details_prompt: "", active: true, sort_order: 2, advance_paise: 300000, remaining_paise: 900000 };
+/**
+ * Day statuses for a month, relative to today: yesterday and earlier are past, every 5th day from today is booked, every 7th
+ * (offset 3) is closed, the rest available; max_days counts the free run from each date (at most 3), like the API.
+ */
+export function mockDayStatus(offset: number) { return offset < 1 ? "past" : offset % 5 === 0 ? "booked" : offset % 7 === 3 ? "closed" : "available"; }
+function mockDays(month: string) {
+  const out: { date: string; status: string; max_days: number }[] = [];
+  for (let offset = -40; offset < 80; offset++) {
+    const date = isoDay(offset); if (!date.startsWith(month)) continue;
+    let run = 0; while (run < 3 && mockDayStatus(offset + run) === "available") run++;
+    out.push({ date, status: mockDayStatus(offset), max_days: mockDayStatus(offset) === "available" ? run : 0 });
+  }
+  return out;
+}
+/** GET /v1/vendors/studio-sunday: the published page with its active services. */
+export const publicVendor = () => ({ ...sampleProfile(), canonical_slug: "studio-sunday", display_name: "Studio Sunday", bio: "Event styling and portraits across Mumbai.", categories: ["Photography"], payments_enabled: false, contact_email: null, contact_phone: null, services: [...sampleServices().filter(service => service.active).map(service => ({ ...service, advance_paise: 200000, remaining_paise: 600000 })), DAILY_PUBLIC_SERVICE] as unknown[] });
 /** Public reads for the booking flow and the customer booking page, shaped like GET /v1/vendors/:slug and GET /v1/bookings/:id. */
 function publicRoute(route: Route, path: string) {
   const url = new URL(route.request().url());
-  if (path === "/v1/vendors/studio-sunday") return route.fulfill({ json: { ...sampleProfile(), canonical_slug: "studio-sunday", display_name: "Studio Sunday", bio: "Event styling and portraits across Mumbai.", categories: ["Photography"], payments_enabled: false, contact_email: null, contact_phone: null, services: sampleServices().filter(service => service.active).map(service => ({ ...service, advance_paise: 200000, remaining_paise: 600000 })) } });
+  if (path === "/v1/vendors/studio-sunday") return route.fulfill({ json: publicVendor() });
   if (path === "/v1/vendors/studio-sunday/availability/month") return route.fulfill({ json: { timezone: "Asia/Kolkata", days: Array.from({ length: 40 }, (_, index) => ({ date: isoDay(index), available: index > 0 && index % 3 !== 0 })).filter(day => day.date.startsWith(url.searchParams.get("month") ?? "")) } });
+  if (path === "/v1/vendors/studio-sunday/availability/days") return route.fulfill({ json: { timezone: "Asia/Kolkata", min_days: 1, max_days: 3, days: mockDays(url.searchParams.get("month") ?? "") } });
   if (path === "/v1/vendors/studio-sunday/availability/slots") return route.fulfill({ json: { timezone: "Asia/Kolkata", slots: ["04:30", "06:00", "08:30", "10:00"].map(time => ({ startsAt: `${url.searchParams.get("date")}T${time}:00.000Z`, endsAt: `${url.searchParams.get("date")}T${time}:00.000Z` })) } });
   if (path === `/v1/bookings/${SAMPLE_BOOKING_ID}`) return route.fulfill({ json: {
     id: SAMPLE_BOOKING_ID, status: "PENDING", service_name: "Portrait session", duration_minutes: 90, starts_at: `${isoDay(9)}T04:30:00.000Z`, ends_at: `${isoDay(9)}T06:00:00.000Z`, hold_expires_at: `${isoDay(2)}T04:30:00.000Z`, timezone: "Asia/Kolkata",

@@ -10,6 +10,8 @@ import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { ApiError, api, fieldErrors, humanMessage, requirementCopy } from "@/lib/api";
 import { ServiceForm } from "./service-form";
 import { categories, timezones, weekdayNames, type Checklist, type Profile } from "./types";
+import { vendorLinkLabel } from "@/lib/site";
+import { env } from "@/env";
 
 const steps = ["Your business", "First service", "Your hours", "Publish"];
 
@@ -39,7 +41,7 @@ export function OnboardingWizard() {
       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-primary">Step {Math.min(step + 1, 4)} of 4</p>
       {step === 0 && <ProfileStep onDone={() => void next(1)} />}
       {step === 1 && <div className="grid gap-4"><div className="grid gap-1"><h1 className="text-2xl">Add your first service</h1><p className="text-sm text-muted">What can clients book? You can add more and fine-tune refunds and terms later.</p></div><ServiceForm compact submitLabel="Save and continue" onSaved={() => void next(2)} /><Button variant="ghost" size="sm" className="w-fit" onClick={() => setStep(2)}>Skip for now</Button></div>}
-      {step === 2 && <HoursStep onDone={() => void next(3)} onSkip={() => setStep(3)} />}
+      {step === 2 && <HoursStep dailyOnly={Boolean(profile?.services.length) && profile!.services.every(service => service.booking_mode === "daily")} onDone={() => void next(3)} onSkip={() => setStep(3)} />}
       {step === 3 && profile && <PublishStep profile={profile} onBack={setStep} onPublished={() => void refresh()} />}
     </div>
   );
@@ -63,7 +65,7 @@ function ProfileStep({ onDone }: { onDone: () => void }) {
     <form onSubmit={submit} noValidate className="grid gap-4">
       <div className="grid gap-1"><h1 className="text-2xl">Tell clients who you are</h1><p className="text-sm text-muted">This appears at the top of your booking page.</p></div>
       <Field label="Business name" error={shown("business_name")}>{p => <Input {...p} value={form.business_name} onChange={event => setForm({ ...form, business_name: event.target.value })} placeholder="Studio Sunday" autoFocus />}</Field>
-      <Field label="Your link" error={shown("slug")} hint={!shown("slug") && slug ? `bayana.in/${slug}` : "Lowercase letters, numbers and hyphens."}>{p => <Input {...p} value={slug} onChange={event => { setSlugEdited(true); setForm({ ...form, slug: event.target.value.toLowerCase() }); setServer({}); }} placeholder="studio-sunday" />}</Field>
+      <Field label="Your link" error={shown("slug")} hint={!shown("slug") && slug ? vendorLinkLabel(env.NEXT_PUBLIC_SITE_URL, slug) : "Lowercase letters, numbers and hyphens."}>{p => <Input {...p} value={slug} onChange={event => { setSlugEdited(true); setForm({ ...form, slug: event.target.value.toLowerCase() }); setServer({}); }} placeholder="studio-sunday" />}</Field>
       <Field label="Category">{p => <Select {...p} value={form.category} onChange={event => setForm({ ...form, category: event.target.value })}>{categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select>}</Field>
       <Field label="City" error={shown("city")}>{p => <Input {...p} value={form.city} onChange={event => setForm({ ...form, city: event.target.value })} placeholder="Mumbai" />}</Field>
       <Field label="Timezone" hint="Your hours and bookings use this timezone.">{p => <Select {...p} value={form.timezone} onChange={event => setForm({ ...form, timezone: event.target.value })}>{timezones.map(zone => <option key={zone}>{zone}</option>)}</Select>}</Field>
@@ -74,7 +76,8 @@ function ProfileStep({ onDone }: { onDone: () => void }) {
   );
 }
 
-function HoursStep({ onDone, onSkip }: { onDone: () => void; onSkip: () => void }) {
+/** Weekdays and hours. A vendor whose services are all per day only chooses open days (a day is open when it has any hours). */
+function HoursStep({ dailyOnly = false, onDone, onSkip }: { dailyOnly?: boolean; onDone: () => void; onSkip: () => void }) {
   const [days, setDays] = useState<boolean[]>([false, true, true, true, true, true, false]); const [from, setFrom] = useState("09:00"); const [to, setTo] = useState("18:00");
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   const windows = days.flatMap((on, weekday) => on ? [{ weekday, start_time: from, end_time: to }] : []);
@@ -87,11 +90,11 @@ function HoursStep({ onDone, onSkip }: { onDone: () => void; onSkip: () => void 
   };
   return (
     <form onSubmit={submit} className="grid gap-4">
-      <div className="grid gap-1"><h1 className="text-2xl">When do you take bookings?</h1><p className="text-sm text-muted">Start simple. You can add split hours, holidays and time off later.</p></div>
+      <div className="grid gap-1"><h1 className="text-2xl">{dailyOnly ? "Which days are you open?" : "When do you take bookings?"}</h1><p className="text-sm text-muted">{dailyOnly ? "Your services are booked by the whole day, so only open or closed matters. You can close single dates and add time off later." : "Start simple. You can add split hours, holidays and time off later."}</p></div>
       <fieldset className="grid gap-2"><legend className="mb-1 text-sm font-medium">Days</legend>
         <div className="flex flex-wrap gap-2">{weekdayNames.map((name, weekday) => <button key={name} type="button" aria-pressed={days[weekday]} onClick={() => setDays(days.map((value, at) => at === weekday ? !value : value))} className={`min-h-11 min-w-14 rounded-input px-3 text-sm font-semibold ring-1 transition-colors ${days[weekday] ? "bg-primary text-primary-foreground ring-primary" : "bg-surface text-ink ring-border"}`}>{name.slice(0, 3)}</button>)}</div>
       </fieldset>
-      <div className="grid grid-cols-2 gap-3"><Field label="From">{p => <Input {...p} type="time" value={from} onChange={event => setFrom(event.target.value)} />}</Field><Field label="To">{p => <Input {...p} type="time" value={to} onChange={event => setTo(event.target.value)} />}</Field></div>
+      {!dailyOnly && <div className="grid grid-cols-2 gap-3"><Field label="From">{p => <Input {...p} type="time" value={from} onChange={event => setFrom(event.target.value)} />}</Field><Field label="To">{p => <Input {...p} type="time" value={to} onChange={event => setTo(event.target.value)} />}</Field></div>}
       {error && <Notice tone="danger">{error}</Notice>}
       <Button size="lg" block loading={busy} loadingText="Saving…">Save and continue</Button>
       <Button type="button" variant="ghost" size="sm" className="w-fit" onClick={onSkip}>Skip for now</Button>
@@ -106,7 +109,7 @@ function PublishStep({ profile, onBack, onPublished }: { profile: Profile; onBac
     <div className="grid justify-items-center gap-4 py-4 text-center">
       <CheckCircle2 className="size-12 text-success" aria-hidden />
       <h1 className="text-2xl">Your page is live</h1>
-      <p className="break-all rounded-input bg-surface-muted px-3 py-2.5 font-mono text-sm">bayana.in/{profile.slug}</p>
+      <p className="break-all rounded-input bg-surface-muted px-3 py-2.5 font-mono text-sm">{vendorLinkLabel(env.NEXT_PUBLIC_SITE_URL, profile.slug)}</p>
       <div className="flex flex-wrap justify-center gap-2"><Button asChild variant="secondary"><a href={`/${profile.slug}`} target="_blank" rel="noreferrer"><ExternalLink aria-hidden />View page</a></Button><Button asChild><Link href="/dashboard">Go to dashboard</Link></Button></div>
     </div>
   );

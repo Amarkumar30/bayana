@@ -205,8 +205,44 @@ Each requirement has an ID, a priority and an acceptance test written so that it
 | AV-02  | P0      | Date overrides: block a day or range, or open extra hours on a date                                                                   | Override beats weekly rule for that date                      |
 | AV-03  | P0      | Minimum notice and maximum advance window (for example 24 h to 180 days)                                                              | Slots outside the window are not offered                      |
 | AV-04  | P0      | Slot engine returns only slots that fit duration plus buffers, are not overlapped by active bookings or blocks, and are in the future | Property tests in section 9.4 pass, including DST edge cases  |
-| AV-05  | P1      | Optional all-day booking mode for events (one booking per date)                                                                       | A second booking on the same date is impossible               |
+| AV-05  | P1      | Per-day booking mode (see "Service modes" below): a service is charged per hour or per day; daily bookings cover 1 to 30 whole local days | Overlap with any booking of the vendor is impossible (constraint) |
+| AV-07  | P1      | Multi-session booking (see "Sessions" below): an hourly booking is 1 to 12 consecutive sessions on one local day, priced per session | Any overlap is impossible (constraint); a range crossing a break, closing or midnight is refused |
 | AV-06  | P1      | Calendar feed (iCal URL, read-only) for the vendor to subscribe in Google or Apple Calendar                                           | Feed lists confirmed bookings only, uses a secret token       |
+
+### Service modes, day boundaries and daily availability (added with migration 021)
+
+**Modes.** Each service has `booking_mode`: `hourly` (default) or `daily`.
+- `hourly`: `price_paise` is the price of one session of `duration_minutes`, with buffer minutes before and after. Unchanged.
+- `daily`: `price_paise` is the price **per day**; the vendor sets `min_days` (default 1) and `max_days` (default 1, at most 30) and optional `buffer_days` (0 to 7). Daily services have no duration or minute buffers. A database CHECK (`services_mode_fields`) requires exactly the chosen mode's fields and NULL for the other mode's. Services created before migration 021 as `TIMED` are `hourly`; `FULL_DAY` ones are `daily` with 1 to 1 day.
+
+**Day boundaries.** A day is a local calendar date in the vendor's IANA timezone. A daily booking of N days from local date D occupies the half-open range [start of D, start of D+N), stored in UTC (`starts_at`, `ends_at`). "Start of a date" is local midnight, or the first local minute that exists when a daylight-saving change skips midnight. Days therefore last 23, 24 or 25 hours, and back-to-back bookings touch without overlapping. Buffer days widen `block_start`/`block_end` by whole local days on each side; each booking keeps its own buffer. The exclusion constraint (8.3) applies unchanged, so a daily booking blocks every hourly booking of the same vendor on those days, and the reverse.
+
+**Daily availability.** For a daily service, a local date is:
+- `past` before today, or when its start falls inside the minimum notice;
+- `closed` beyond the maximum advance window, when it has no opening hours (a weekday is open if it has any weekly window, and a whole-day block override closes it), or when any time off touches it;
+- `booked` when any active booking or unexpired hold (any service, with its buffers) touches it;
+- otherwise `available`.
+
+A booking of N days from D needs every day D..D+N-1 available and its buffer days free of bookings (buffer days need not be open). `GET /v1/vendors/:slug/availability/days?service_id=&month=` (or `from`/`to`, at most 62 days) returns each date's status and `max_days`, the longest booking that can start there. It is never cached.
+
+**Holds and money.** The client sends only `service_id`, `date` and `days`. The server checks the service's stored mode and min/max, recomputes the range, and sets total = price per day x days (integer paise), with the advance from the service's rule (never above the total). The booking snapshots `booking_mode`, `days_count`, `service_price_paise` (per day), `total_paise`, `advance_paise` and `vendor_timezone`. Daily bookings are always shown as dates ("12 Nov to 13 Nov 2026 (2 days)"), never as a time; the calendar feed lists them as all-day events with an exclusive end date.
+
+### Sessions: multi-block hourly bookings (added with migration 022)
+
+**Block model.** For an hourly service, `duration_minutes` is the length of one **session** (a block, for example 60 or 90 minutes) and `price_paise` is the price of **one session**, never a per-hour rate. The service also has `min_blocks` (default 1) and `max_blocks` (default 1, at most 12); `duration_minutes x max_blocks` must fit in 24 hours. Daily services have both NULL (database CHECK `services_blocks`). Services created before migration 022 have 1 and 1, so they book exactly one session, as before. The UI calls blocks "sessions" and never says "per hour".
+
+**One booking is one continuous range.** A booking of N sessions from start S occupies [S, S + N x duration), computed on the server in the vendor's timezone (real elapsed minutes, so the UTC times are correct across a daylight-saving change). It is valid only if:
+- every session is inside one open span of that local day (weekly windows plus overrides, minus blocked hours), so it never crosses a break, blocked hours or closing time;
+- the range ends on the same local date (it may end exactly at local midnight, never after);
+- S is after the minimum notice and the date is inside the booking window;
+- the buffered range [S - buffer before, S + N x duration + buffer after) touches no time off and no other active booking or unexpired hold.
+The buffers apply **once**, around the whole range, never per session. Sessions on different days, or with gaps, are separate bookings (out of scope as one booking); for several days the vendor offers a per-day service.
+
+**Availability.** `GET /v1/vendors/:slug/availability/slots?service_id=&date=` lists each bookable start with `maxBlocks`, the most consecutive sessions free from it (up to `max_blocks`); a start where fewer than `min_blocks` fit is not listed (its value is 0). Each slot's `endsAt` describes the shortest booking (`min_blocks` sessions). The response carries `min_blocks` and `max_blocks` and is never cached.
+
+**Holds and money.** The client sends only `service_id`, `starts_at` and `blocks` (absent means 1). The server checks `min_blocks <= blocks <= max_blocks`, recomputes the range with the engine, and sets **total = price per session x blocks** (integer paise) and the advance by the service's rule on that total (round half up, never above the total). The booking snapshots `blocks_count`, `block_minutes` (the session length), `duration_minutes` (the whole length), `service_price_paise` (per session), `total_paise`, `advance_paise` and both buffers. The exclusion constraint (8.3) and the per-vendor transaction lock remain the only overlap protection; only `transitionBooking` changes status. A vendor's manual booking takes the same `blocks`, and a reschedule keeps the booking's length.
+
+**Display.** A booking of more than one session is always shown as its whole range, for example "Fri, 12 Nov, 2:00 pm to 5:00 pm (3 hours)": booking page, dashboard lists and calendar, emails (hold, confirmation, reminder, reschedule, cancellation), contract ("Date and time: ..., 2:00 pm to 5:00 pm, 3 hours", plus "Price per session: X x 3 sessions of 1 hour"), receipt and the calendar feed (its real start and end). A one-session booking reads exactly as before, so contracts already shown keep their hash.
 
 ## 4.4 Booking (BK)
 

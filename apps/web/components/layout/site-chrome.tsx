@@ -33,16 +33,3 @@ export function SiteHeader() {
     </header>
   );
 }
-
-export function SiteFooter() {
-  return (
-    <footer className="mt-16 border-t border-border bg-surface">
-      <div className="mx-auto grid max-w-6xl gap-8 px-4 py-10 sm:grid-cols-[2fr_1fr_1fr] sm:px-6">
-        <div className="grid content-start gap-2"><Brand /><p className="max-w-xs text-sm text-muted">Advance bookings for independent service professionals across India. Clear terms, verified payments.</p></div>
-        <nav aria-label="Product" className="grid content-start gap-1 text-sm"><strong className="mb-1 text-ink">Product</strong><Link href="/pricing" className="py-1.5 text-muted no-underline hover:text-ink">Pricing</Link><Link href="/about" className="py-1.5 text-muted no-underline hover:text-ink">About</Link><Link href="/login?next=/dashboard" className="py-1.5 text-muted no-underline hover:text-ink">Vendor sign in</Link></nav>
-        <nav aria-label="Legal" className="grid content-start gap-1 text-sm"><strong className="mb-1 text-ink">Legal</strong><Link href="/terms" className="py-1.5 text-muted no-underline hover:text-ink">Terms</Link><Link href="/privacy" className="py-1.5 text-muted no-underline hover:text-ink">Privacy</Link><Link href="/refunds" className="py-1.5 text-muted no-underline hover:text-ink">Refunds</Link></nav>
-      </div>
-      <div className="border-t border-border"><p className="mx-auto max-w-6xl px-4 py-4 text-xs text-muted sm:px-6">© {new Date().getFullYear()} Bayana. Grievance contact: hello@bayana.in</p></div>
-    </footer>
-  );
-}

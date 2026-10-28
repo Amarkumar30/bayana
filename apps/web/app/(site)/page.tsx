@@ -3,9 +3,11 @@ import { BadgeCheck, CalendarCheck2, FileText, IndianRupee, Link2, ShieldCheck }
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Badge, Card, Money } from "@/components/ui/display";
+import { siteHost } from "@/lib/site";
+import { env } from "@/env";
 
 const steps = [
-  { icon: Link2, title: "Share one link", body: "Your page at bayana.in/your-name lists services, prices, policies and open times." },
+  { icon: Link2, title: "Share one link", body: `Your page at ${siteHost(env.NEXT_PUBLIC_SITE_URL)}/your-name lists services, prices, policies and open times.` },
   { icon: CalendarCheck2, title: "Clients pick a time", body: "They choose a slot that fits your hours and buffers. No back-and-forth on WhatsApp." },
   { icon: IndianRupee, title: "Advance, then confirmed", body: "The booking confirms only when the advance is verified, with the balance shown to both sides." }
 ];

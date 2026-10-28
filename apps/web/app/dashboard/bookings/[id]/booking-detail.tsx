@@ -4,7 +4,7 @@ import { ArrowLeft, ChevronDown, Download, FileText, Mail, Phone } from "lucide-
 import { formatINR, tiersInWords } from "@bayana/shared";
 import { env } from "@/env";
 import { OfflinePaymentForm } from "@/components/booking/offline-payment-form";
-import { formatDateTime } from "@/components/booking/time";
+import { formatBookingWhen, formatDate, formatDateTime } from "@/components/booking/time";
 import { CancelBookingDialog, CompleteButton, RescheduleDialog } from "@/components/dashboard/booking-actions";
 import { Gate, useVendorData } from "@/components/dashboard/load";
 import type { BookingDetail, BookingEvent } from "@/components/dashboard/types";
@@ -16,10 +16,10 @@ const actorWord: Record<string, string> = { client: "Customer", customer: "Custo
 const paymentStatus: Record<string, string> = { created: "Checkout opened, not paid", authorized: "Authorised, confirming", failed: "Did not go through", captured: "Received", refunded: "Refunded", partially_refunded: "Partly refunded" };
 const refundStatus: Record<string, string> = { pending: "Refund on its way", processed: "Refunded", failed: "Refund failed", manual: "You return this directly" };
 
-function eventText(event: BookingEvent, timezone: string) {
+function eventText(event: BookingEvent, timezone: string, daily = false) {
   if (event.from_status === event.to_status && event.reason === "rescheduled") {
-    const from = typeof event.meta.from_starts_at === "string" ? formatDateTime(event.meta.from_starts_at, timezone) : "";
-    const to = typeof event.meta.to_starts_at === "string" ? formatDateTime(event.meta.to_starts_at, timezone) : "";
+    const from = typeof event.meta.from_starts_at === "string" ? (daily ? formatDate(event.meta.from_starts_at, timezone) : formatDateTime(event.meta.from_starts_at, timezone)) : "";
+    const to = typeof event.meta.to_starts_at === "string" ? (daily ? formatDate(event.meta.to_starts_at, timezone) : formatDateTime(event.meta.to_starts_at, timezone)) : "";
     return `Moved from ${from} to ${to}`;
   }
   return event.from_status ? `${statusWord[event.from_status] ?? event.from_status} → ${statusWord[event.to_status] ?? event.to_status}` : `Created as ${statusWord[event.to_status] ?? event.to_status}`;
@@ -37,7 +37,7 @@ export function BookingDetailView({ id }: { id: string }) {
           <div className="grid gap-2">
             <StatusBadge status={booking.status} className="w-fit" />
             <h1 className="text-2xl sm:text-4xl">{booking.client_name}</h1>
-            <p className="text-muted">{booking.service_name ?? "Booking"} · {formatDateTime(booking.starts_at, booking.timezone)} ({booking.timezone})</p>
+            <p className="text-muted">{booking.service_name ?? "Booking"} · {formatBookingWhen(booking, booking.timezone)} ({booking.timezone})</p>
           </div>
 
           {(booking.actions.cancel || booking.actions.complete || booking.actions.reschedule) && <Card className="grid gap-3"><CardHeader title="Actions" className="mb-0" />
@@ -75,7 +75,7 @@ export function BookingDetailView({ id }: { id: string }) {
               <section aria-labelledby="timeline" className="grid gap-3"><h2 id="timeline" className="text-lg">Timeline</h2>
                 <ol className="grid gap-3 border-l-2 border-border pl-4">
                   {booking.events.map(event => <li key={`${event.to_status}-${event.created_at}`} className="relative grid text-sm"><span aria-hidden className="absolute -left-[1.4rem] top-1 size-3 rounded-full bg-primary ring-2 ring-surface" />
-                    <span className="font-medium">{eventText(event, booking.timezone)}</span>
+                    <span className="font-medium">{eventText(event, booking.timezone, booking.booking_mode === "daily")}</span>
                     <span className="text-muted">{actorWord[event.actor] ?? event.actor} · {formatDateTime(event.created_at, booking.timezone)}</span>
                     {event.reason && event.reason !== "rescheduled" && <span className="text-muted">“{event.reason}”</span>}</li>)}
                 </ol>

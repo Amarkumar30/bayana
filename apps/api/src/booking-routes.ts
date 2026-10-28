@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { refundPreview } from "@bayana/shared";
+import { MAX_BLOCKS, MAX_BOOKING_DAYS, refundPreview } from "@bayana/shared";
 import { currentUser, type SessionUser } from "./auth.js";
 import { cookieToken, perIp } from "./auth-routes.js";
 import { acceptTerms, createHold } from "./booking-service.js";
@@ -21,7 +21,7 @@ const notFound = () => new AppError(404, "NOT_FOUND", "Not found");
 const localDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const handle = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
 export const tokenHash = (token: string) => createHash("sha256").update(`${config.SESSION_SECRET}:booking:${token}`).digest("hex");
-const holdSchema = z.object({ slug: z.string(), date: localDate, service_id: z.string().uuid(), starts_at: z.string().datetime(), name: z.string().trim().min(2).max(120), phone: z.string().trim().min(8).max(20).optional(), notes: z.string().max(2000).optional(), referral: z.string().trim().max(200).optional() });
+const holdSchema = z.object({ slug: z.string(), date: localDate, service_id: z.string().uuid(), starts_at: z.string().datetime().optional(), days: z.number().int().min(1).max(MAX_BOOKING_DAYS).optional(), blocks: z.number().int().min(1).max(MAX_BLOCKS).optional(), name: z.string().trim().min(2).max(120), phone: z.string().trim().min(8).max(20).optional(), notes: z.string().max(2000).optional(), referral: z.string().trim().max(200).optional() });
 
 /** The customer who made it, the vendor who owns it, or anyone holding the private link token. Everything else is the same 404. */
 async function bookingAccess(req: Request) {
@@ -41,7 +41,7 @@ bookingRouter.post("/", perIp(20), handle(async (req, res) => {
   const body = holdSchema.parse(req.body);
   const key = req.header("idempotency-key");
   if (!key || !z.string().uuid().safeParse(key).success) throw new AppError(400, "VALID_IDEMPOTENCY_KEY_REQUIRED", "A valid idempotency key is required");
-  const booking = await transaction(db => createHold(db, { slug: body.slug, date: body.date, name: body.name, email: user.email, clientUserId: user.id, phone: body.phone, notes: body.notes, referral: body.referral, serviceId: body.service_id, startsAt: body.starts_at, key }));
+  const booking = await transaction(db => createHold(db, { slug: body.slug, date: body.date, name: body.name, email: user.email, clientUserId: user.id, phone: body.phone, notes: body.notes, referral: body.referral, serviceId: body.service_id, startsAt: body.starts_at, days: body.days, blocks: body.blocks, key }));
   res.status(201).json({ booking });
   kickUrgent();
 }));
@@ -108,11 +108,11 @@ bookingRouter.get("/:id/receipts/:paymentId", perIp(30), handle(async (req, res)
   res.set({ "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="bayana-receipt-${data.receiptNumber}.pdf"`, "Cache-Control": "private, no-store" }).send(Buffer.from(await receiptPdf(data)));
 }));
 
-type Row = { id: string; status: string; service_name: string | null; starts_at: Date; ends_at: Date; hold_expires_at: Date | null; total_paise: string; advance_paise: string; paid_paise: string; client_name: string; terms_snapshot: string | null; slug: string; display_name: string; timezone: string; duration_minutes: number | null };
+type Row = { id: string; status: string; service_name: string | null; starts_at: Date; ends_at: Date; booking_mode: "hourly" | "daily"; days_count: number | null; blocks_count: number | null; block_minutes: number | null; first_date: string; hold_expires_at: Date | null; total_paise: string; advance_paise: string; paid_paise: string; client_name: string; terms_snapshot: string | null; slug: string; display_name: string; timezone: string; duration_minutes: number | null };
 type PaymentRow = { id: string; provider: string; kind: string; status: string; amount_paise: string; method: string | null; note: string | null; created_at: Date; verified_at: Date | null };
 export async function bookingView(id: string, forVendor: boolean) {
   const [booking, events, payments, refunds, contract] = await Promise.all([
-    pool.query<Row>(`SELECT b.id,b.status,b.service_name,b.starts_at,b.ends_at,b.hold_expires_at,b.total_paise,b.advance_paise,${paidSql("b.id")} AS paid_paise,b.client_name,b.terms_snapshot,b.duration_minutes,v.slug::text AS slug,v.display_name,v.timezone FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.id=$1`, [id]),
+    pool.query<Row>(`SELECT b.id,b.status,b.service_name,b.starts_at,b.ends_at,b.booking_mode,b.days_count,b.blocks_count,b.block_minutes,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.hold_expires_at,b.total_paise,b.advance_paise,${paidSql("b.id")} AS paid_paise,b.client_name,b.terms_snapshot,b.duration_minutes,v.slug::text AS slug,v.display_name,v.timezone FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.id=$1`, [id]),
     pool.query<{ to_status: string; created_at: Date }>("SELECT to_status,created_at FROM booking_events WHERE booking_id=$1 ORDER BY created_at", [id]),
     pool.query<PaymentRow>("SELECT id,provider,kind,status,amount_paise,method,note,created_at,verified_at FROM payments WHERE booking_id=$1 ORDER BY created_at", [id]),
     pool.query("SELECT id,payment_id,amount_paise::int AS amount_paise,status,reason,created_at,processed_at FROM refunds WHERE booking_id=$1 ORDER BY created_at", [id]),
@@ -127,7 +127,7 @@ export async function bookingView(id: string, forVendor: boolean) {
   const preview = holdLive ? await loadContract(pool, id) : null;
   const tiers = parseSnapshot(b.terms_snapshot).cancellation_tiers;
   return {
-    id: b.id, status, service_name: b.service_name, duration_minutes: b.duration_minutes, starts_at: b.starts_at, ends_at: b.ends_at, hold_expires_at: b.hold_expires_at, timezone: b.timezone,
+    id: b.id, status, service_name: b.service_name, duration_minutes: b.duration_minutes, starts_at: b.starts_at, ends_at: b.ends_at, booking_mode: b.booking_mode, days_count: b.days_count, blocks_count: b.blocks_count, block_minutes: b.block_minutes, first_date: b.first_date, hold_expires_at: b.hold_expires_at, timezone: b.timezone,
     vendor: { slug: b.slug, display_name: b.display_name }, client_name: b.client_name,
     total_paise: total, advance_paise: advance, paid_paise: paid, balance_due_paise: total - paid,
     payments_enabled: paymentsEnabled(), viewer: forVendor ? "vendor" : "customer",
@@ -147,5 +147,5 @@ export async function bookingView(id: string, forVendor: boolean) {
 
 /** Bookings made with the signed-in customer's verified email. */
 export async function customerBookings(user: SessionUser) {
-  return (await pool.query(`SELECT b.id,b.status,b.starts_at,b.total_paise,b.advance_paise,b.service_name,v.slug,v.display_name,v.timezone,${paidSql("b.id")} AS paid_paise,b.total_paise-${paidSql("b.id")} AS balance_due_paise FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.client_email=$1 ORDER BY b.created_at DESC`, [user.email])).rows;
+  return (await pool.query(`SELECT b.id,b.status,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.total_paise,b.advance_paise,b.service_name,v.slug,v.display_name,v.timezone,${paidSql("b.id")} AS paid_paise,b.total_paise-${paidSql("b.id")} AS balance_due_paise FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.client_email=$1 ORDER BY b.created_at DESC`, [user.email])).rows;
 }

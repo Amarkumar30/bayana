@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { pino, type DestinationStream, type Logger } from "pino";
 
-const sensitive = /authorization|cookie|password|secret|token|otp|pepper|signature|^code$/i;
+const sensitive = /authorization|cookie|password|secret|token|otp|pepper|signature|api[-_]?key|^code$/i;
 export const requestId = () => randomUUID();
 export function redact(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redact);

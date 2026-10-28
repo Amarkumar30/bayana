@@ -44,3 +44,23 @@ export function Field({ label, hint, error, optional, className, children }: Fie
     </div>
   );
 }
+
+/**
+ * One choice from a few, as native radio buttons shown as cards (keyboard arrows, form submission and screen readers work as
+ * for any radio group). Each card is at least 44px tall.
+ */
+export function RadioCards<T extends string>({ legend, name, value, options, onChange, className }: { legend: ReactNode; name: string; value: T; options: { value: T; label: ReactNode; description?: ReactNode }[]; onChange: (value: T) => void; className?: string }) {
+  return (
+    <fieldset className={cn("grid gap-2", className)}>
+      <legend className="mb-1.5 text-sm font-medium text-ink">{legend}</legend>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {options.map(option => (
+          <label key={option.value} className={cn("flex min-h-11 cursor-pointer items-start gap-3 rounded-input border bg-surface p-3 text-sm transition-colors hover:border-muted has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-1 has-[:focus-visible]:outline-primary", option.value === value ? "border-primary bg-primary-soft" : "border-input")}>
+            <input type="radio" name={name} value={option.value} checked={option.value === value} onChange={() => onChange(option.value)} className="mt-0.5 size-5 shrink-0 cursor-pointer accent-[var(--primary)]" />
+            <span className="grid gap-0.5"><span className="font-medium text-ink">{option.label}</span>{option.description && <span className="text-xs text-muted">{option.description}</span>}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}

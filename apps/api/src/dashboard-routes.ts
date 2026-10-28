@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { bookingListQuerySchema, calendarQuerySchema, manualBookingSchema, missingPublishRequirements, notifyPrefsSchema, rescheduleSchema, vendorCancelSchema } from "@bayana/shared";
+import { addLocalDays, bookingListQuerySchema, calendarQuerySchema, localDateOf, manualBookingSchema, missingPublishRequirements, notifyPrefsSchema, rescheduleSchema, vendorCancelSchema } from "@bayana/shared";
 import type { SessionUser } from "./auth.js";
 import { closeLogin } from "./privacy.js";
 import { writeAudit } from "./audit.js";
@@ -39,17 +39,17 @@ dashboardRouter.get("/overview", requireVendor, handle(async (_req, res) => {
   const { id, timezone } = vendorOf(res);
   const today = `(date_trunc('day', now() AT TIME ZONE $2) AT TIME ZONE $2)`;
   const [upcoming, money, todo, checklist] = await Promise.all([
-    pool.query(`SELECT b.id,${displayStatus} AS status,b.service_name,b.client_name,b.starts_at,b.ends_at,b.total_paise::int AS total_paise,${paidSql("b.id")}::int AS paid_paise FROM bookings b
+    pool.query(`SELECT b.id,${displayStatus} AS status,b.service_name,b.client_name,b.starts_at,b.ends_at,b.booking_mode,b.days_count,b.blocks_count,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.total_paise::int AS total_paise,${paidSql("b.id")}::int AS paid_paise FROM bookings b
       WHERE b.vendor_id=$1 AND b.starts_at >= ${today} AND b.starts_at < ${today} + interval '8 days' AND ${displayStatus} IN ('HELD','PENDING','CONFIRMED','COMPLETED') ORDER BY b.starts_at LIMIT 100`, [id, timezone]),
     pool.query<{ collected_30d: string; refunded_30d: string; balance_due: string }>(`SELECT
       COALESCE((SELECT SUM(p.amount_paise) FROM payments p JOIN bookings b ON b.id=p.booking_id WHERE b.vendor_id=$1 AND p.verified_at > now() - interval '30 days' AND p.status IN ('captured','refunded','partially_refunded')),0) AS collected_30d,
       COALESCE((SELECT SUM(r.amount_paise) FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.vendor_id=$1 AND r.status='processed' AND r.processed_at > now() - interval '30 days'),0) AS refunded_30d,
       COALESCE((SELECT SUM(b.total_paise - ${paidSql("b.id")}) FROM bookings b WHERE b.vendor_id=$1 AND b.status IN ('PENDING','CONFIRMED') AND b.ends_at > now() AND (b.status='CONFIRMED' OR b.hold_expires_at IS NULL OR b.hold_expires_at > now())),0) AS balance_due`, [id]),
     pool.query<{ kind: string; id: string; client_name: string; starts_at: Date; amount_paise: string | null }>(`
-      SELECT 'record_advance' AS kind,b.id,b.client_name,b.starts_at,b.advance_paise AS amount_paise FROM bookings b WHERE b.vendor_id=$1 AND b.status='PENDING' AND b.hold_expires_at > now() AND b.advance_paise > ${paidSql("b.id")}
-      UNION ALL SELECT 'mark_complete',b.id,b.client_name,b.starts_at,NULL FROM bookings b WHERE b.vendor_id=$1 AND b.status='CONFIRMED' AND b.ends_at < now()
-      UNION ALL SELECT 'return_money',b.id,b.client_name,b.starts_at,r.amount_paise FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.vendor_id=$1 AND r.status='manual' AND r.created_at > now() - interval '60 days'
-      UNION ALL SELECT 'refund_failed',b.id,b.client_name,b.starts_at,r.amount_paise FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.vendor_id=$1 AND r.status='failed'
+      SELECT 'record_advance' AS kind,b.id,b.client_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.advance_paise AS amount_paise FROM bookings b WHERE b.vendor_id=$1 AND b.status='PENDING' AND b.hold_expires_at > now() AND b.advance_paise > ${paidSql("b.id")}
+      UNION ALL SELECT 'mark_complete',b.id,b.client_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,NULL FROM bookings b WHERE b.vendor_id=$1 AND b.status='CONFIRMED' AND b.ends_at < now()
+      UNION ALL SELECT 'return_money',b.id,b.client_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,r.amount_paise FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.vendor_id=$1 AND r.status='manual' AND r.created_at > now() - interval '60 days'
+      UNION ALL SELECT 'refund_failed',b.id,b.client_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,r.amount_paise FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.vendor_id=$1 AND r.status='failed'
       ORDER BY starts_at LIMIT 50`, [id]),
     checklistInput(pool, id)
   ]);
@@ -73,7 +73,7 @@ dashboardRouter.get("/bookings", requireVendor, handle(async (req, res) => {
   if (query.from) { params.push(query.from); const date = `$${params.length}`; where.push(`b.starts_at >= ${localMidnight(date, tzRef())}`); }
   if (query.to) { params.push(query.to); const date = `$${params.length}`; where.push(`b.starts_at < ${localMidnight(date, tzRef())} + interval '1 day'`); }
   params.push(PAGE_SIZE + 1, (query.page - 1) * PAGE_SIZE);
-  const rows = (await pool.query(`SELECT b.id,${displayStatus} AS status,b.service_name,b.client_name,b.client_email::text AS client_email,b.starts_at,b.ends_at,b.total_paise::int AS total_paise,b.advance_paise::int AS advance_paise,${paidSql("b.id")}::int AS paid_paise,b.created_at
+  const rows = (await pool.query(`SELECT b.id,${displayStatus} AS status,b.service_name,b.client_name,b.client_email::text AS client_email,b.starts_at,b.ends_at,b.booking_mode,b.days_count,b.blocks_count,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.total_paise::int AS total_paise,b.advance_paise::int AS advance_paise,${paidSql("b.id")}::int AS paid_paise,b.created_at
     FROM bookings b WHERE ${where.join(" AND ")} ORDER BY b.starts_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params)).rows;
   res.json({ timezone, bookings: rows.slice(0, PAGE_SIZE), page: query.page, has_more: rows.length > PAGE_SIZE });
 }));
@@ -112,7 +112,7 @@ dashboardRouter.post("/bookings", requireVendor, handle(async (req, res) => {
   const body = manualBookingSchema.parse(req.body);
   const key = req.header("idempotency-key");
   if (!key || !z.string().uuid().safeParse(key).success) throw new AppError(400, "VALID_IDEMPOTENCY_KEY_REQUIRED", "A valid idempotency key is required");
-  const created = await vendorManualBooking(actorOf(res), { serviceId: body.service_id, date: body.date, time: body.time, name: body.name, email: body.email, phone: body.phone, notes: body.notes, key });
+  const created = await vendorManualBooking(actorOf(res), { serviceId: body.service_id, date: body.date, time: body.time, days: body.days, blocks: body.blocks, name: body.name, email: body.email, phone: body.phone, notes: body.notes, key });
   res.status(created.replayed ? 200 : 201).json(await bookingView(created.id, true)); kickUrgent();
 }));
 
@@ -123,7 +123,7 @@ dashboardRouter.get("/calendar", requireVendor, handle(async (req, res) => {
   const range = [id, timezone, query.from, query.to];
   const windowStart = localMidnight("$3", "$2"), windowEnd = `${localMidnight("$4", "$2")} + interval '1 day'`;
   const [bookings, blocked] = await Promise.all([
-    pool.query(`SELECT b.id,${displayStatus} AS status,b.service_name,b.client_name,b.starts_at,b.ends_at FROM bookings b WHERE b.vendor_id=$1 AND b.ends_at > ${windowStart} AND b.starts_at < ${windowEnd} AND ${displayStatus} IN ('HELD','PENDING','CONFIRMED','COMPLETED') ORDER BY b.starts_at`, range),
+    pool.query(`SELECT b.id,${displayStatus} AS status,b.service_name,b.client_name,b.starts_at,b.ends_at,b.booking_mode,b.days_count,b.blocks_count,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date FROM bookings b WHERE b.vendor_id=$1 AND b.ends_at > ${windowStart} AND b.starts_at < ${windowEnd} AND ${displayStatus} IN ('HELD','PENDING','CONFIRMED','COMPLETED') ORDER BY b.starts_at`, range),
     pool.query(`SELECT id,starts_at,ends_at,reason FROM blocked_periods WHERE vendor_id=$1 AND tstzrange(starts_at,ends_at,'[)') && tstzrange(${windowStart},${windowEnd},'[)') ORDER BY starts_at`, range)
   ]);
   res.json({ timezone, from: query.from, to: query.to, bookings: bookings.rows, blocked_periods: blocked.rows });
@@ -136,7 +136,7 @@ dashboardRouter.get("/payments", requireVendor, handle(async (_req, res) => {
     pool.query(`SELECT p.id,p.booking_id,p.provider,p.kind,p.status,p.amount_paise::int AS amount_paise,p.method,p.created_at,p.verified_at,b.client_name,b.service_name FROM payments p JOIN bookings b ON b.id=p.booking_id
       WHERE b.vendor_id=$1 AND (p.verified_at IS NOT NULL OR p.status IN ('authorized','failed')) ORDER BY p.created_at DESC LIMIT 200`, [id]),
     pool.query("SELECT r.id,r.booking_id,r.amount_paise::int AS amount_paise,r.status,r.reason,r.created_at,r.processed_at,b.client_name FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.vendor_id=$1 ORDER BY r.created_at DESC LIMIT 200", [id]),
-    pool.query(`SELECT b.id,b.client_name,b.service_name,b.starts_at,b.status,(b.total_paise - ${paidSql("b.id")})::int AS balance_due_paise FROM bookings b WHERE b.vendor_id=$1 AND b.status IN ('CONFIRMED','COMPLETED') AND b.total_paise > ${paidSql("b.id")} ORDER BY b.starts_at LIMIT 200`, [id])
+    pool.query(`SELECT b.id,b.client_name,b.service_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.status,(b.total_paise - ${paidSql("b.id")})::int AS balance_due_paise FROM bookings b WHERE b.vendor_id=$1 AND b.status IN ('CONFIRMED','COMPLETED') AND b.total_paise > ${paidSql("b.id")} ORDER BY b.starts_at LIMIT 200`, [id])
   ]);
   const sum = (rows: { amount_paise: number }[]) => rows.reduce((total, row) => total + row.amount_paise, 0);
   const verified = payments.rows.filter(row => row.verified_at);
@@ -155,7 +155,7 @@ dashboardRouter.get("/customers", requireVendor, handle(async (req, res) => {
   if (q) params.push(`%${q.replace(/[\\%_]/g, char => `\\${char}`)}%`);
   const rows = (await pool.query(`SELECT lower(b.client_email::text) AS email,(array_agg(b.client_name ORDER BY b.created_at DESC))[1] AS name,(array_agg(NULLIF(b.client_phone,'') ORDER BY b.created_at DESC))[1] AS phone,
       count(*)::int AS bookings,COALESCE(SUM(${paidSql("b.id")}),0)::int AS paid_paise,max(b.starts_at) AS last_starts_at,
-      json_agg(json_build_object('id',b.id,'status',${displayStatus},'service_name',b.service_name,'starts_at',b.starts_at,'total_paise',b.total_paise) ORDER BY b.starts_at DESC) AS history
+      json_agg(json_build_object('id',b.id,'status',${displayStatus},'service_name',b.service_name,'starts_at',b.starts_at,'booking_mode',b.booking_mode,'days_count',b.days_count,'blocks_count',b.blocks_count,'ends_at',b.ends_at,'first_date',(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text,'total_paise',b.total_paise) ORDER BY b.starts_at DESC) AS history
     FROM bookings b WHERE b.vendor_id=$1 AND b.status NOT IN ('HELD','EXPIRED') ${q ? "AND (b.client_name ILIKE $2 OR b.client_email::text ILIKE $2)" : ""}
     GROUP BY lower(b.client_email::text) ORDER BY max(b.starts_at) DESC LIMIT 200`, params)).rows;
   res.json({ timezone: vendorOf(res).timezone, customers: rows });
@@ -186,11 +186,11 @@ dashboardRouter.get("/export", requireVendor, handle(async (_req, res) => {
   const { id } = vendorOf(res);
   const [profile, services, rules, overrides, blocked, bookings, events, payments, refunds] = await Promise.all([
     pool.query("SELECT slug::text AS slug,display_name,bio,city,service_area,timezone,terms,cancellation_policy,rescheduling_policy,published,created_at FROM vendors WHERE id=$1", [id]),
-    pool.query("SELECT id,name,description,price_paise,duration_minutes,buffer_before_minutes,buffer_after_minutes,booking_mode,advance_type,advance_value,cancellation_tiers,terms_template,active FROM services WHERE vendor_id=$1 ORDER BY sort_order", [id]),
+    pool.query("SELECT id,name,description,price_paise,duration_minutes,buffer_before_minutes,buffer_after_minutes,booking_mode,min_days,max_days,buffer_days,min_blocks,max_blocks,advance_type,advance_value,cancellation_tiers,terms_template,active FROM services WHERE vendor_id=$1 ORDER BY sort_order", [id]),
     pool.query("SELECT weekday,start_time::text,end_time::text FROM availability_rules WHERE vendor_id=$1 ORDER BY weekday,start_time", [id]),
     pool.query("SELECT local_date::text,kind,start_time::text,end_time::text,note FROM availability_overrides WHERE vendor_id=$1 ORDER BY local_date", [id]),
     pool.query("SELECT starts_at,ends_at,reason FROM blocked_periods WHERE vendor_id=$1 ORDER BY starts_at", [id]),
-    pool.query("SELECT id,status,service_name,client_name,client_email::text AS client_email,client_phone,customer_notes,starts_at,ends_at,total_paise,advance_paise,created_at FROM bookings WHERE vendor_id=$1 ORDER BY starts_at", [id]),
+    pool.query("SELECT id,status,service_name,client_name,client_email::text AS client_email,client_phone,customer_notes,starts_at,ends_at,booking_mode,days_count,blocks_count,(starts_at AT TIME ZONE vendor_timezone)::date::text AS first_date,total_paise,advance_paise,created_at FROM bookings WHERE vendor_id=$1 ORDER BY starts_at", [id]),
     pool.query("SELECT e.booking_id,e.from_status,e.to_status,e.actor,e.reason,e.created_at FROM booking_events e JOIN bookings b ON b.id=e.booking_id WHERE b.vendor_id=$1 ORDER BY e.created_at", [id]),
     pool.query("SELECT p.booking_id,p.provider,p.kind,p.status,p.amount_paise,p.method,p.created_at,p.verified_at FROM payments p JOIN bookings b ON b.id=p.booking_id WHERE b.vendor_id=$1 ORDER BY p.created_at", [id]),
     pool.query("SELECT r.booking_id,r.amount_paise,r.status,r.reason,r.created_at,r.processed_at FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.vendor_id=$1 ORDER BY r.created_at", [id])
@@ -225,15 +225,24 @@ const icsText = (value: string) => value.replace(/\\/g, "\\\\").replace(/[;,]/g,
 const fold = (line: string) => { const out: string[] = []; let rest = Buffer.from(line); while (rest.length > 75) { let cut = 75; while ((rest[cut] & 0xc0) === 0x80) cut--; out.push(rest.subarray(0, cut).toString()); rest = Buffer.concat([Buffer.from(" "), rest.subarray(cut)]); } out.push(rest.toString()); return out.join("\r\n"); };
 
 export const icalRouter = Router();
+/**
+ * Hourly bookings are timed events. Daily bookings are all-day events on their local dates (RFC 5545 VALUE=DATE), and DTEND is
+ * the day AFTER the last day: an all-day end date is exclusive.
+ */
+function icsWhen(booking: { starts_at: Date; ends_at: Date; booking_mode: string; days_count: number | null; vendor_timezone: string }) {
+  if (booking.booking_mode !== "daily" || !booking.days_count) return [`DTSTART:${icsStamp(booking.starts_at)}`, `DTEND:${icsStamp(booking.ends_at)}`];
+  const first = localDateOf(booking.starts_at, booking.vendor_timezone), compact = (date: string) => date.replaceAll("-", "");
+  return [`DTSTART;VALUE=DATE:${compact(first)}`, `DTEND;VALUE=DATE:${compact(addLocalDays(first, booking.days_count))}`];
+}
 icalRouter.get("/:file", perIp(60), handle(async (req, res) => {
   const token = /^([A-Za-z0-9_-]{43})\.ics$/.exec(String(req.params.file))?.[1];
   const vendor = token ? (await pool.query<{ id: string; display_name: string }>("SELECT id,display_name FROM vendors WHERE ical_token_hash=$1", [icalTokenHash(token)])).rows[0] : undefined;
   if (!vendor) throw new AppError(404, "NOT_FOUND", "Not found");
-  const bookings = await pool.query<{ id: string; status: string; service_name: string | null; client_name: string; starts_at: Date; ends_at: Date; created_at: Date }>(
-    "SELECT id,status,service_name,client_name,starts_at,ends_at,created_at FROM bookings WHERE vendor_id=$1 AND status IN ('PENDING','CONFIRMED','COMPLETED') AND (status<>'PENDING' OR hold_expires_at IS NULL OR hold_expires_at > now()) AND ends_at > now() - interval '30 days' AND starts_at < now() + interval '400 days' ORDER BY starts_at", [vendor.id]);
+  const bookings = await pool.query<{ id: string; status: string; service_name: string | null; client_name: string; starts_at: Date; ends_at: Date; created_at: Date; booking_mode: string; days_count: number | null; vendor_timezone: string }>(
+    "SELECT id,status,service_name,client_name,starts_at,ends_at,created_at,booking_mode,days_count,blocks_count,vendor_timezone FROM bookings WHERE vendor_id=$1 AND status IN ('PENDING','CONFIRMED','COMPLETED') AND (status<>'PENDING' OR hold_expires_at IS NULL OR hold_expires_at > now()) AND ends_at > now() - interval '30 days' AND starts_at < now() + interval '400 days' ORDER BY starts_at", [vendor.id]);
   const dashboard = `${config.WEB_ORIGINS[0]}/dashboard/bookings`;
   const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Bayana//Bookings//EN", "CALSCALE:GREGORIAN", `X-WR-CALNAME:${icsText(`${vendor.display_name} (Bayana)`)}`,
-    ...bookings.rows.flatMap(booking => ["BEGIN:VEVENT", `UID:${booking.id}@bayana`, `DTSTAMP:${icsStamp(booking.created_at)}`, `DTSTART:${icsStamp(booking.starts_at)}`, `DTEND:${icsStamp(booking.ends_at)}`,
+    ...bookings.rows.flatMap(booking => ["BEGIN:VEVENT", `UID:${booking.id}@bayana`, `DTSTAMP:${icsStamp(booking.created_at)}`, ...icsWhen(booking),
       `SUMMARY:${icsText(`${booking.service_name ?? "Booking"}: ${booking.client_name}${booking.status === "PENDING" ? " (awaiting advance)" : ""}`)}`, `STATUS:${booking.status === "PENDING" ? "TENTATIVE" : "CONFIRMED"}`, `URL:${dashboard}/${booking.id}`, "END:VEVENT"]),
     "END:VCALENDAR"];
   res.set({ "Content-Type": "text/calendar; charset=utf-8", "Cache-Control": "private, max-age=300", "X-Robots-Tag": "noindex" }).send(`${lines.map(fold).join("\r\n")}\r\n`);
