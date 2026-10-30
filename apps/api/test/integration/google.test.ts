@@ -8,6 +8,7 @@ import { config } from "../../src/config.js";
 import { pool, transaction } from "../../src/database.js";
 import { capturedEmails } from "../../src/email.js";
 import { FakeGoogleProvider, useTestGoogle } from "../../src/google/provider.js";
+import { bookingReturnPath } from "@bayana/shared";
 import { createUser } from "../helpers.js";
 
 // Google sign-in (AU-02, SPEC 12.1) and passwordless-first auth (AU-01), with FakeGoogleProvider: real RS256 ID tokens signed
@@ -28,8 +29,8 @@ async function raw(method: string, path: string, options: { cookie?: string; bod
 }
 
 /** GET /start, then what Google would hand back for this person. */
-async function start(options: { next?: string; session?: string; mode?: "link" } = {}) {
-  const query = new URLSearchParams({ ...(options.next !== undefined ? { next: options.next } : {}), ...(options.mode ? { mode: options.mode } : {}) });
+async function start(options: { next?: string; session?: string; mode?: "link"; intent?: string } = {}) {
+  const query = new URLSearchParams({ ...(options.next !== undefined ? { next: options.next } : {}), ...(options.mode ? { mode: options.mode } : {}), ...(options.intent !== undefined ? { intent: options.intent } : {}) });
   const reply = await raw("GET", `/v1/auth/google/start${query.size ? `?${query}` : ""}`, { cookie: options.session });
   expect(reply.status, JSON.stringify(reply.body)).toBe(302);
   const google = new URL(reply.location);
@@ -240,5 +241,94 @@ describe("passwordless-first (AU-01, AU-02)", () => {
     expect(a.reply.status).toBe(401); expect(b.reply.status).toBe(401);
     expect(a.reply.body).toEqual(b.reply.body);
     expect(Math.abs(a.ms - b.ms)).toBeLessThan(Math.max(a.ms, b.ms) * 0.75 + 50);
+  });
+});
+
+// ---- Customers: Google instead of the booking email code (intent=customer) -------------------------------------------------
+/** A published vendor open every day 09:00-18:00 with one 60-minute service, so a verified customer can hold a time. */
+async function bookable() {
+  const owner = await createUser(pool); const vendorId = randomUUID(), serviceId = randomUUID(), slug = `gcust-${randomUUID().slice(0, 8)}`;
+  await pool.query("INSERT INTO vendors(id,owner_user_id,slug,display_name,city,bio,base_price_paise,advance_type,advance_value,published,bookings_enabled,timezone,min_notice_minutes,max_advance_days,terms,phone_required) VALUES($1,$2,$3,'Google test','Pune','',100000,'PERCENT',20,true,true,'Asia/Kolkata',0,365,'The advance confirms the time.',false)", [vendorId, owner.id, slug]);
+  await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value) VALUES($1,$2,'Portrait',150000,60,'hourly','NONE',0)", [serviceId, vendorId]);
+  for (let weekday = 0; weekday < 7; weekday++) await pool.query("INSERT INTO availability_rules(id,vendor_id,weekday,start_time,end_time) VALUES($1,$2,$3,'09:00','18:00')", [randomUUID(), vendorId, weekday]);
+  const date = new Date(Date.now() + 20 * 86_400_000).toISOString().slice(0, 10), startsAt = `${date}T04:30:00.000Z`;
+  return { slug, serviceId, date, startsAt, next: bookingReturnPath({ slug, service: serviceId, date, start: startsAt, blocks: 1 }) };
+}
+const hold = (cookie: string | undefined, v: Awaited<ReturnType<typeof bookable>>) => fetch(`${base}/v1/bookings`, { method: "POST", redirect: "manual", headers: { "content-type": "application/json", "x-forwarded-for": ip(), "idempotency-key": randomUUID(), ...(cookie ? { cookie } : {}) }, body: JSON.stringify({ slug: v.slug, date: v.date, service_id: v.serviceId, starts_at: v.startsAt, name: "Meera Shah" }) });
+const userRow = async (email: string) => (await pool.query<{ id: string; role: string; password_hash: string | null; email_verified_at: Date | null }>("SELECT id,role,password_hash,email_verified_at FROM users WHERE email_normalized=$1", [email.toLowerCase()])).rows;
+
+describe("Google for customers (intent=customer)", () => {
+  it("start: intent defaults to vendor; an unknown intent, a non-booking return or connecting as a customer is refused", async () => {
+    const v = await bookable();
+    const vendorDefault = await callback(await start(), person());
+    expect(vendorDefault.location).toBe(`${web}/onboarding`);
+    for (const query of ["intent=admin", "intent=customer", "intent=customer&next=%2Fdashboard", `intent=customer&mode=link&next=${encodeURIComponent(v.next)}`, `intent=customer&next=${encodeURIComponent(`//evil.example${v.next}`)}`]) {
+      const reply = await raw("GET", `/v1/auth/google/start?${query}`);
+      expect(reply.status, query).toBe(400); expect(["INVALID_INTENT", "INVALID_NEXT"]).toContain(reply.body.error.code);
+    }
+  });
+  it("a new customer's verified Google email holds the booking with no email code, as a customer account that is never a vendor", async () => {
+    const v = await bookable(); const who = person(); const codesBefore = (await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM otp_codes")).rows[0].n;
+    const reply = await callback(await start({ intent: "customer", next: v.next }), who);
+    expect(reply.location).toBe(`${web}${v.next}`);
+    const cookie = session(reply); const rows = await userRow(who.email);
+    expect(rows).toHaveLength(1); expect(rows[0]).toMatchObject({ role: "CLIENT", password_hash: null }); expect(rows[0].email_verified_at).not.toBeNull();
+    expect(await me(cookie)).toMatchObject({ email: who.email, role: "CLIENT" });
+    // Never a vendor: no business profile, no vendor terms, no vendor area.
+    expect((await pool.query("SELECT 1 FROM vendors WHERE owner_user_id=$1", [rows[0].id])).rowCount).toBe(0);
+    expect((await pool.query("SELECT 1 FROM consents WHERE user_id=$1 AND kind='vendor_terms'", [rows[0].id])).rowCount).toBe(0);
+    expect([401, 403, 404]).toContain((await raw("GET", "/v1/vendor/me", { cookie })).status);
+    // The booking continues without an OTP: no code was created, and the hold is in the Google-verified email's name.
+    const held = await hold(cookie, v);
+    expect(held.status).toBe(201);
+    const booking = (await held.json() as { booking: { id: string } }).booking;
+    expect((await pool.query("SELECT client_email::text AS email FROM bookings WHERE id=$1", [booking.id])).rows[0].email).toBe(who.email);
+    expect((await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM otp_codes")).rows[0].n).toBe(codesBefore);
+    expect((await hold(undefined, v)).status).toBe(401);
+  });
+  it("the intent comes only from the signed cookie: a query string at the callback cannot turn a customer into a vendor", async () => {
+    const v = await bookable(); const who = person(); const flow = await start({ intent: "customer", next: v.next });
+    const code = fake.issueCode({ ...who, nonce: flow.nonce, codeChallenge: flow.challenge });
+    const reply = await raw("GET", `/v1/auth/google/callback?state=${encodeURIComponent(flow.state)}&code=${code}&intent=vendor&next=%2Fdashboard`, { cookie: flow.cookie });
+    expect(reply.location).toBe(`${web}${v.next}`);
+    expect((await userRow(who.email))[0].role).toBe("CLIENT");
+  });
+  it("an email Google has not verified creates nothing and returns to the booking with a clear code", async () => {
+    const v = await bookable(); const who = person();
+    const reply = await callback(await start({ intent: "customer", next: v.next }), who, { email_verified: false });
+    expect(reply.location).toBe(`${web}${v.next.replace("&google=1", "")}&google_error=google_unverified`);
+    expect(session(reply)).toBeUndefined(); expect(await userRow(who.email)).toHaveLength(0); expect(await identities(who.email)).toBe(0);
+  });
+  it("the same email as an existing vendor signs in to that one row (any case) and keeps its role; holds stay for customer accounts", async () => {
+    const v = await bookable(); const vendorUser = await createUser(pool);
+    const who = { sub: `google-${randomUUID()}`, email: vendorUser.email.toUpperCase() };
+    const reply = await callback(await start({ intent: "customer", next: v.next }), who);
+    expect(reply.location).toBe(`${web}${v.next}`);
+    expect(await usersWith(vendorUser.email)).toBe(1);
+    expect(await me(session(reply))).toMatchObject({ id: vendorUser.id, role: "VENDOR" });
+    expect((await hold(session(reply), v)).status).toBe(401);
+  });
+  it("a customer from the email-code path is the same row; becoming a vendor happens only through the vendor sign-in", async () => {
+    const v = await bookable(); const client = await createUser(pool, { role: "CLIENT" }); const who = { sub: `google-${randomUUID()}`, email: client.email };
+    const asCustomer = await callback(await start({ intent: "customer", next: v.next }), who);
+    expect(await me(session(asCustomer))).toMatchObject({ id: client.id, role: "CLIENT" });
+    const asVendor = await callback(await start(), who);
+    expect(await me(session(asVendor))).toMatchObject({ id: client.id, role: "VENDOR" });
+    expect(await usersWith(client.email)).toBe(1);
+  });
+  it("replayed state, wrong nonce, expired state and a missing cookie fail safely without signing in", async () => {
+    const v = await bookable(); const who = person(); const back = `${web}${v.next.replace("&google=1", "")}`;
+    const first = await start({ intent: "customer", next: v.next });
+    expect((await callback(first, who)).location).toBe(`${web}${v.next}`);
+    const replay = await callback(first, who);
+    expect(replay.location).toBe(`${back}&google_error=google_expired`); expect(session(replay)).toBeUndefined();
+    const nonce = await callback(await start({ intent: "customer", next: v.next }), person(), { nonce: "not-the-nonce" });
+    expect(nonce.location).toBe(`${back}&google_error=google_failed`); expect(session(nonce)).toBeUndefined();
+    const old = await start({ intent: "customer", next: v.next });
+    await pool.query("UPDATE oauth_login_states SET created_at=now()-interval '11 minutes' WHERE state_hash=encode(sha256(convert_to('google-state:' || $1, 'UTF8')),'hex')", [old.state]);
+    const expired = await callback(old, person());
+    expect(expired.location).toBe(`${back}&google_error=google_expired`); expect(session(expired)).toBeUndefined();
+    const noCookie = await callback(await start({ intent: "customer", next: v.next }), person(), {}, { cookie: null });
+    expect(noCookie.location).toBe(`${web}/login?error=google_expired`); expect(session(noCookie)).toBeUndefined();
   });
 });

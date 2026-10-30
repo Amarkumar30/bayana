@@ -3,10 +3,11 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, CalendarCheck, CheckCircle2, ChevronDown, Lock, Mail } from "lucide-react";
-import { dayRangeLabel, formatINR, sessionRangeLabel, tiersInWords } from "@bayana/shared";
+import { bookingReturnPath, dayRangeLabel, formatINR, googleErrorCopy, parseBookingReturnPath, sessionRangeLabel, tiersInWords } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Card, EmptyState, LoadingState, Money, Notice, Skeleton, Stepper } from "@/components/ui/display";
 import { Checkbox, Field, Input, RadioCards, Textarea } from "@/components/ui/field";
+import { GoogleButton, useGoogleEnabled } from "@/components/auth/google-button";
 import { HoldCountdown } from "@/components/booking/countdown";
 import { DayStep, dailyQuote } from "@/components/booking/day-step";
 import { dateLabel, formatBookingWhen, formatDate, formatDateTime, formatTime, localDateKey, viewerTimezone } from "@/components/booking/time";
@@ -24,6 +25,10 @@ type Slot = { startsAt: string; endsAt: string; maxBlocks?: number };
 type Hold = { id: string; token: string | null; holdExpiresAt: string };
 type Accepted = { booking: { id: string; status: string; hold_expires_at: string | null; advance_paise: string } };
 const STRIP_DAYS = 14;
+/** Name, phone and notes kept in this tab while the customer is away at Google (a convenience; the email comes from Google). */
+const detailsKey = (slug: string) => `bayana:booking-details:${slug}`;
+const saveDetails = (slug: string, value: { name: string; phone: string; notes: string }) => { try { sessionStorage.setItem(detailsKey(slug), JSON.stringify(value)); } catch { /* storage off: the customer types them again */ } };
+const loadDetails = (slug: string) => { try { const value = JSON.parse(sessionStorage.getItem(detailsKey(slug)) ?? "null") as Record<string, unknown> | null; return value && typeof value === "object" ? { name: String(value.name ?? "").slice(0, 120), phone: String(value.phone ?? "").slice(0, 20), notes: String(value.notes ?? "").slice(0, 2000) } : null; } catch { return null; } };
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const monthOf = (date: string) => date.slice(0, 7);
 const nextMonth = (month: string) => { const [year, value] = month.split("-").map(Number); return value === 12 ? `${year + 1}-01` : `${year}-${String(value + 1).padStart(2, "0")}`; };
@@ -44,8 +49,13 @@ export function BookingFlow() {
   const [hold, setHold] = useState<Hold>(); const [holdExpired, setHoldExpired] = useState(false);
   const [accepted, setAccepted] = useState<Accepted>();
   const idempotencyKey = useRef<string>("");
+  // The start (preset service, resume, return from Google) runs once per page load: cleaning the address after a Google
+  // return changes the search params, and must not start the flow over.
+  const started = useRef(false);
 
   useEffect(() => {
+    if (started.current) return;
+    started.current = true;
     api<PublicVendor>(`/v1/vendors/${encodeURIComponent(slug)}`).then(value => {
       setVendor(value);
       const preset = value.services.find(service => service.id === search.get("service"));
@@ -53,9 +63,34 @@ export function BookingFlow() {
       // Resuming from the booking page (?resume=<id>&t=<token>) goes straight back to the terms.
       const resume = search.get("resume");
       if (resume) { setHold({ id: resume, token: search.get("t"), holdExpiresAt: "" }); setVerified(true); setStep(4); }
+      else if (search.get("google") === "1" || search.get("google_error")) void returnFromGoogle(value);
       else if (preset) setStep(1);
     }).catch(error => setLoadError(error instanceof ApiError && error.status === 404 ? "This booking page is not available. Check the link with the business." : humanMessage(error)));
   }, [slug, search]);
+
+  /**
+   * Back from Google (intent=customer): the selection in the URL is validated again (shared rule) and restored, details come
+   * from this tab, the email from the verified session. Nothing is held here: the customer presses "Hold this time" next,
+   * and the server checks the time, the price and the session again.
+   */
+  const returnFromGoogle = async (value: PublicVendor) => {
+    const params = new URLSearchParams(search.toString()); const error = params.get("google_error"); params.delete("google_error"); params.delete("google");
+    const selection = parseBookingReturnPath(`/${value.slug}/book?${params}`);
+    const chosen = selection && value.services.find(item => item.id === selection.service);
+    window.history.replaceState(null, "", `/${value.slug}/book${chosen ? `?service=${chosen.id}` : ""}`);
+    if (!selection || !chosen) { setStep(0); setMessage("Your choice could not be restored. Please choose the service and time again."); return; }
+    setServiceId(chosen.id); setSlotDate(selection.date ?? ""); setSlotStart(chosen.booking_mode === "daily" ? "" : selection.start ?? "");
+    setDayCount(chosen.booking_mode === "daily" ? selection.days ?? 0 : 0); setBlockCount(chosen.booking_mode === "daily" ? 0 : selection.blocks ?? chosen.min_blocks ?? 1);
+    const kept = loadDetails(value.slug);
+    const timeChosen = chosen.booking_mode === "daily" ? Boolean(selection.date && selection.days) : Boolean(selection.start);
+    if (error) { if (kept) setDetails(current => ({ ...current, ...kept })); setMessage(googleErrorCopy[error] ?? googleErrorCopy.google_failed); setStep(timeChosen ? (kept?.name ? 3 : 2) : 1); return; }
+    try {
+      const { user } = await api<{ user: { email: string; role: string } }>("/v1/auth/me");
+      if (user.role !== "CLIENT") { if (kept) setDetails(current => ({ ...current, ...kept })); setMessage(googleErrorCopy.google_business_account); setStep(timeChosen ? 2 : 1); return; }
+      setDetails(current => ({ ...current, ...(kept ?? {}), email: user.email })); setVerified(true);
+      setStep(!timeChosen ? 1 : kept && kept.name.trim().length >= 2 && (!value.phone_required || kept.phone.trim().length >= 8) ? 3 : 2);
+    } catch (failure) { setMessage(humanMessage(failure)); setStep(timeChosen ? 3 : 1); }
+  };
 
   const service = vendor?.services.find(value => value.id === serviceId);
   const go = (to: number) => { setMessage(""); setStep(to); window.scrollTo({ top: 0 }); };
@@ -97,7 +132,9 @@ export function BookingFlow() {
       {step === 1 && service && daily && <DayStep vendor={vendor} service={service} version={slotsVersion} date={slotDate} days={dayCount} onDate={setSlotDate} onDays={setDayCount} onBack={() => go(0)} onNext={() => go(2)} />}
       {step === 1 && service && !daily && <TimeStep vendor={vendor} service={service} version={slotsVersion} date={slotDate} start={slotStart} blocks={blockCount} onDate={setSlotDate} onStart={setSlotStart} onBlocks={setBlockCount} onBack={() => go(0)} onNext={() => go(2)} />}
       {step === 2 && <DetailsStep phoneRequired={vendor.phone_required} value={details} verified={verified} onChange={setDetails} onBack={() => go(1)} onNext={() => go(3)} />}
-      {step === 3 && <VerifyStep email={details.email} verified={verified} onVerified={() => setVerified(true)} onHold={createHold} onBack={() => go(2)} />}
+      {step === 3 && service && <VerifyStep email={details.email} verified={verified} onVerified={() => setVerified(true)} onHold={createHold} onBack={() => go(2)}
+        googleNext={bookingReturnPath({ slug: vendor.slug, service: service.id, ...(slotDate ? { date: slotDate } : {}), ...(daily ? { days: dayCount || undefined } : { start: slotStart || undefined, blocks: blockCount > 1 ? blockCount : undefined }) })}
+        onLeaveForGoogle={() => saveDetails(vendor.slug, { name: details.name.trim(), phone: details.phone.trim(), notes: details.notes.trim() })} />}
       {step === 4 && hold && (holdExpired
         ? <Card className="grid gap-3"><h2 className="text-lg">Your hold ran out</h2><p className="text-sm text-muted">The 15 minutes passed, so the time was released for others. Nothing was charged.</p><Button onClick={() => restartFromTime("")}>Choose a time again</Button></Card>
         : <ReviewStep hold={hold} onHoldInfo={learnHoldExpiry} onExpired={markExpired} onAccepted={result => { setAccepted(result); go(5); }} />)}
@@ -212,7 +249,8 @@ function DetailsStep({ phoneRequired, value, verified, onChange, onBack, onNext 
   );
 }
 
-function VerifyStep({ email, verified, onVerified, onHold, onBack }: { email: string; verified: boolean; onVerified: () => void; onHold: () => Promise<void>; onBack: () => void }) {
+function VerifyStep({ email, verified, onVerified, onHold, onBack, googleNext, onLeaveForGoogle }: { email: string; verified: boolean; onVerified: () => void; onHold: () => Promise<void>; onBack: () => void; googleNext: string; onLeaveForGoogle: () => void }) {
+  const google = useGoogleEnabled();
   const [sent, setSent] = useState(false); const [code, setCode] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [cooldown, setCooldown] = useState(0);
   useEffect(() => { if (!cooldown) return; const timer = setTimeout(() => setCooldown(cooldown - 1), 1000); return () => clearTimeout(timer); }, [cooldown]);
   const send = async () => { setBusy(true); setError(""); try { await api("/v1/auth/booking/otp/request", { body: { email: email.trim() } }); setSent(true); setCooldown(60); } catch (failure) { setError(humanMessage(failure)); } finally { setBusy(false); } };
@@ -231,9 +269,12 @@ function VerifyStep({ email, verified, onVerified, onHold, onBack }: { email: st
   return (
     <Card>
       <form onSubmit={verify} noValidate className="grid gap-4">
-        <div className="grid gap-1"><h2 className="text-lg">Confirm your email</h2><p className="text-sm text-muted">Nothing is held or charged until you enter the code.</p></div>
+        <div className="grid gap-1"><h2 className="text-lg">Confirm your email</h2><p className="text-sm text-muted">Nothing is held or charged until your email is confirmed.</p></div>
+        <GoogleButton intent="customer" next={googleNext} onLeave={onLeaveForGoogle} />
+        {google && <p className="-mt-2 text-center text-xs text-muted">Google confirms your email; you will use that address for this booking. You come back here to hold the time.</p>}
+        {google && <p className="flex items-center gap-3 text-xs uppercase tracking-wide text-muted" aria-hidden><span className="h-px flex-1 bg-border" />or<span className="h-px flex-1 bg-border" /></p>}
         <p className="flex items-center gap-2 rounded-input bg-surface-muted px-3 py-2 text-sm"><Mail className="size-4 shrink-0 text-muted" aria-hidden /><span className="min-w-0 break-all">{email}</span></p>
-        {!sent ? <Button type="button" size="lg" block loading={busy} loadingText="Sending…" onClick={() => void send()}>Send my code</Button> : <>
+        {!sent ? <Button type="button" size="lg" block variant={google ? "secondary" : "primary"} loading={busy} loadingText="Sending…" onClick={() => void send()}>Send my code</Button> : <>
           <Field label="Six-digit code" hint="It expires in 10 minutes.">{p => <Input {...p} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ""))} className="text-center text-lg tracking-[0.5em] tabular-nums" />}</Field>
           <Button size="lg" block loading={busy} loadingText="Checking…">Verify and hold my time</Button>
           <Button type="button" variant="ghost" size="sm" className="w-fit" disabled={cooldown > 0 || busy} onClick={() => void send()}>{cooldown > 0 ? `Send a new code in ${cooldown}s` : "Send a new code"}</Button>

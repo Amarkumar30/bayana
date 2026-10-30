@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
+import { googleCustomerNextPath, googleIntent } from "@bayana/shared";
 import { currentUser, event, findUserByEmail, hashPassword, invalidCredentials, validatePassword, verifyPassword, type PublicUser, type SessionUser } from "../auth.js";
 import { cookieOptions, cookieToken, meta, perIp, readCookie, rotateInto } from "../auth-routes.js";
 import { config } from "../config.js";
@@ -27,28 +28,41 @@ export const googleRouter = Router();
 googleRouter.get("/providers", perIp(120), (_req, res) => { res.json({ google: googleProvider() !== null }); });
 
 /**
- * Starts sign-in (or, with mode=link and a session, connecting Google to the signed-in account). The state, nonce and PKCE
- * verifier go into a signed, httpOnly, 10-minute cookie; the state's hash is stored so the callback can be used only once.
+ * Starts sign-in (or, with mode=link and a session, connecting Google to the signed-in account). The state, nonce, PKCE
+ * verifier and intent go into a signed, httpOnly, 10-minute cookie; the state's hash is stored so the callback can be used
+ * only once. intent=vendor (default) returns to an app section; intent=customer returns only to a booking page
+ * (/<slug>/book?..., re-validated) and can never connect Google to an account.
  */
 googleRouter.get("/google/start", perIp(30), handle(async (req, res) => {
   const provider = googleProvider();
   if (!provider) throw disabled();
+  const intent = googleIntent(req.query.intent);
+  if (!intent) throw new AppError(400, "INVALID_INTENT", "Choose vendor or customer sign-in");
   const link = req.query.mode === "link";
-  const next = req.query.next === undefined ? (link ? "/dashboard/settings" : "/dashboard") : safeNextPath(req.query.next);
+  if (link && intent === "customer") throw new AppError(400, "INVALID_INTENT", "Connecting Google is for business accounts");
+  const next = intent === "customer" ? googleCustomerNextPath(req.query.next)
+    : req.query.next === undefined ? (link ? "/dashboard/settings" : "/dashboard") : safeNextPath(req.query.next);
   if (!next) throw new AppError(400, "INVALID_NEXT", "That return address is not allowed");
   const linkUserId = link ? (await requireSession(req)).id : null;
   const state = randomToken(), nonce = randomToken(), verifier = randomToken();
   await pool.query("INSERT INTO oauth_login_states(state_hash) VALUES($1)", [stateHash(state)]);
-  res.cookie(GOOGLE_COOKIE, encodeGoogleCookie({ state, nonce, verifier, next, linkUserId, expires: Date.now() + GOOGLE_COOKIE_MINUTES * 60_000 }), googleCookieOptions());
-  log("info", "google.start", { requestId: res.locals.requestId, link });
+  res.cookie(GOOGLE_COOKIE, encodeGoogleCookie({ state, nonce, verifier, next, linkUserId, intent, expires: Date.now() + GOOGLE_COOKIE_MINUTES * 60_000 }), googleCookieOptions());
+  log("info", "google.start", { requestId: res.locals.requestId, link, intent });
   res.redirect(302, provider.authorizationUrl({ state, nonce, codeChallenge: pkceChallenge(verifier) }));
 }));
 
 type Outcome = { user: PublicUser; path: string; kind: "signin" | "linked" | "created" | "connected" };
-/** Each failure becomes a short code the login page turns into a sentence; nothing about the token or code is logged. */
+/**
+ * Each failure becomes a short code the page turns into a sentence; nothing about the token, code or email is logged. A
+ * customer goes back to the booking they started (?google_error=), everyone else to /login or Settings (?error=).
+ */
 const fail = (res: Response, code: string, reason: string, path = "/login") => {
   log("warn", "google.callback_failed", { requestId: res.locals.requestId, code, reason });
-  res.redirect(302, web(`${path}?error=${code}`));
+  // Customers return to their booking page (its google=1 marker dropped), with the code as google_error.
+  const url = new URL(path, "https://return.invalid"), customer = url.pathname.endsWith("/book");
+  if (customer) url.searchParams.delete("google");
+  url.searchParams.set(customer ? "google_error" : "error", code);
+  res.redirect(302, web(`${url.pathname}${url.search}`));
 };
 
 googleRouter.get("/google/callback", perIp(30), handle(async (req, res) => {
@@ -56,7 +70,7 @@ googleRouter.get("/google/callback", perIp(30), handle(async (req, res) => {
   // Whatever happens next, the one-time cookie is used up.
   const cookie = decodeGoogleCookie(readCookie(req.headers.cookie, GOOGLE_COOKIE));
   res.clearCookie(GOOGLE_COOKIE, { ...cookieOptions(), path: "/v1/auth/google" });
-  const back = cookie?.linkUserId ? "/dashboard/settings" : "/login";
+  const back = cookie?.linkUserId ? "/dashboard/settings" : cookie?.intent === "customer" ? cookie.next : "/login";
   if (!provider) return fail(res, "google_unavailable", "disabled", back);
   if (req.query.error === "access_denied") return fail(res, "google_cancelled", "access_denied", back);
   if (typeof req.query.error === "string") return fail(res, "google_failed", "provider error", back);
@@ -80,7 +94,7 @@ googleRouter.get("/google/callback", perIp(30), handle(async (req, res) => {
     if (error instanceof AppError && error.code.startsWith("google_")) return fail(res, error.code, error.message, back);
     throw error;
   }
-  log("info", "google.signed_in", { requestId: res.locals.requestId, userId: outcome.user.id, kind: outcome.kind });
+  log("info", "google.signed_in", { requestId: res.locals.requestId, userId: outcome.user.id, kind: outcome.kind, intent: cookie.intent });
   res.redirect(302, web(outcome.path));
 }));
 
@@ -112,11 +126,16 @@ async function applyGoogle(db: Parameters<typeof rotateInto>[2], req: Request, r
     return { user: session, path: "/dashboard/settings?google=connected", kind: "connected" };
   }
 
+  if (cookie.intent === "customer") return applyCustomer(db, req, res, identity, cookie, linked.rows[0]?.user_id ?? null, insertIdentity, userRow);
+
   let user: PublicUser, kind: Outcome["kind"];
   if (linked.rowCount) {
     const found = await userRow(linked.rows[0].user_id);
     if (!found || found.deleted_at) throw new AppError(403, "google_failed", "account closed");
     user = found; kind = "signin";
+    // A customer who first used Google for a booking and now signs in as a business (the vendor button) becomes a vendor,
+    // as through the email-code signup; this is the only way a customer account becomes a vendor account.
+    if (found.role === "CLIENT") { user = (await db.query<PublicUser>("UPDATE users SET role='VENDOR' WHERE id=$1 RETURNING id,email::text AS email,role", [found.id])).rows[0]; kind = "linked"; }
   } else {
     const existing = await findUserByEmail(db, identity.email);
     if (existing) {
@@ -138,6 +157,39 @@ async function applyGoogle(db: Parameters<typeof rotateInto>[2], req: Request, r
   const hasProfile = (await db.query("SELECT 1 FROM vendors WHERE owner_user_id=$1", [user.id])).rowCount;
   // A vendor without a business profile sets one up first (as after email signup); /admin is never redirected.
   return { user, path: !hasProfile && user.role === "VENDOR" && !cookie.next.startsWith("/admin") ? "/onboarding" : cookie.next, kind };
+}
+
+/**
+ * A customer confirming their email for a booking (intent=customer). The proof is the one the email-code path produces
+ * (POST /v1/auth/booking/otp/verify): a session for the one users row of this Google-verified email, which is created as a
+ * CLIENT if new. An existing account keeps its role: nobody becomes a vendor here, no password is set, no vendor terms
+ * are recorded (the booking's own terms are agreed to on the booking), and the person goes straight back to the booking.
+ */
+async function applyCustomer(db: Parameters<typeof rotateInto>[2], req: Request, res: Response, identity: { sub: string; email: string }, cookie: NonNullable<ReturnType<typeof decodeGoogleCookie>>,
+  linkedUserId: string | null, insertIdentity: (userId: string) => Promise<void>, userRow: (id: string) => Promise<(PublicUser & { deleted_at: Date | null }) | undefined>): Promise<Outcome> {
+  let user: PublicUser, kind: Outcome["kind"];
+  if (linkedUserId) {
+    const found = await userRow(linkedUserId);
+    if (!found || found.deleted_at) throw new AppError(403, "google_failed", "account closed");
+    user = found; kind = "signin";
+  } else {
+    const existing = await findUserByEmail(db, identity.email);
+    if (existing) {
+      await insertIdentity(existing.id);
+      user = (await db.query<PublicUser>("UPDATE users SET email_verified_at=COALESCE(email_verified_at,now()) WHERE id=$1 RETURNING id,email::text AS email,role", [existing.id])).rows[0];
+      kind = "linked";
+    } else {
+      user = (await db.query<PublicUser>("INSERT INTO users(id,email,role,email_verified_at) VALUES($1,$2,'CLIENT',now()) RETURNING id,email::text AS email,role", [randomUUID(), identity.email])).rows[0];
+      await insertIdentity(user.id);
+      await event(db, user.id, "signup_google_customer", req.ip, req.header("user-agent"));
+      kind = "created";
+    }
+  }
+  // Same person, same row: a business account signs in as itself (its role never changes). Holds are for customer accounts
+  // (POST /v1/bookings), as on the email-code path; the booking page tells a business account to use another email.
+  await rotateInto(req, res, db, user.id);
+  await event(db, user.id, kind === "linked" ? "google_linked" : "login_google", req.ip, req.header("user-agent"));
+  return { user, path: cookie.next, kind };
 }
 
 // ---- Sign-in methods (Settings) ----------------------------------------------------------------------------------------

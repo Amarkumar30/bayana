@@ -20,7 +20,7 @@ test("booking stepper: service preselected, date strip, time chips, inline detai
   await page.getByLabel("Your name").fill("Asha Rao"); await page.getByLabel("Email").fill("asha@example.in"); await page.getByLabel("Phone").fill("+91 98000 00000");
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByRole("heading", { name: "Confirm your email" })).toBeVisible();
-  await expect(page.getByText("Nothing is held or charged until you enter the code.")).toBeVisible();
+  await expect(page.getByText("Nothing is held or charged until your email is confirmed.")).toBeVisible();
 });
 
 test("customer booking page: contract, honest payment copy and a refund preview before cancelling", async ({ page }) => {

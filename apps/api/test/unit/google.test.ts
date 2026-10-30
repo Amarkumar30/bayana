@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { bookingReturnPath, googleCustomerNextPath, googleIntent, parseBookingReturnPath } from "@bayana/shared";
 import { loadConfig } from "../../src/config.js";
 import { decodeGoogleCookie, encodeGoogleCookie, pkceChallenge, safeNextPath } from "../../src/google/provider.js";
 
@@ -23,7 +24,7 @@ describe("return path allowlist (no open redirect)", () => {
 });
 
 describe("one-time Google cookie", () => {
-  const value = { state: "s1", nonce: "n1", verifier: "v1", next: "/dashboard", linkUserId: null, expires: Date.now() + 60_000 };
+  const value = { state: "s1", nonce: "n1", verifier: "v1", next: "/dashboard", linkUserId: null, intent: "vendor" as const, expires: Date.now() + 60_000 };
   it("round-trips when untouched", () => expect(decodeGoogleCookie(encodeGoogleCookie(value))).toEqual(value));
   it("is refused when tampered, unsigned or expired", () => {
     const encoded = encodeGoogleCookie(value); const [payload, signature] = encoded.split(".");
@@ -33,5 +34,46 @@ describe("one-time Google cookie", () => {
     expect(decodeGoogleCookie(encodeGoogleCookie({ ...value, expires: Date.now() - 1 }))).toBeNull();
     expect(decodeGoogleCookie(undefined)).toBeNull();
   });
+  it("carries the intent signed: a cookie from before intents is a vendor sign-in, an unknown or swapped intent is refused", () => {
+    const { intent: _intent, ...older } = value;
+    expect(decodeGoogleCookie(encodeGoogleCookie(older as unknown as typeof value))).toEqual(value);
+    expect(decodeGoogleCookie(encodeGoogleCookie({ ...value, intent: "admin" } as unknown as typeof value))).toBeNull();
+    const [payload, signature] = encodeGoogleCookie(value).split(".");
+    const swapped = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(payload, "base64url").toString()), intent: "customer" })).toString("base64url");
+    expect(decodeGoogleCookie(`${swapped}.${signature}`)).toBeNull();
+  });
   it("uses the S256 PKCE challenge from RFC 7636", () => expect(pkceChallenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")).toBe("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"));
+});
+
+describe("customer Google sign-in: intent and the booking return path", () => {
+  const service = "11111111-1111-4111-8111-111111111111";
+  it("intent defaults to vendor; only vendor and customer are accepted", () => {
+    expect(googleIntent(undefined)).toBe("vendor"); expect(googleIntent("")).toBe("vendor");
+    expect(googleIntent("vendor")).toBe("vendor"); expect(googleIntent("customer")).toBe("customer");
+    for (const bad of ["admin", "VENDOR", "customer ", ["customer"], 1]) expect(googleIntent(bad)).toBeNull();
+  });
+  it("builds and re-reads the booking selection, in a fixed order", () => {
+    const path = bookingReturnPath({ slug: "studio-sunday", service, date: "2026-11-12", start: "2026-11-12T08:30:00.000Z", blocks: 3 });
+    expect(path).toBe(`/studio-sunday/book?service=${service}&date=2026-11-12&start=2026-11-12T08%3A30%3A00.000Z&blocks=3&google=1`);
+    expect(parseBookingReturnPath(path)).toEqual({ slug: "studio-sunday", service, date: "2026-11-12", start: "2026-11-12T08:30:00.000Z", blocks: 3 });
+    expect(googleCustomerNextPath(`/studio-sunday/book?google=1&days=2&date=2026-11-12&service=${service}`)).toBe(`/studio-sunday/book?service=${service}&date=2026-11-12&days=2&google=1`);
+  });
+  it.each([
+    ["another host", `https://evil.example/studio-sunday/book?service=${service}`],
+    ["a protocol-relative URL", `//evil.example/studio-sunday/book?service=${service}`],
+    ["a backslash", `/\evil.example/book?service=${service}`],
+    ["a dot segment", `/studio-sunday/../dashboard/book?service=${service}`],
+    ["a non-booking page", "/dashboard"],
+    ["an app section dressed as a slug", `/dashboard/settings/book?service=${service}`],
+    ["an unknown parameter", `/studio-sunday/book?service=${service}&next=//evil.example`],
+    ["a repeated parameter", `/studio-sunday/book?service=${service}&service=${service}`],
+    ["a hash", `/studio-sunday/book?service=${service}#x`],
+    ["no service", "/studio-sunday/book?date=2026-11-12"],
+    ["a bad service id", "/studio-sunday/book?service=not-a-uuid"],
+    ["a bad date", `/studio-sunday/book?service=${service}&date=12-11-2026`],
+    ["a bad start", `/studio-sunday/book?service=${service}&start=javascript:alert(1)`],
+    ["too many sessions", `/studio-sunday/book?service=${service}&blocks=13`],
+    ["too many days", `/studio-sunday/book?service=${service}&days=31`],
+    ["an upper-case slug", `/Studio/book?service=${service}`]
+  ])("refuses %s", (_case, value) => expect(googleCustomerNextPath(value)).toBeNull());
 });

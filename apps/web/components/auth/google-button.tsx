@@ -1,9 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
-import { googleNextPath } from "@bayana/shared";
+import { useCallback, useEffect, useState } from "react";
+import { googleCustomerNextPath, googleNextPath, type GoogleIntent } from "@bayana/shared";
 import { env } from "@/env";
 import { buttonVariants } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/display";
+import { LoadingState, Skeleton } from "@/components/ui/display";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -17,27 +17,61 @@ const GoogleMark = () => (
   </svg>
 );
 
-let cached: boolean | undefined;
-/** Whether the API has Google sign-in configured (GET /v1/auth/providers). Unknown while loading; off if the call fails. */
-export function useGoogleEnabled() {
-  const [enabled, setEnabled] = useState<boolean | undefined>(cached);
+/**
+ * Whether the API has Google sign-in on (GET /v1/auth/providers), shared by every button on the page. Only a real answer is
+ * kept: a failed or timed-out call (a sleeping API, a network blip, a blocked request) is "error", never "off", so the button
+ * stays visible with a way to check again instead of disappearing for good.
+ */
+export type GoogleStatus = "loading" | "on" | "off" | "error";
+let known: "on" | "off" | undefined;
+let inflight: Promise<"on" | "off" | "error"> | null = null;
+const listeners = new Set<(status: GoogleStatus) => void>();
+const announce = (status: GoogleStatus) => { for (const listener of listeners) listener(status); };
+function checkProviders() {
+  inflight ??= api<{ google: boolean }>("/v1/auth/providers")
+    .then(value => { known = value.google ? "on" : "off"; return known; })
+    .catch(() => "error" as const)
+    .finally(() => { inflight = null; });
+  return inflight;
+}
+export function useGoogleStatus() {
+  const [status, setStatus] = useState<GoogleStatus>(known ?? "loading");
   useEffect(() => {
-    if (cached !== undefined) return;
-    api<{ google: boolean }>("/v1/auth/providers").then(value => { cached = value.google; setEnabled(value.google); }).catch(() => setEnabled(false));
+    listeners.add(setStatus);
+    if (!known) void checkProviders().then(announce);
+    return () => { listeners.delete(setStatus); };
   }, []);
-  return enabled;
+  const retry = useCallback(() => { announce("loading"); void checkProviders().then(announce); }, []);
+  return { status, retry };
+}
+/** Unknown while loading; true when the button shows (on, or the check failed and it shows with a retry); false when off. */
+export function useGoogleEnabled() {
+  const { status } = useGoogleStatus();
+  return status === "loading" ? undefined : status !== "off";
 }
 
-/** A full-page navigation to the API, which redirects to Google; the API only accepts return paths from the shared allowlist. */
-export const googleStartUrl = (next?: string | null, mode?: "link") => {
-  const params = new URLSearchParams({ ...(googleNextPath(next) ? { next: next! } : {}), ...(mode ? { mode } : {}) });
+/**
+ * A full-page navigation to the API, which redirects to Google. vendor (default): the API accepts return paths from the shared
+ * allowlist only. customer: the return path is a booking page (/<slug>/book?...), validated the same way on both sides.
+ */
+export const googleStartUrl = (next?: string | null, mode?: "link", intent: GoogleIntent = "vendor") => {
+  const safe = intent === "customer" ? googleCustomerNextPath(next) : googleNextPath(next);
+  const params = new URLSearchParams({ ...(intent === "customer" ? { intent } : {}), ...(safe ? { next: safe } : {}), ...(mode ? { mode } : {}) });
   return `${env.NEXT_PUBLIC_API_URL}/v1/auth/google/start${params.size ? `?${params}` : ""}`;
 };
 
-/** "Continue with Google", shown only when the API has it switched on. */
-export function GoogleButton({ next, label = "Continue with Google" }: { next?: string | null; label?: string }) {
-  const enabled = useGoogleEnabled();
-  if (enabled === undefined) return <Skeleton className="h-12 w-full" />;
-  if (!enabled) return null;
-  return <a href={googleStartUrl(next)} className={cn(buttonVariants({ variant: "secondary", size: "lg", block: true }), "gap-3")}><GoogleMark />{label}</a>;
+/**
+ * "Continue with Google". Hidden only when the API says Google is off. If the check failed, the button still shows (it is a
+ * plain navigation, which works even when the check could not reach the API) with a link to check again.
+ */
+export function GoogleButton({ next, label = "Continue with Google", intent = "vendor", onLeave }: { next?: string | null; label?: string; intent?: GoogleIntent; onLeave?: () => void }) {
+  const { status, retry } = useGoogleStatus();
+  if (status === "loading") return <LoadingState label="Checking Google sign-in…"><Skeleton className="h-12 w-full" /></LoadingState>;
+  if (status === "off") return null;
+  return (
+    <div className="grid gap-1.5">
+      <a href={googleStartUrl(next, undefined, intent)} onClick={onLeave} className={cn(buttonVariants({ variant: "secondary", size: "lg", block: true }), "gap-3")}><GoogleMark />{label}</a>
+      {status === "error" && <p className="text-center text-xs text-muted" role="status">We couldn&apos;t check Google sign-in just now. <button type="button" onClick={retry} className="min-h-11 font-medium text-primary underline">Check again</button></p>}
+    </div>
+  );
 }
