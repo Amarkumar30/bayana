@@ -35,7 +35,7 @@ test("day picker: dates show why they are unavailable, days are limited to what 
   // The first free date with three free days after it (offsets 1, 2: available; 3: closed; so offset 6 starts 6, 7, 8 = free).
   let offset = 1; while (!(mockDayStatus(offset) === "available" && mockDayStatus(offset + 1) === "available" && mockDayStatus(offset + 2) === "available")) offset++;
   const start = new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
-  if (start.slice(0, 7) !== new Date().toISOString().slice(0, 7)) await page.getByRole("button", { name: "Next month" }).click();
+  if (start.slice(0, 7) !== new Date().toISOString().slice(0, 7)) await page.getByRole("button", { name: "Next month", exact: true }).click();
   // Today (offset 0) is past: its button is disabled and says why.
   const today = new Date().toISOString().slice(0, 10);
   if (start.slice(0, 7) === today.slice(0, 7)) await expect(page.locator(`[data-date="${today}"]`)).toBeDisabled();
