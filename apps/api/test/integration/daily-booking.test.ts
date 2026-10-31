@@ -195,10 +195,15 @@ describe("open days, blocked dates and time off", () => {
     expect(await codeOf(holdDaily(v, later, 1))).toBe("SLOT_TAKEN");
     expect(await codeOf(holdDaily(v, addLocalDays(later, 1), 1))).toBe("OK");
   });
-  it("ranges crossing a month end and a year end work", async () => {
+  it("ranges crossing a month end work", async () => {
     const v = await vendor({ max: 5 });
     const monthEnd = nextDate(date => addLocalDays(date, 1).endsWith("-01") && !date.endsWith("-12-31"));
     expect((await row((await holdDaily(v, addLocalDays(monthEnd, -1), 3)).id)).days_count).toBe(3);
+  });
+  // On 29-31 December (India) the next 30 December at least two days away is a year out, and a range from it ends past the
+  // vendor's 365-day booking limit, so there is no year end to book: skipped (and reported as skipped) on those three days only.
+  it.skipIf(["12-29", "12-30", "12-31"].includes(today("Asia/Kolkata").slice(5)))("ranges crossing a year end work", async () => {
+    const v = await vendor({ max: 5 });
     const newYear = nextDate(date => date.endsWith("-12-30"));
     const stored = await row((await holdDaily(v, newYear, 4)).id);
     expect(localDateOf(new Date(stored.ends_at.getTime() - 1), "Asia/Kolkata")).toBe(`${Number(newYear.slice(0, 4)) + 1}-01-02`);
@@ -206,20 +211,43 @@ describe("open days, blocked dates and time off", () => {
 });
 
 describe("timezones other than India, across daylight-saving changes", () => {
-  const ny = "America/New_York";
-  /** The next US autumn (first Sunday of November) and spring (second Sunday of March) changes, at least two days away. */
-  const nextSunday = (month: string, nth: number) => nextDate(date => date.slice(5, 7) === month && weekdayOf(date) === 0 && Math.ceil(Number(date.slice(8)) / 7) === nth, ny);
-  it("a New York day is local midnight to local midnight: 25 hours in autumn, 23 in spring", async () => {
-    const v = await vendor({ timezone: ny });
-    const autumn = nextSunday("11", 1), spring = nextSunday("03", 2);
-    const fall = await row((await holdDaily(v, autumn, 1)).id), rise = await row((await holdDaily(v, spring, 1)).id);
-    expect(fall.starts_at.toISOString()).toBe(`${autumn}T04:00:00.000Z`); // 00:00 EDT
-    expect(fall.ends_at.toISOString()).toBe(`${addLocalDays(autumn, 1)}T05:00:00.000Z`); // 00:00 EST
-    expect(rise.starts_at.toISOString()).toBe(`${spring}T05:00:00.000Z`); // 00:00 EST
-    expect(rise.ends_at.toISOString()).toBe(`${addLocalDays(spring, 1)}T04:00:00.000Z`); // 00:00 EDT
+  /**
+   * Clock changes on a Sunday (month, nth Sunday) with the UTC instants of local midnight at the start and end of that day
+   * (day shift from the local date, UTC hour). Two zones per kind, so one is always 2 to 360 days ahead: inside the vendor's
+   * 365-day booking limit whatever today is (the next New York autumn change is out of reach from late October).
+   */
+  type Change = { zone: string; month: string; nth: number; start: [number, string]; end: [number, string] };
+  const changes: Record<"autumn" | "spring", Change[]> = {
+    autumn: [
+      { zone: "America/New_York", month: "11", nth: 1, start: [0, "04"], end: [1, "05"] }, // 00:00 EDT to 00:00 EST
+      { zone: "Australia/Sydney", month: "04", nth: 1, start: [-1, "13"], end: [0, "14"] } // 00:00 AEDT to 00:00 AEST
+    ],
+    spring: [
+      { zone: "America/New_York", month: "03", nth: 2, start: [0, "05"], end: [1, "04"] }, // 00:00 EST to 00:00 EDT
+      { zone: "Australia/Sydney", month: "10", nth: 1, start: [-1, "14"], end: [0, "13"] } // 00:00 AEST to 00:00 AEDT
+    ]
+  };
+  /** The nearest change of a kind, 2 to 360 days ahead in its own zone. */
+  const nextChange = (kind: "autumn" | "spring") => {
+    for (let offset = 2; offset <= 360; offset++) for (const change of changes[kind]) {
+      const date = ahead(offset, change.zone);
+      if (date.slice(5, 7) === change.month && weekdayOf(date) === 0 && Math.ceil(Number(date.slice(8)) / 7) === change.nth) return { ...change, date };
+    }
+    throw new Error(`no ${kind} clock change within 360 days`);
+  };
+  const instant = (date: string, [shift, hour]: [number, string]) => `${addLocalDays(date, shift)}T${hour}:00:00.000Z`;
+  it("a local day is local midnight to local midnight: 25 hours in autumn, 23 in spring (New York or Sydney)", async () => {
+    const autumn = nextChange("autumn"), spring = nextChange("spring");
+    const fall = await row((await holdDaily(await vendor({ timezone: autumn.zone }), autumn.date, 1)).id);
+    const rise = await row((await holdDaily(await vendor({ timezone: spring.zone }), spring.date, 1)).id);
+    expect(fall.starts_at.toISOString()).toBe(instant(autumn.date, autumn.start));
+    expect(fall.ends_at.toISOString()).toBe(instant(autumn.date, autumn.end));
+    expect(rise.starts_at.toISOString()).toBe(instant(spring.date, spring.start));
+    expect(rise.ends_at.toISOString()).toBe(instant(spring.date, spring.end));
     expect(fall.ends_at.getTime() - fall.starts_at.getTime()).toBe(25 * 3_600_000);
     expect(rise.ends_at.getTime() - rise.starts_at.getTime()).toBe(23 * 3_600_000);
-    expect(fall.vendor_timezone).toBe(ny);
+    expect(fall.vendor_timezone).toBe(autumn.zone);
+    expect(rise.vendor_timezone).toBe(spring.zone);
   });
 });
 
