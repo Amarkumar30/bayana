@@ -55,7 +55,7 @@ const row = async (id: string) => (await pool.query("SELECT booking_mode,days_co
 /** Insert a booking straight into the table, bypassing the app, to prove the database constraint itself refuses overlaps. */
 const rawInsert = (v: Vendor, blockStart: string, blockEnd: string) => pool.query("INSERT INTO bookings(id,vendor_id,event_date,client_name,client_email,client_phone,status,total_paise,advance_paise,idempotency_key,starts_at,ends_at,block_start,block_end) VALUES($1,$2,$3::timestamptz::date,'Raw','raw@example.test','','CONFIRMED',1,0,$4,$3,$5,$3,$5)", [randomUUID(), v.vendorId, blockStart, randomUUID(), blockEnd]);
 /** The next local date (at least 2 days away) that satisfies a test. */
-function nextDate(test: (date: string) => boolean, timezone = "Asia/Kolkata") { for (let offset = 2; offset < 360; offset++) { const date = ahead(offset, timezone); if (test(date)) return date; } throw new Error("no date found"); }
+function nextDate(test: (date: string) => boolean, timezone = "Asia/Kolkata") { for (let offset = 2; offset < 400; offset++) { const date = ahead(offset, timezone); if (test(date)) return date; } throw new Error("no date found"); }
 
 describe("migration 021", () => {
   it("leaves every service and booking valid under the new constraints, hourly by default", async () => {
