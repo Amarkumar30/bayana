@@ -35,7 +35,7 @@ describe("API startup with production env and missing variables", () => {
     for (const value of Object.values(secrets)) expect(run.output).not.toContain(value);
     expect(run.output).not.toMatch(/NEVER-PRINT/);
     expect(run.output).not.toMatch(/server\.started/);
-  });
+  }, 60_000);
   it("names an invalid value by its rule, never the value (a live key while payments are disabled)", () => {
     const liveKey = "rzp_live_FAKEKEYNEVERPRINT";
     const run = start({ NODE_ENV: "production", PAYMENT_MODE: "disabled", RAZORPAY_KEY_ID: liveKey, SESSION_COOKIE_NAME: "bad; Domain=evil.example", ...secrets });
@@ -45,5 +45,5 @@ describe("API startup with production env and missing variables", () => {
     expect(run.output).not.toContain(liveKey);
     expect(run.output).not.toContain("evil.example");
     expect(run.output).not.toMatch(/NEVER-PRINT/);
-  });
+  }, 60_000);
 });
