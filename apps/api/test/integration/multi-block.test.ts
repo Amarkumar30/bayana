@@ -222,16 +222,30 @@ describe("buffers and timezones", () => {
     expect(map["13:30"]).toBeUndefined(); expect(map["14:00"]).toBe(4);
   });
   it("a non-IST vendor gets correct UTC times, including across both daylight-saving changes", async () => {
-    const zone = "America/New_York";
-    const ny = await vendor({ timezone: zone, windows: [["00:00", "12:00"]] });
-    const plain = await hold(ny, "2026-11-10", "09:00", 2);
-    expect(iso((await row(plain.id)).starts_at)).toBe("2026-11-10T14:00:00.000Z"); expect(iso((await row(plain.id)).ends_at)).toBe("2026-11-10T16:00:00.000Z");
-    // 1 November 2026 falls back at 02:00: three real hours from 00:00 EDT end at 02:00 EST (07:00Z), not at 03:00 local.
-    const fallBack = await hold(ny, "2026-11-01", "00:00", 3);
-    expect(iso((await row(fallBack.id)).starts_at)).toBe("2026-11-01T04:00:00.000Z"); expect(iso((await row(fallBack.id)).ends_at)).toBe("2026-11-01T07:00:00.000Z");
-    // 14 March 2027 springs forward at 02:00: three real hours from 00:00 EST end at 04:00 EDT (08:00Z).
-    const springForward = await hold(ny, "2027-03-14", "00:00", 3);
-    expect(iso((await row(springForward.id)).starts_at)).toBe("2027-03-14T05:00:00.000Z"); expect(iso((await row(springForward.id)).ends_at)).toBe("2027-03-14T08:00:00.000Z");
+    // Local wall-clock time of an instant, read with Intl (independent of the app's own time code).
+    const clock = (instant: Date, zone: string) => new Intl.DateTimeFormat("en-GB", { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(instant);
+    const ny = await vendor({ timezone: "America/New_York", windows: [["00:00", "12:00"]] });
+    const plainDate = ahead(10, ny.timezone), plain = await row((await hold(ny, plainDate, "09:00", 2)).id);
+    expect(clock(plain.starts_at, ny.timezone)).toBe("09:00"); expect(clock(plain.ends_at, ny.timezone)).toBe("11:00");
+    expect(plain.ends_at.getTime() - plain.starts_at.getTime()).toBe(2 * 3_600_000);
+    // The nearest clock change of each kind, 2 to 360 days ahead (inside the 365-day booking window), in New York or Sydney:
+    // both go back one hour (02:00 again) in autumn and skip one (02:00 to 03:00) in spring.
+    const changes = { back: [["America/New_York", "11", 1], ["Australia/Sydney", "04", 1]], forward: [["America/New_York", "03", 2], ["Australia/Sydney", "10", 1]] } as const;
+    const nextChange = (kind: keyof typeof changes) => {
+      for (let offset = 2; offset <= 360; offset++) for (const [zone, month, nth] of changes[kind]) {
+        const date = ahead(offset, zone);
+        if (date.slice(5, 7) === month && new Date(`${date}T12:00:00Z`).getUTCDay() === 0 && Math.ceil(Number(date.slice(8)) / 7) === nth) return { zone, date };
+      }
+      throw new Error(`no ${kind} clock change within 360 days`);
+    };
+    // Three real hours from local midnight end at 02:00 local after the clocks go back, and at 04:00 after they go forward.
+    for (const [kind, end] of [["back", "02:00"], ["forward", "04:00"]] as const) {
+      const { zone, date } = nextChange(kind);
+      const booked = await row((await hold(await vendor({ timezone: zone, windows: [["00:00", "12:00"]] }), date, "00:00", 3)).id);
+      expect(clock(booked.starts_at, zone), `${kind} ${zone} ${date}`).toBe("00:00");
+      expect(booked.ends_at.getTime() - booked.starts_at.getTime(), `${kind} ${zone} ${date}`).toBe(3 * 3_600_000);
+      expect(clock(booked.ends_at, zone), `${kind} ${zone} ${date}`).toBe(end);
+    }
   });
   it("on a spring-forward day the real end must still be inside opening hours (pure engine)", () => {
     const input: SlotEngineInput = { timezone: "America/New_York", serviceDurationMinutes: 60, bufferBeforeMinutes: 0, bufferAfterMinutes: 0, bookingMode: "hourly", slotStepMinutes: 30, blocks: { minBlocks: 1, maxBlocks: 4 },
