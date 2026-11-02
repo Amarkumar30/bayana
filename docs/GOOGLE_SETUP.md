@@ -4,7 +4,9 @@ Google sign-in is optional. While `GOOGLE_CLIENT_ID` is empty, the feature is of
 
 One OAuth client serves two kinds of people:
 - **Vendors** (`/login`, `/signup`): sign in, or create a business account and go to onboarding. This is the default (`intent=vendor`).
-- **Customers** (the "Confirm your email" step of a booking on a vendor page): Google confirms the email instead of a six-digit code, and the customer returns to the same booking with their choice kept (`intent=customer`). A customer never becomes a vendor this way and gets no password. The same email always means the same Bayana account, from either side.
+- **Customers** (the "Confirm your email" step of a booking on a vendor page, "My bookings", and "I booked with someone" on `/login`): Google confirms the email instead of a six-digit code, and the customer returns to the same booking, or to `/my-bookings` (`intent=customer`). A customer never becomes a vendor this way and gets no password. The same email always means the same Bayana account, from either side.
+
+Roles never change by signing in. The only Google path that turns an existing customer into a vendor is the sign-up page's button (`/signup`, `mode=signup`, carried in the signed one-time cookie), which records the vendor terms. Where someone lands depends on their role: a customer on `/my-bookings`, a vendor on `/dashboard` (or onboarding until the business profile exists).
 
 You need a Google account, and about 10 minutes.
 
