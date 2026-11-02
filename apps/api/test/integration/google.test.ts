@@ -29,7 +29,7 @@ async function raw(method: string, path: string, options: { cookie?: string; bod
 }
 
 /** GET /start, then what Google would hand back for this person. */
-async function start(options: { next?: string; session?: string; mode?: "link"; intent?: string } = {}) {
+async function start(options: { next?: string; session?: string; mode?: "link" | "signup"; intent?: string } = {}) {
   const query = new URLSearchParams({ ...(options.next !== undefined ? { next: options.next } : {}), ...(options.mode ? { mode: options.mode } : {}), ...(options.intent !== undefined ? { intent: options.intent } : {}) });
   const reply = await raw("GET", `/v1/auth/google/start${query.size ? `?${query}` : ""}`, { cookie: options.session });
   expect(reply.status, JSON.stringify(reply.body)).toBe(302);
@@ -265,6 +265,24 @@ function isoDay(offset: number, from?: string, extra = 0) { const at = from ? ne
 const hold = (cookie: string | undefined, v: Awaited<ReturnType<typeof bookable>>) => fetch(`${base}/v1/bookings`, { method: "POST", redirect: "manual", headers: { "content-type": "application/json", "x-forwarded-for": ip(), "idempotency-key": randomUUID(), ...(cookie ? { cookie } : {}) }, body: JSON.stringify({ slug: v.slug, date: v.date, service_id: v.serviceId, starts_at: v.startsAt, name: "Meera Shah" }) });
 const userRow = async (email: string) => (await pool.query<{ id: string; role: string; password_hash: string | null; email_verified_at: Date | null }>("SELECT id,role,password_hash,email_verified_at FROM users WHERE email_normalized=$1", [email.toLowerCase()])).rows;
 
+describe("no promotion on sign-in: a role changes only through the explicit vendor sign-up", () => {
+  it("a customer who booked with Google and then signs in from the login page (the vendor button) stays a customer and lands on My bookings", async () => {
+    const v = await bookable(); const who = person();
+    await callback(await start({ intent: "customer", next: v.next }), who);
+    // "My bookings" > login > Continue with Google: the generic (vendor) button, asking to come back to /my-bookings.
+    const again = await callback(await start({ next: "/my-bookings" }), who);
+    expect((await userRow(who.email))[0].role).toBe("CLIENT");
+    expect(again.location).toBe(`${web}/my-bookings`);
+    expect((await pool.query("SELECT 1 FROM consents c JOIN users u ON u.id=c.user_id WHERE u.email_normalized=$1 AND c.kind='vendor_terms'", [who.email.toLowerCase()])).rowCount).toBe(0);
+  });
+  it("a customer from the email-code path who signs in with Google from the login page is linked, stays a customer, and goes to My bookings", async () => {
+    const client = await createUser(pool, { role: "CLIENT" }); const who = { sub: `google-${randomUUID()}`, email: client.email };
+    const reply = await callback(await start(), who);
+    expect(await me(session(reply))).toMatchObject({ id: client.id, role: "CLIENT" });
+    expect(reply.location).toBe(`${web}/my-bookings`);
+  });
+});
+
 describe("Google for customers (intent=customer)", () => {
   it("start: intent defaults to vendor; an unknown intent is refused; a refused customer start goes back with a sentence, never JSON", async () => {
     const v = await bookable();
@@ -369,13 +387,24 @@ describe("Google for customers (intent=customer)", () => {
     expect(await me(session(reply))).toMatchObject({ id: vendorUser.id, role: "VENDOR" });
     expect((await hold(session(reply), v)).status).toBe(401);
   });
-  it("a customer from the email-code path is the same row; becoming a vendor happens only through the vendor sign-in", async () => {
+  it("a customer from the email-code path is the same row; becoming a vendor happens only through the vendor sign-up", async () => {
     const v = await bookable(); const client = await createUser(pool, { role: "CLIENT" }); const who = { sub: `google-${randomUUID()}`, email: client.email };
     const asCustomer = await callback(await start({ intent: "customer", next: v.next }), who);
     expect(await me(session(asCustomer))).toMatchObject({ id: client.id, role: "CLIENT" });
-    const asVendor = await callback(await start(), who);
-    expect(await me(session(asVendor))).toMatchObject({ id: client.id, role: "VENDOR" });
+    // Signing in with the login page's button changes nothing.
+    const signIn = await callback(await start(), who);
+    expect(await me(session(signIn))).toMatchObject({ id: client.id, role: "CLIENT" });
+    // The sign-up page ("Create your booking page") is the deliberate step: vendor role, vendor terms, then onboarding.
+    const signUp = await callback(await start({ mode: "signup" }), who);
+    expect(await me(session(signUp))).toMatchObject({ id: client.id, role: "VENDOR" });
+    expect(signUp.location).toBe(`${web}/onboarding`);
+    expect((await pool.query("SELECT 1 FROM consents WHERE user_id=$1 AND kind='vendor_terms'", [client.id])).rowCount).toBe(1);
     expect(await usersWith(client.email)).toBe(1);
+  });
+  it("a customer cannot use the sign-up mode: it goes back to the booking with a sentence", async () => {
+    const v = await bookable();
+    const reply = await raw("GET", `/v1/auth/google/start?intent=customer&mode=signup&next=${encodeURIComponent(v.next)}`);
+    expect(reply.status).toBe(302); expect(reply.location).toBe(`${web}${v.next.replace("&google=1", "")}&google_error=google_customer_failed`);
   });
   it("replayed state, wrong nonce, expired state and a missing cookie fail safely without signing in", async () => {
     const v = await bookable(); const who = person(); const back = `${web}${v.next.replace("&google=1", "")}`;

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
-import { bookingSlugFrom, googleIntent, isAllowedReturnPath, type GoogleIntent } from "@bayana/shared";
+import { bookingSlugFrom, googleIntent, isAllowedReturnPath, landingPath, type GoogleIntent } from "@bayana/shared";
 import { currentUser, event, findUserByEmail, hashPassword, invalidCredentials, validatePassword, verifyPassword, type PublicUser, type SessionUser } from "../auth.js";
 import { cookieOptions, cookieToken, meta, perIp, readCookie, rotateInto } from "../auth-routes.js";
 import { config } from "../config.js";
@@ -41,22 +41,24 @@ googleRouter.get("/google/start", perIp(30), handle(async (req, res) => {
   if (intent === "customer") {
     const next = isAllowedReturnPath("customer", req.query.next);
     if (!provider) return failStart(res, "google_unavailable", "disabled", next ?? req.query.next);
-    if (req.query.mode === "link") return failStart(res, "google_customer_failed", "link_not_allowed", next ?? req.query.next);
+    if (req.query.mode === "link" || req.query.mode === "signup") return failStart(res, "google_customer_failed", "mode_not_allowed", next ?? req.query.next);
     if (!next) return failStart(res, "google_customer_failed", "invalid_next", req.query.next);
-    try { return await begin(res, provider, { next, intent, linkUserId: null }); }
+    try { return await begin(res, provider, { next, intent, linkUserId: null, signup: false }); }
     catch (error) { log("error", "google.start_error", { requestId: res.locals.requestId, err: error instanceof Error ? error.message : String(error) }); return failStart(res, "google_customer_failed", "start_error", next); }
   }
   if (!provider) throw disabled();
   if (!intent) throw new AppError(400, "INVALID_INTENT", "Choose vendor or customer sign-in");
   const link = req.query.mode === "link";
+  // mode=signup comes only from the vendor sign-up page ("Create your booking page"): the explicit, deliberate vendor action.
+  const signup = req.query.mode === "signup";
   const next = req.query.next === undefined ? (link ? "/dashboard/settings" : "/dashboard") : isAllowedReturnPath("vendor", req.query.next);
   if (!next) throw new AppError(400, "INVALID_NEXT", "That return address is not allowed");
   const linkUserId = link ? (await requireSession(req)).id : null;
-  await begin(res, provider, { next, intent, linkUserId });
+  await begin(res, provider, { next, intent, linkUserId, signup });
 }));
 
 /** State, nonce and PKCE into the one-time cookie, the state's hash stored for single use, then off to Google. */
-async function begin(res: Response, provider: NonNullable<ReturnType<typeof googleProvider>>, target: { next: string; intent: GoogleIntent; linkUserId: string | null }) {
+async function begin(res: Response, provider: NonNullable<ReturnType<typeof googleProvider>>, target: { next: string; intent: GoogleIntent; linkUserId: string | null; signup: boolean }) {
   const state = randomToken(), nonce = randomToken(), verifier = randomToken();
   await pool.query("INSERT INTO oauth_login_states(state_hash) VALUES($1)", [stateHash(state)]);
   res.cookie(GOOGLE_COOKIE, encodeGoogleCookie({ state, nonce, verifier, ...target, expires: Date.now() + GOOGLE_COOKIE_MINUTES * 60_000 }), googleCookieOptions());
@@ -155,19 +157,23 @@ async function applyGoogle(db: Parameters<typeof rotateInto>[2], req: Request, r
   if (cookie.intent === "customer") return applyCustomer(db, req, res, identity, cookie, linked.rows[0]?.user_id ?? null, insertIdentity, userRow);
 
   let user: PublicUser, kind: Outcome["kind"];
+  // A customer becomes a vendor only through the explicit vendor sign-up (cookie.signup, from /signup), never by signing in:
+  // the login page, "My bookings" and the booking flow keep every account's role as it is.
+  const promote = cookie.signup === true;
+  const toVendor = async (id: string) => (await db.query<PublicUser>("UPDATE users SET role='VENDOR' WHERE id=$1 AND role='CLIENT' RETURNING id,email::text AS email,role", [id])).rows[0];
+  let promoted = false;
   if (linked.rowCount) {
     const found = await userRow(linked.rows[0].user_id);
     if (!found || found.deleted_at) throw new AppError(403, "google_failed", "account closed");
     user = found; kind = "signin";
-    // A customer who first used Google for a booking and now signs in as a business (the vendor button) becomes a vendor,
-    // as through the email-code signup; this is the only way a customer account becomes a vendor account.
-    if (found.role === "CLIENT") { user = (await db.query<PublicUser>("UPDATE users SET role='VENDOR' WHERE id=$1 RETURNING id,email::text AS email,role", [found.id])).rows[0]; kind = "linked"; }
+    if (promote && found.role === "CLIENT") { user = await toVendor(found.id); kind = "linked"; promoted = true; }
   } else {
     const existing = await findUserByEmail(db, identity.email);
     if (existing) {
       await insertIdentity(existing.id);
-      // Google verified this address, so the account's email is verified too; a booking customer becomes a vendor, as with signup.
-      user = (await db.query<PublicUser>("UPDATE users SET email_verified_at=COALESCE(email_verified_at,now()),role=CASE WHEN role='CLIENT' THEN 'VENDOR' ELSE role END WHERE id=$1 RETURNING id,email::text AS email,role", [existing.id])).rows[0];
+      // Google verified this address, so the account's email is verified too. Its role stays, unless this is the vendor sign-up.
+      user = (await db.query<PublicUser>("UPDATE users SET email_verified_at=COALESCE(email_verified_at,now()) WHERE id=$1 RETURNING id,email::text AS email,role", [existing.id])).rows[0];
+      if (promote && user.role === "CLIENT") { user = await toVendor(user.id); promoted = true; }
       kind = "linked";
     } else {
       user = (await db.query<PublicUser>("INSERT INTO users(id,email,role,email_verified_at) VALUES($1,$2,'VENDOR',now()) RETURNING id,email::text AS email,role", [randomUUID(), identity.email])).rows[0];
@@ -176,13 +182,13 @@ async function applyGoogle(db: Parameters<typeof rotateInto>[2], req: Request, r
       kind = "created";
     }
   }
-  // Joining through Google (new account, or an existing address now becoming a Google account) agrees to the terms (PV-01).
-  if (kind !== "signin") await recordConsent(db, { userId: user.id, kinds: ["account_terms", "vendor_terms", "privacy_policy"], source: "signup_google", ip: req.ip, userAgent: req.header("user-agent") });
+  // Becoming a vendor through Google (a new account, or a customer on the vendor sign-up) agrees to the terms (PV-01).
+  if (kind === "created" || promoted) await recordConsent(db, { userId: user.id, kinds: ["account_terms", "vendor_terms", "privacy_policy"], source: "signup_google", ip: req.ip, userAgent: req.header("user-agent") });
   await rotateInto(req, res, db, user.id);
-  await event(db, user.id, kind === "linked" ? "google_linked" : "login_google", req.ip, req.header("user-agent"));
-  const hasProfile = (await db.query("SELECT 1 FROM vendors WHERE owner_user_id=$1", [user.id])).rowCount;
-  // A vendor without a business profile sets one up first (as after email signup); /admin is never redirected.
-  return { user, path: !hasProfile && user.role === "VENDOR" && !cookie.next.startsWith("/admin") ? "/onboarding" : cookie.next, kind };
+  await event(db, user.id, promoted ? "promoted_vendor_signup_google" : kind === "linked" ? "google_linked" : "login_google", req.ip, req.header("user-agent"));
+  const hasProfile = Boolean((await db.query("SELECT 1 FROM vendors WHERE owner_user_id=$1", [user.id])).rowCount);
+  // Where to land is decided by role: a customer goes to My bookings, a vendor to the app (onboarding until it has a profile).
+  return { user, path: landingPath(user.role, cookie.next, hasProfile), kind };
 }
 
 /**

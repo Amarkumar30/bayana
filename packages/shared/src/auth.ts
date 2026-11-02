@@ -1,8 +1,13 @@
 // Sign-in helpers shared by the API (Google callback) and the web (buttons and messages).
 import { slugProblem } from "./slug.js";
 
-/** Where Google sign-in may return to: app sections only, as a plain relative path (no scheme, host, "//", "..", query or hash). */
-const NEXT_PATH = /^\/(dashboard|onboarding|admin)(\/[A-Za-z0-9_-]+)*\/?$/;
+/**
+ * Where Google sign-in may return to: app sections, or the person's own bookings, as a plain relative path (no scheme, host,
+ * "//", "..", query or hash).
+ */
+const NEXT_PATH = /^(\/(dashboard|onboarding|admin)(\/[A-Za-z0-9_-]+)*\/?|\/my-bookings)$/;
+/** A customer's own bookings list: where "My bookings" sign-ins come back to. */
+export const MY_BOOKINGS_PATH = "/my-bookings";
 export const googleNextPath = (value: unknown) => typeof value === "string" && value.length <= 200 && NEXT_PATH.test(value) ? value : null;
 
 /** The ?error= codes the Google callback redirects with, as sentences that say what to do next. */
@@ -78,14 +83,26 @@ export function parseBookingReturnPath(value: unknown): BookingSelection | null 
   return selection;
 }
 
-/** A valid customer return path, normalised (rebuilt from its validated parts), or null. */
-export const googleCustomerNextPath = (value: unknown) => { const selection = parseBookingReturnPath(value); return selection ? bookingReturnPath(selection) : null; };
+/** A valid customer return path: My bookings, or a booking page normalised (rebuilt from its validated parts); else null. */
+export const googleCustomerNextPath = (value: unknown) => { if (value === MY_BOOKINGS_PATH) return MY_BOOKINGS_PATH; const selection = parseBookingReturnPath(value); return selection ? bookingReturnPath(selection) : null; };
 
 /**
  * The one rule for where a Google sign-in may return, used by the web (building the start link) and the API (checking it):
  * vendor, an app section; customer, a booking page. Returns the normalised path, or null when it is not allowed.
  */
 export const isAllowedReturnPath = (intent: GoogleIntent, value: unknown) => intent === "customer" ? googleCustomerNextPath(value) : googleNextPath(value);
+
+/**
+ * Where a person lands after signing in, by role, whatever button they used. A customer-only account goes to My bookings (or
+ * the booking it came from); a vendor to the requested app section (default /dashboard), or onboarding while it has no
+ * business profile. Nobody's role is changed by this.
+ */
+export function landingPath(role: string, next: string | null, hasVendorProfile: boolean) {
+  if (role !== "VENDOR" && role !== "ADMIN") return next && googleCustomerNextPath(next) ? next : MY_BOOKINGS_PATH;
+  const wanted = next && googleNextPath(next) ? next : "/dashboard";
+  if (role === "VENDOR" && !hasVendorProfile && !wanted.startsWith("/admin") && wanted !== MY_BOOKINGS_PATH) return "/onboarding";
+  return wanted;
+}
 
 /**
  * Where to send a customer back when the return path itself was refused: their vendor's booking page if the first segment is

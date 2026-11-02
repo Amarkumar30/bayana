@@ -112,8 +112,11 @@ export const randomToken = () => randomBytes(32).toString("base64url");
 export const pkceChallenge = (verifier: string) => createHash("sha256").update(verifier).digest("base64url");
 export const stateHash = (state: string) => createHash("sha256").update(`google-state:${state}`).digest("hex");
 export const GOOGLE_COOKIE = googleCookieName(config.SESSION_COOKIE_NAME), GOOGLE_COOKIE_MINUTES = 10;
-/** intent: set by /start and signed with the rest; the callback reads it only from here, never from its query string. */
-export type GoogleCookie = { state: string; nonce: string; verifier: string; next: string; linkUserId: string | null; intent: GoogleIntent; expires: number };
+/**
+ * intent and signup: set by /start and signed with the rest; the callback reads them only from here, never from its query
+ * string. signup is true only from the explicit vendor sign-up (mode=signup): the one place a customer may become a vendor.
+ */
+export type GoogleCookie = { state: string; nonce: string; verifier: string; next: string; linkUserId: string | null; intent: GoogleIntent; signup?: boolean; expires: number };
 const sign = (payload: string) => createHmac("sha256", config.SESSION_SECRET).update(`google-cookie:${payload}`).digest("base64url");
 /** The cookie is signed, not encrypted: it is httpOnly and lives 10 minutes, and its contents only work together with Google's code. */
 export const encodeGoogleCookie = (value: GoogleCookie) => { const payload = Buffer.from(JSON.stringify(value)).toString("base64url"); return `${payload}.${sign(payload)}`; };
@@ -123,10 +126,10 @@ export function decodeGoogleCookie(raw: string | undefined, now = Date.now()): G
   const expected = Buffer.from(sign(payload)), supplied = Buffer.from(signature);
   if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) return null;
   try {
-    const value = JSON.parse(Buffer.from(payload, "base64url").toString()) as Omit<GoogleCookie, "intent"> & { intent?: unknown };
+    const value = JSON.parse(Buffer.from(payload, "base64url").toString()) as Omit<GoogleCookie, "intent" | "signup"> & { intent?: unknown; signup?: unknown };
     // A cookie written before intents existed (at most 10 minutes old) is a vendor sign-in, as it always was.
     const intent = value.intent === undefined ? "vendor" : (GOOGLE_INTENTS as readonly unknown[]).includes(value.intent) ? value.intent as GoogleIntent : null;
-    return intent && typeof value.state === "string" && typeof value.nonce === "string" && typeof value.verifier === "string" && typeof value.next === "string" && value.expires > now ? { ...value, intent } : null;
+    return intent && typeof value.state === "string" && typeof value.nonce === "string" && typeof value.verifier === "string" && typeof value.next === "string" && value.expires > now ? { ...value, intent, signup: value.signup === true } : null;
   } catch { return null; }
 }
 

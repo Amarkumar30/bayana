@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RETURN_PATH_MAX, bookingReturnPath, bookingSlugFrom, googleCustomerNextPath, googleIntent, isAllowedReturnPath, parseBookingReturnPath, type BookingSelection } from "@bayana/shared";
+import { RETURN_PATH_MAX, bookingReturnPath, bookingSlugFrom, googleCustomerNextPath, googleIntent, isAllowedReturnPath, landingPath, parseBookingReturnPath, type BookingSelection } from "@bayana/shared";
 import { loadConfig } from "../../src/config.js";
 import { decodeGoogleCookie, encodeGoogleCookie, pkceChallenge, safeNextPath } from "../../src/google/provider.js";
 
@@ -24,7 +24,7 @@ describe("return path allowlist (no open redirect)", () => {
 });
 
 describe("one-time Google cookie", () => {
-  const value = { state: "s1", nonce: "n1", verifier: "v1", next: "/dashboard", linkUserId: null, intent: "vendor" as const, expires: Date.now() + 60_000 };
+  const value = { state: "s1", nonce: "n1", verifier: "v1", next: "/dashboard", linkUserId: null, intent: "vendor" as const, signup: false, expires: Date.now() + 60_000 };
   it("round-trips when untouched", () => expect(decodeGoogleCookie(encodeGoogleCookie(value))).toEqual(value));
   it("is refused when tampered, unsigned or expired", () => {
     const encoded = encodeGoogleCookie(value); const [payload, signature] = encoded.split(".");
@@ -76,6 +76,27 @@ describe("customer Google sign-in: intent and the booking return path", () => {
     ["too many days", `/studio-sunday/book?service=${service}&days=31`],
     ["an upper-case slug", `/Studio/book?service=${service}`]
   ])("refuses %s", (_case, value) => expect(googleCustomerNextPath(value)).toBeNull());
+});
+
+describe("landingPath: where a sign-in lands, by role (never changing it)", () => {
+  const booking = "/sau-studio/book?service=11111111-1111-4111-8111-111111111111&google=1";
+  it("a customer-only account goes to My bookings, or back to the booking it came from; never the dashboard or onboarding", () => {
+    expect(landingPath("CLIENT", null, false)).toBe("/my-bookings");
+    expect(landingPath("CLIENT", "/dashboard", false)).toBe("/my-bookings");
+    expect(landingPath("CLIENT", "/onboarding", false)).toBe("/my-bookings");
+    expect(landingPath("CLIENT", "/my-bookings", false)).toBe("/my-bookings");
+    expect(landingPath("CLIENT", booking, false)).toBe(booking);
+    expect(landingPath("CLIENT", "//evil.example", false)).toBe("/my-bookings");
+  });
+  it("a vendor goes to the dashboard (or the app section asked for), an unfinished vendor to onboarding, and may open My bookings", () => {
+    expect(landingPath("VENDOR", null, true)).toBe("/dashboard");
+    expect(landingPath("VENDOR", "/dashboard/bookings", true)).toBe("/dashboard/bookings");
+    expect(landingPath("VENDOR", "/dashboard", false)).toBe("/onboarding");
+    expect(landingPath("VENDOR", "/my-bookings", true)).toBe("/my-bookings");
+    expect(landingPath("VENDOR", "/my-bookings", false)).toBe("/my-bookings");
+    expect(landingPath("VENDOR", "https://evil.example", true)).toBe("/dashboard");
+    expect(landingPath("ADMIN", "/admin/payments", false)).toBe("/admin/payments");
+  });
 });
 
 describe("isAllowedReturnPath: one rule for the web and the API", () => {
