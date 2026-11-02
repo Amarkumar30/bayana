@@ -1,12 +1,11 @@
-import { createHash } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { MAX_BLOCKS, MAX_BOOKING_DAYS, refundPreview } from "@bayana/shared";
 import { currentUser, type SessionUser } from "./auth.js";
 import { cookieToken, perIp } from "./auth-routes.js";
+import { tokenHash, tokenMatches } from "./booking-links.js";
 import { acceptTerms, createHold } from "./booking-service.js";
 import { transitionBooking } from "./booking-transition.js";
-import { config } from "./config.js";
 import { loadContract, parseSnapshot } from "./contract.js";
 import { pool, transaction } from "./database.js";
 import { AppError } from "./errors.js";
@@ -20,18 +19,31 @@ import { createPaymentOrder, createRefundRows, issueRefund, paidSql, verifyCheck
 const notFound = () => new AppError(404, "NOT_FOUND", "Not found");
 const localDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const handle = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
-export const tokenHash = (token: string) => createHash("sha256").update(`${config.SESSION_SECRET}:booking:${token}`).digest("hex");
+export { tokenHash };
 const holdSchema = z.object({ slug: z.string(), date: localDate, service_id: z.string().uuid(), starts_at: z.string().datetime().optional(), days: z.number().int().min(1).max(MAX_BOOKING_DAYS).optional(), blocks: z.number().int().min(1).max(MAX_BLOCKS).optional(), name: z.string().trim().min(2).max(120), phone: z.string().trim().min(8).max(20).optional(), notes: z.string().max(2000).optional(), referral: z.string().trim().max(200).optional() });
 
-/** The customer who made it, the vendor who owns it, or anyone holding the private link token. Everything else is the same 404. */
+/**
+ * The customer who made it (their account, or their verified email), the vendor who owns it, or anyone holding a private
+ * link token. Everything else is the same 404.
+ */
 async function bookingAccess(req: Request) {
   const id = z.string().uuid().safeParse(req.params.id);
   if (!id.success) throw notFound();
   const user = await currentUser(pool, cookieToken(req));
   const token = req.header("x-booking-token") ?? (typeof req.query.t === "string" ? req.query.t : undefined);
-  const found = await pool.query<{ id: string; is_vendor: boolean }>("SELECT b.id,v.owner_user_id IS NOT DISTINCT FROM $2 AS is_vendor FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.id=$1 AND (b.client_user_id=$2 OR v.owner_user_id=$2 OR ($3::text IS NOT NULL AND b.access_token_hash=$3))", [id.data, user?.id ?? null, token ? tokenHash(token) : null]);
+  // full: the vendor, the customer, or the hold's own link (which finishes the booking). A later email's link only reads.
+  const customer = "(b.client_user_id=$2 OR (b.client_email=$4 AND EXISTS(SELECT 1 FROM users u WHERE u.id=$2 AND u.email_verified_at IS NOT NULL)))";
+  const found = await pool.query<{ id: string; is_vendor: boolean; full: boolean }>(`SELECT b.id,v.owner_user_id IS NOT DISTINCT FROM $2 AS is_vendor,
+      COALESCE(v.owner_user_id=$2 OR ${customer} OR ($3::text IS NOT NULL AND b.access_token_hash=$3),false) AS full
+    FROM bookings b JOIN vendors v ON v.id=b.vendor_id
+    WHERE b.id=$1 AND (v.owner_user_id=$2 OR ${customer} OR ($3::text IS NOT NULL AND ${tokenMatches("b", "$3")}))`,
+    [id.data, user?.id ?? null, token ? tokenHash(token) : null, user?.email ?? null]);
   if (!found.rowCount) throw notFound();
-  return { id: found.rows[0].id, user, isVendor: found.rows[0].is_vendor };
+  return { id: found.rows[0].id, user, isVendor: found.rows[0].is_vendor, readOnly: !found.rows[0].full };
+}
+/** Changing a booking (agreeing, paying, cancelling) needs more than an email link: the customer signed in, or the hold's link. */
+function requireChange(access: Awaited<ReturnType<typeof bookingAccess>>) {
+  if (access.readOnly) throw new AppError(401, "AUTHENTICATION_REQUIRED", "Sign in with the email you booked with to change this booking");
 }
 
 export const bookingRouter = Router();
@@ -48,11 +60,12 @@ bookingRouter.post("/", perIp(20), handle(async (req, res) => {
 
 bookingRouter.get("/:id", perIp(120), handle(async (req, res) => {
   const access = await bookingAccess(req);
-  res.json(await bookingView(access.id, access.isVendor));
+  res.json(await bookingView(access.id, access.isVendor, access.readOnly));
 }));
 
 bookingRouter.post("/:id/accept", perIp(20), handle(async (req, res) => {
   const access = await bookingAccess(req);
+  requireChange(access);
   if (access.isVendor) throw notFound();
   const body = z.object({ terms_hash: z.string().regex(/^[0-9a-f]{64}$/), accepted: z.literal(true) }).parse(req.body);
   const owner = await pool.query<{ client_email: string }>("SELECT client_email::text AS client_email FROM bookings WHERE id=$1", [access.id]);
@@ -65,6 +78,7 @@ bookingRouter.post("/:id/accept", perIp(20), handle(async (req, res) => {
 
 bookingRouter.post("/:id/cancel", perIp(10), handle(async (req, res) => {
   const access = await bookingAccess(req);
+  requireChange(access);
   // Vendors cancel from the dashboard (POST /v1/vendor/bookings/:id/cancel, full refund, BK-11).
   if (access.isVendor) throw notFound();
   const body = z.object({ reason: z.string().trim().max(500).optional() }).parse(req.body ?? {});
@@ -87,11 +101,13 @@ bookingRouter.post("/:id/cancel", perIp(10), handle(async (req, res) => {
 const checkoutSchema = z.object({ razorpay_order_id: z.string().min(1).max(100), razorpay_payment_id: z.string().min(1).max(100), razorpay_signature: z.string().min(1).max(200) }).strict();
 bookingRouter.post("/:id/payment-order", perIp(20), handle(async (req, res) => {
   const access = await bookingAccess(req);
+  requireChange(access);
   if (access.isVendor) throw notFound();
   res.json({ booking_id: access.id, ...await createPaymentOrder(access.id) });
 }));
 bookingRouter.post("/:id/payment-verify", perIp(30), handle(async (req, res) => {
   const access = await bookingAccess(req);
+  requireChange(access);
   if (access.isVendor) throw notFound();
   const body = checkoutSchema.parse(req.body);
   const result = await verifyCheckout(access.id, { orderId: body.razorpay_order_id, paymentId: body.razorpay_payment_id, signature: body.razorpay_signature });
@@ -110,7 +126,8 @@ bookingRouter.get("/:id/receipts/:paymentId", perIp(30), handle(async (req, res)
 
 type Row = { id: string; status: string; service_name: string | null; starts_at: Date; ends_at: Date; booking_mode: "hourly" | "daily"; days_count: number | null; blocks_count: number | null; block_minutes: number | null; first_date: string; hold_expires_at: Date | null; total_paise: string; advance_paise: string; paid_paise: string; client_name: string; terms_snapshot: string | null; slug: string; display_name: string; timezone: string; duration_minutes: number | null };
 type PaymentRow = { id: string; provider: string; kind: string; status: string; amount_paise: string; method: string | null; note: string | null; created_at: Date; verified_at: Date | null };
-export async function bookingView(id: string, forVendor: boolean) {
+/** readOnly: opened only by a private email link, so nothing can be changed from it (no paying, agreeing or cancelling). */
+export async function bookingView(id: string, forVendor: boolean, readOnly = false) {
   const [booking, events, payments, refunds, contract] = await Promise.all([
     pool.query<Row>(`SELECT b.id,b.status,b.service_name,b.starts_at,b.ends_at,b.booking_mode,b.days_count,b.blocks_count,b.block_minutes,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.hold_expires_at,b.total_paise,b.advance_paise,${paidSql("b.id")} AS paid_paise,b.client_name,b.terms_snapshot,b.duration_minutes,v.slug::text AS slug,v.display_name,v.timezone FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.id=$1`, [id]),
     pool.query<{ to_status: string; created_at: Date }>("SELECT to_status,created_at FROM booking_events WHERE booking_id=$1 ORDER BY created_at", [id]),
@@ -132,20 +149,27 @@ export async function bookingView(id: string, forVendor: boolean) {
     total_paise: total, advance_paise: advance, paid_paise: paid, balance_due_paise: total - paid,
     payments_enabled: paymentsEnabled(), viewer: forVendor ? "vendor" : "customer",
     // The customer can pay online while the request is pending and the advance is not yet covered.
-    can_pay: status === "PENDING" && paymentsEnabled() && advance > 0 && paid < advance,
+    can_pay: !readOnly && status === "PENDING" && paymentsEnabled() && advance > 0 && paid < advance,
+    read_only: readOnly,
     timeline: events.rows,
     // A receipt exists for every verified payment; the vendor also sees the notes on offline entries.
     payments: payments.rows.map(payment => ({ id: payment.id, provider: payment.provider, kind: payment.kind, status: payment.status, amount_paise: Number(payment.amount_paise), method: payment.method, note: forVendor ? payment.note : null, created_at: payment.created_at, verified_at: payment.verified_at, receipt: payment.verified_at !== null })),
     refunds: refunds.rows,
     contract: contract.rowCount ? contract.rows[0] : null,
-    contract_preview: preview ? { body: preview.text, sha256: preview.sha256 } : null,
+    contract_preview: preview && !readOnly ? { body: preview.text, sha256: preview.sha256 } : null,
     cancellation_tiers: tiers,
-    can_cancel: cancellable,
-    refund_preview: cancellable ? refundPreview(paid, tiers, b.starts_at) : null
+    can_cancel: cancellable && !readOnly,
+    refund_preview: cancellable && !readOnly ? refundPreview(paid, tiers, b.starts_at) : null
   };
 }
 
-/** Bookings made with the signed-in customer's verified email. */
+/**
+ * The signed-in person's own bookings as a customer, whatever their role: made from their account, or with their email once
+ * that email is verified (bookings a business entered by hand). Never anyone else's.
+ */
 export async function customerBookings(user: SessionUser) {
-  return (await pool.query(`SELECT b.id,b.status,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.total_paise,b.advance_paise,b.service_name,v.slug,v.display_name,v.timezone,${paidSql("b.id")} AS paid_paise,b.total_paise-${paidSql("b.id")} AS balance_due_paise FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.client_email=$1 ORDER BY b.created_at DESC`, [user.email])).rows;
+  return (await pool.query(`SELECT b.id,b.status,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.total_paise,b.advance_paise,b.service_name,b.terms_accepted_at,v.slug,v.display_name,v.timezone,${paidSql("b.id")} AS paid_paise,b.total_paise-${paidSql("b.id")} AS balance_due_paise
+    FROM bookings b JOIN vendors v ON v.id=b.vendor_id
+    WHERE b.client_user_id=$1 OR (b.client_email=$2 AND EXISTS(SELECT 1 FROM users u WHERE u.id=$1 AND u.email_verified_at IS NOT NULL))
+    ORDER BY b.starts_at`, [user.id, user.email])).rows;
 }

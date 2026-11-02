@@ -151,7 +151,13 @@ authRouter.post("/logout", perIp(60), async (req, res, next) => {
 });
 
 const requireSession = async (req: Request) => { const user = await currentUser(pool, cookieToken(req)); if (!user) throw new AppError(401, "AUTHENTICATION_REQUIRED", "Sign in is required"); return user; };
-authRouter.get("/me", perIp(120), async (req, res, next) => { try { res.json({ user: publicUser(await requireSession(req)) }); } catch (error) { next(error); } });
+/**
+ * The signed-in person. The server slides the session's expiry on every use (30 days, never past the 90-day cap), so the
+ * cookie's Max-Age is renewed here as well: someone who keeps coming back stays signed in after closing the browser.
+ */
+authRouter.get("/me", perIp(120), async (req, res, next) => {
+  try { const user = await requireSession(req); setSessionCookie(res, cookieToken(req)!); res.json({ user: publicUser(user) }); } catch (error) { next(error); }
+});
 authRouter.get("/sessions", perIp(60), async (req, res, next) => {
   try { const user = await requireSession(req); res.json({ sessions: (await listSessions(pool, user.id)).map(session => ({ ...session, current: session.id === user.sessionId })) }); } catch (error) { next(error); }
 });

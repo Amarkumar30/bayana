@@ -1,4 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { withCustomerLink } from "./booking-links.js";
 import { expireOverdueHolds } from "./booking-transition.js";
 import { config } from "./config.js";
 import { pool, transaction } from "./database.js";
@@ -68,7 +69,7 @@ async function sendReminders() {
       const won = await db.query("UPDATE bookings SET reminder_sent_at=now() WHERE id=$1 AND reminder_sent_at IS NULL AND status='CONFIRMED' RETURNING id", [id]);
       if (!won.rowCount) return false;
       const booking = await bookingFacts(db, id);
-      await enqueue(db, "reminder_24h", booking.customerEmail, { ...booking.facts, audience: "customer", place: booking.place, customerEmail: booking.customerEmail }, { bookingId: id, dedupeKey: `reminder:${id}:customer`, senderName: booking.facts.businessName });
+      await withCustomerLink(db, id, "reminder", link => enqueue(db, "reminder_24h", booking.customerEmail, { ...booking.facts, audience: "customer", place: booking.place, customerEmail: booking.customerEmail, link }, { bookingId: id, dedupeKey: `reminder:${id}:customer`, senderName: booking.facts.businessName }));
       const vendorEmail = booking.vendorEmailFor("reminder_24h");
       if (vendorEmail) await enqueue(db, "reminder_24h", vendorEmail, { ...booking.facts, audience: "vendor", place: booking.place, customerEmail: booking.customerEmail }, { bookingId: id, dedupeKey: `reminder:${id}:vendor` });
       return true;

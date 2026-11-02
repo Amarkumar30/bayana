@@ -4,6 +4,7 @@ import { z } from "zod";
 import { currentUser, revokeAllSessions, sessionCookieName, type SessionUser } from "./auth.js";
 import { cookieOptions, cookieToken, perIp } from "./auth-routes.js";
 import { writeAudit } from "./audit.js";
+import { revokeBookingLinks } from "./booking-links.js";
 import { pool, transaction } from "./database.js";
 import { AppError } from "./errors.js";
 
@@ -59,6 +60,8 @@ privacyRouter.post("/delete", perIp(5), customer(async (req, res, user) => {
     if (active.rowCount) throw new AppError(409, "ACTIVE_BOOKINGS", "You have bookings coming up. Cancel them first, or ask the business to, then delete your data.");
     const erased = await db.query<{ id: string }>(`UPDATE bookings b SET client_name='Deleted customer',client_email=$3,client_phone='',customer_notes=NULL,referral=NULL,client_user_id=NULL,client_erased_at=now() WHERE ${ownBookings} RETURNING b.id`, [user.id, user.email, erasedEmail(user.id)]);
     const ids = erased.rows.map(row => row.id);
+    // The private links in old emails stop opening these bookings.
+    await revokeBookingLinks(db, ids);
     // Money rows stay; only their free text, which can carry a name, is replaced.
     await db.query("UPDATE payments SET note=CASE WHEN note IS NULL THEN NULL ELSE $2 END,raw=NULL WHERE booking_id = ANY($1)", [ids, ERASED_MARKER]);
     await db.query("UPDATE ledger_entries SET reason=$2 WHERE booking_id = ANY($1) AND reason IS DISTINCT FROM $2", [ids, ERASED_MARKER]);

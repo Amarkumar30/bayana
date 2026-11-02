@@ -4,7 +4,7 @@ import rateLimit from "express-rate-limit";
 import { config } from "./config.js";
 import { pool, readWithOneRetry } from "./database.js";
 import { currentUser, type SessionUser } from "./auth.js";
-import { authRouter, cookieToken } from "./auth-routes.js";
+import { authRouter, cookieToken, perIp } from "./auth-routes.js";
 import { bookingRouter, customerBookings } from "./booking-routes.js";
 import { publicRouter } from "./public-routes.js";
 import { vendorRouter } from "./vendor-routes.js";
@@ -67,6 +67,7 @@ app.post("/internal/jobs/:kind", async (req, res, next) => {
   } catch (errorValue) { next(errorValue); }
 });
 
-app.get("/v1/client/bookings", async (req, res, next) => { try { const user = await requireUser(req, res, "CLIENT"); if (!user) return; res.json({ bookings: await customerBookings(user) }); } catch (errorValue) { next(errorValue); } });
+// Any signed-in person's own bookings as a customer: a vendor who books someone else sees theirs here too (never others').
+app.get("/v1/client/bookings", perIp(60), async (req, res, next) => { try { const user = await requireUser(req, res); if (!user) return; res.json({ bookings: await customerBookings(user) }); } catch (errorValue) { next(errorValue); } });
 app.use(notFoundHandler);
 app.use(errorHandler);

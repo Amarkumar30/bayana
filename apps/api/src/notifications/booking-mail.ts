@@ -1,14 +1,16 @@
 import type { Pool, PoolClient } from "pg";
 import { tiersInWords, type NotifyPrefs } from "@bayana/shared";
+import { bookingUrl, withCustomerLink } from "../booking-links.js";
 import { config } from "../config.js";
 import { parseSnapshot } from "../contract.js";
 import { log } from "../logger.js";
 import { enqueue, PRIORITY } from "./outbox.js";
 
-// Which emails a booking event sends, built from the booking row inside the caller's transaction.
+// Which emails a booking event sends, built from the booking row inside the caller's transaction. Every customer email
+// carries its own private "View your booking" link (booking-links.ts); vendors open the booking signed in.
 
 type Db = Pool | PoolClient;
-export const bookingUrl = (bookingId: string, token?: string) => `${config.WEB_ORIGINS[0]}/b/${bookingId}${token ? `?t=${encodeURIComponent(token)}` : ""}`;
+export { bookingUrl };
 
 export async function bookingFacts(db: Db, bookingId: string) {
   const row = (await db.query<{ client_name: string; client_email: string; service_name: string | null; starts_at: Date; ends_at: Date; booking_mode: "hourly" | "daily"; days_count: number | null; blocks_count: number | null; vendor_timezone: string; total_paise: string; advance_paise: string; terms_snapshot: string | null; display_name: string; timezone: string; place: string | null; owner_email: string | null; paid: string; notify_prefs: Partial<NotifyPrefs> }>(
@@ -28,7 +30,8 @@ export async function bookingFacts(db: Db, bookingId: string) {
 /** booking_confirmed to the customer and the vendor, once each per booking. A manual booking passes the customer's private link token. */
 export async function notifyConfirmed(db: Db, bookingId: string, customerToken?: string) {
   const booking = await bookingFacts(db, bookingId);
-  await enqueue(db, "booking_confirmed_customer", booking.customerEmail, { ...booking.facts, link: bookingUrl(bookingId, customerToken), cancellation: booking.cancellation }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `confirmed:${bookingId}:customer`, senderName: booking.facts.businessName });
+  const confirmed = (link: string) => enqueue(db, "booking_confirmed_customer", booking.customerEmail, { ...booking.facts, link, cancellation: booking.cancellation }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `confirmed:${bookingId}:customer`, senderName: booking.facts.businessName });
+  if (customerToken) await confirmed(bookingUrl(bookingId, customerToken)); else await withCustomerLink(db, bookingId, "confirmed", confirmed);
   const vendorEmail = booking.vendorEmailFor("booking_confirmed");
   if (vendorEmail) await enqueue(db, "booking_confirmed_vendor", vendorEmail, { ...booking.facts, customerEmail: booking.customerEmail }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `confirmed:${bookingId}:vendor` });
 }
@@ -41,23 +44,22 @@ export async function notifyRequestToVendor(db: Db, bookingId: string) {
 
 export async function notifyCancelled(db: Db, bookingId: string, details: { cancelledBy: "customer" | "vendor"; reason: string; refundPaise: number; refundManual: boolean }) {
   const booking = await bookingFacts(db, bookingId);
-  for (const audience of ["customer", "vendor"] as const) {
-    const to = audience === "customer" ? booking.customerEmail : booking.vendorEmailFor("booking_cancelled");
-    if (to) await enqueue(db, "booking_cancelled", to, { ...booking.facts, ...details, audience }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `cancelled:${bookingId}:${audience}`, senderName: audience === "customer" ? booking.facts.businessName : undefined });
-  }
+  await withCustomerLink(db, bookingId, "cancelled", link => enqueue(db, "booking_cancelled", booking.customerEmail, { ...booking.facts, ...details, audience: "customer", link }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `cancelled:${bookingId}:customer`, senderName: booking.facts.businessName }));
+  const vendorEmail = booking.vendorEmailFor("booking_cancelled");
+  if (vendorEmail) await enqueue(db, "booking_cancelled", vendorEmail, { ...booking.facts, ...details, audience: "vendor" }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `cancelled:${bookingId}:vendor` });
 }
 
 export async function notifyRefundIssued(db: Db, refundId: string) {
   const refund = (await db.query<{ booking_id: string; amount_paise: string }>("SELECT booking_id,amount_paise FROM refunds WHERE id=$1", [refundId])).rows[0];
   if (!refund) return;
   const booking = await bookingFacts(db, refund.booking_id);
-  await enqueue(db, "refund_issued", booking.customerEmail, { businessName: booking.facts.businessName, customerName: booking.facts.customerName, amountPaise: Number(refund.amount_paise), service: booking.facts.service, link: booking.facts.link }, { bookingId: refund.booking_id, priority: PRIORITY.urgent, dedupeKey: `refund:${refundId}`, senderName: booking.facts.businessName });
+  await withCustomerLink(db, refund.booking_id, "refund", link => enqueue(db, "refund_issued", booking.customerEmail, { businessName: booking.facts.businessName, customerName: booking.facts.customerName, amountPaise: Number(refund.amount_paise), service: booking.facts.service, link }, { bookingId: refund.booking_id, priority: PRIORITY.urgent, dedupeKey: `refund:${refundId}`, senderName: booking.facts.businessName }));
 }
 
 /** A vendor moved the booking: the customer hears about the new time (BK-09). */
 export async function notifyRescheduled(db: Db, bookingId: string, previousStartsAt: Date) {
   const booking = await bookingFacts(db, bookingId);
-  await enqueue(db, "booking_rescheduled", booking.customerEmail, { ...booking.facts, previousStartsAt }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `rescheduled:${bookingId}:${booking.facts.startsAt instanceof Date ? booking.facts.startsAt.toISOString() : String(booking.facts.startsAt)}`, senderName: booking.facts.businessName });
+  await withCustomerLink(db, bookingId, "rescheduled", link => enqueue(db, "booking_rescheduled", booking.customerEmail, { ...booking.facts, previousStartsAt, link }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `rescheduled:${bookingId}:${booking.facts.startsAt instanceof Date ? booking.facts.startsAt.toISOString() : String(booking.facts.startsAt)}`, senderName: booking.facts.businessName }));
 }
 
 /** Something a person must look at. Goes to OPS_EMAIL; without one it is only logged (the audit rows remain). */
