@@ -250,22 +250,83 @@ async function bookable() {
   const owner = await createUser(pool); const vendorId = randomUUID(), serviceId = randomUUID(), slug = `gcust-${randomUUID().slice(0, 8)}`;
   await pool.query("INSERT INTO vendors(id,owner_user_id,slug,display_name,city,bio,base_price_paise,advance_type,advance_value,published,bookings_enabled,timezone,min_notice_minutes,max_advance_days,terms,phone_required) VALUES($1,$2,$3,'Google test','Pune','',100000,'PERCENT',20,true,true,'Asia/Kolkata',0,365,'The advance confirms the time.',false)", [vendorId, owner.id, slug]);
   await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value) VALUES($1,$2,'Portrait',150000,60,'hourly','NONE',0)", [serviceId, vendorId]);
+  // The same vendor also sells 1 to 12 consecutive sessions and whole days, so every booking mode can be tried.
+  const multiId = randomUUID(), dailyId = randomUUID();
+  await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,min_blocks,max_blocks,advance_type,advance_value) VALUES($1,$2,'Studio hours',100000,30,'hourly',1,12,'NONE',0)", [multiId, vendorId]);
+  await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,buffer_before_minutes,buffer_after_minutes,booking_mode,min_days,max_days,buffer_days,advance_type,advance_value) VALUES($1,$2,'Event day',900000,NULL,NULL,NULL,'daily',1,5,0,'NONE',0)", [dailyId, vendorId]);
   for (let weekday = 0; weekday < 7; weekday++) await pool.query("INSERT INTO availability_rules(id,vendor_id,weekday,start_time,end_time) VALUES($1,$2,$3,'09:00','18:00')", [randomUUID(), vendorId, weekday]);
-  const date = new Date(Date.now() + 20 * 86_400_000).toISOString().slice(0, 10), startsAt = `${date}T04:30:00.000Z`;
-  return { slug, serviceId, date, startsAt, next: bookingReturnPath({ slug, service: serviceId, date, start: startsAt, blocks: 1 }) };
+  // 20 days ahead (inside the 365-day window), 10:00 in India: never a date written into the test.
+  const date = isoDay(20), startsAt = `${date}T04:30:00.000Z`;
+  return { slug, serviceId, multiId, dailyId, date, startsAt, next: bookingReturnPath({ slug, service: serviceId, date, start: startsAt, blocks: 1 }) };
 }
+type Bookable = Awaited<ReturnType<typeof bookable>>;
+/** A UTC calendar date `offset` days after today (or after `from`, plus `extra` days). */
+function isoDay(offset: number, from?: string, extra = 0) { const at = from ? new Date(`${from}T12:00:00Z`) : new Date(); at.setUTCDate(at.getUTCDate() + offset + extra); return at.toISOString().slice(0, 10); }
 const hold = (cookie: string | undefined, v: Awaited<ReturnType<typeof bookable>>) => fetch(`${base}/v1/bookings`, { method: "POST", redirect: "manual", headers: { "content-type": "application/json", "x-forwarded-for": ip(), "idempotency-key": randomUUID(), ...(cookie ? { cookie } : {}) }, body: JSON.stringify({ slug: v.slug, date: v.date, service_id: v.serviceId, starts_at: v.startsAt, name: "Meera Shah" }) });
 const userRow = async (email: string) => (await pool.query<{ id: string; role: string; password_hash: string | null; email_verified_at: Date | null }>("SELECT id,role,password_hash,email_verified_at FROM users WHERE email_normalized=$1", [email.toLowerCase()])).rows;
 
 describe("Google for customers (intent=customer)", () => {
-  it("start: intent defaults to vendor; an unknown intent, a non-booking return or connecting as a customer is refused", async () => {
+  it("start: intent defaults to vendor; an unknown intent is refused; a refused customer start goes back with a sentence, never JSON", async () => {
     const v = await bookable();
     const vendorDefault = await callback(await start(), person());
     expect(vendorDefault.location).toBe(`${web}/onboarding`);
-    for (const query of ["intent=admin", "intent=customer", "intent=customer&next=%2Fdashboard", `intent=customer&mode=link&next=${encodeURIComponent(v.next)}`, `intent=customer&next=${encodeURIComponent(`//evil.example${v.next}`)}`]) {
+    const unknown = await raw("GET", "/v1/auth/google/start?intent=admin");
+    expect(unknown.status).toBe(400); expect(unknown.body.error.code).toBe("INVALID_INTENT");
+    // The customer arrived by a full-page navigation: each refusal is a redirect to their booking (or home), nothing started.
+    const back = `${web}${v.next.replace("&google=1", "")}&google_error=google_customer_failed`;
+    for (const [query, location] of [
+      ["intent=customer", `${web}/?google_error=google_customer_failed`],
+      ["intent=customer&next=%2Fdashboard", `${web}/?google_error=google_customer_failed`],
+      [`intent=customer&next=${encodeURIComponent(`//evil.example${v.next}`)}`, `${web}/?google_error=google_customer_failed`],
+      [`intent=customer&mode=link&next=${encodeURIComponent(v.next)}`, back],
+      // A tampered selection keeps only the vendor slug: back to that vendor's booking page to choose again.
+      [`intent=customer&next=${encodeURIComponent(`/${v.slug}/book?service=${v.serviceId}&name=Meera`)}`, `${web}/${v.slug}/book?google_error=google_customer_failed`]
+    ]) {
       const reply = await raw("GET", `/v1/auth/google/start?${query}`);
-      expect(reply.status, query).toBe(400); expect(["INVALID_INTENT", "INVALID_NEXT"]).toContain(reply.body.error.code);
+      expect(reply.status, query).toBe(302); expect(reply.location, query).toBe(location);
+      expect(reply.setCookie, query).not.toContain("bayana_google=");
     }
+  });
+  it("with Google switched off, a customer start goes back to the booking with a sentence; a vendor start stays a clean 404", async () => {
+    const v = await bookable(); useTestGoogle(null);
+    const customer = await raw("GET", `/v1/auth/google/start?intent=customer&next=${encodeURIComponent(v.next)}`);
+    expect(customer.status).toBe(302); expect(customer.location).toBe(`${web}${v.next.replace("&google=1", "")}&google_error=google_unavailable`);
+    expect((await raw("GET", "/v1/auth/google/start")).status).toBe(404);
+    useTestGoogle(fake);
+  });
+  it("every return path the booking page builds starts a Google sign-in", async () => {
+    const v = await bookable();
+    const lastOfMonth = Array.from({ length: 40 }, (_, offset) => isoDay(offset + 2)).find(day => isoDay(0, day, 1).endsWith("-01"))!;
+    for (const selection of [
+      { service: v.serviceId },
+      { service: v.serviceId, date: v.date, start: v.startsAt },
+      { service: v.multiId, date: v.date, start: v.startsAt, blocks: 3 },
+      { service: v.multiId, date: v.date, start: v.startsAt, blocks: 12 },
+      { service: v.dailyId, date: v.date, days: 1 },
+      { service: v.dailyId, date: v.date, days: 3 },
+      { service: v.dailyId, date: lastOfMonth, days: 3 }
+    ]) {
+      const next = bookingReturnPath({ slug: v.slug, ...selection });
+      const reply = await raw("GET", `/v1/auth/google/start?intent=customer&next=${encodeURIComponent(next)}`);
+      expect(reply.status, next).toBe(302);
+      expect(new URL(reply.location).searchParams.get("state"), next).toBeTruthy();
+      expect(reply.location.startsWith(web), next).toBe(false);
+    }
+  });
+  it.each([
+    ["one session", (v: Bookable) => ({ selection: { service: v.serviceId, date: v.date, start: v.startsAt }, body: { service_id: v.serviceId, starts_at: v.startsAt } }), { blocks_count: 1, days_count: null }],
+    ["3 sessions", (v: Bookable) => ({ selection: { service: v.multiId, date: v.date, start: v.startsAt, blocks: 3 }, body: { service_id: v.multiId, starts_at: v.startsAt, blocks: 3 } }), { blocks_count: 3, days_count: null }],
+    ["3 days", (v: Bookable) => ({ selection: { service: v.dailyId, date: v.date, days: 3 }, body: { service_id: v.dailyId, days: 3 } }), { days_count: 3 }]
+  ])("round trip, %s: back to the same booking with the email confirmed, and the hold keeps the selection", async (_case, shape, stored) => {
+    const v = await bookable(); const who = person(); const { selection, body } = shape(v);
+    const next = bookingReturnPath({ slug: v.slug, ...selection });
+    const reply = await callback(await start({ intent: "customer", next }), who);
+    expect(reply.location).toBe(`${web}${next}`);
+    expect(await me(session(reply))).toMatchObject({ email: who.email, role: "CLIENT" });
+    const held = await fetch(`${base}/v1/bookings`, { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": ip(), "idempotency-key": randomUUID(), cookie: session(reply)! }, body: JSON.stringify({ slug: v.slug, date: v.date, name: "Meera Shah", ...body }) });
+    expect(held.status).toBe(201);
+    const id = (await held.json() as { booking: { id: string } }).booking.id;
+    expect((await pool.query("SELECT blocks_count,days_count,client_email::text AS email FROM bookings WHERE id=$1", [id])).rows[0]).toMatchObject({ ...stored, email: who.email });
   });
   it("a new customer's verified Google email holds the booking with no email code, as a customer account that is never a vendor", async () => {
     const v = await bookable(); const who = person(); const codesBefore = (await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM otp_codes")).rows[0].n;

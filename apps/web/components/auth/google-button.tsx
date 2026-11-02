@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { googleCustomerNextPath, googleNextPath, type GoogleIntent } from "@bayana/shared";
+import { isAllowedReturnPath, type GoogleIntent } from "@bayana/shared";
 import { env } from "@/env";
 import { buttonVariants } from "@/components/ui/button";
 import { LoadingState, Skeleton } from "@/components/ui/display";
@@ -55,7 +55,7 @@ export function useGoogleEnabled() {
  * allowlist only. customer: the return path is a booking page (/<slug>/book?...), validated the same way on both sides.
  */
 export const googleStartUrl = (next?: string | null, mode?: "link", intent: GoogleIntent = "vendor") => {
-  const safe = intent === "customer" ? googleCustomerNextPath(next) : googleNextPath(next);
+  const safe = isAllowedReturnPath(intent, next);
   const params = new URLSearchParams({ ...(intent === "customer" ? { intent } : {}), ...(safe ? { next: safe } : {}), ...(mode ? { mode } : {}) });
   return `${env.NEXT_PUBLIC_API_URL}/v1/auth/google/start${params.size ? `?${params}` : ""}`;
 };

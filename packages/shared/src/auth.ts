@@ -15,7 +15,8 @@ export const googleErrorCopy: Record<string, string> = {
   google_in_use: "That Google account is already connected to another Bayana account.",
   google_unavailable: "Google sign-in isn't available right now. Sign in with an email code.",
   google_session_changed: "You were signed out while connecting Google. Sign in and try again.",
-  google_business_account: "This Google account belongs to a business account on Bayana. Use another Google account, or confirm your email with a code."
+  google_business_account: "This Google account belongs to a business account on Bayana. Use another Google account, or confirm your email with a code.",
+  google_customer_failed: "We couldn't use Google just now. Please confirm your email with a code."
 };
 
 /**
@@ -30,6 +31,11 @@ export const googleIntent = (value: unknown): GoogleIntent | null => value === u
 export type BookingSelection = { slug: string; service: string; date?: string; start?: string; blocks?: number; days?: number };
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/, UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE = /^\d{4}-\d{2}-\d{2}$/, START = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/;
+/**
+ * The longest return path accepted. The largest real one (a 40-character slug, service, date, start, sessions) is about
+ * 140 characters; the margin keeps a cap without ever rejecting a real selection.
+ */
+export const RETURN_PATH_MAX = 300;
 const count = (value: string | null, max: number) => value !== null && /^\d{1,2}$/.test(value) && Number(value) >= 1 && Number(value) <= max ? Number(value) : undefined;
 
 /**
@@ -51,8 +57,9 @@ export function bookingReturnPath(selection: BookingSelection) {
  * formed). Anything else, including another host, "//", "..", a hash or an unknown parameter, is refused (null).
  */
 export function parseBookingReturnPath(value: unknown): BookingSelection | null {
-  // A plain path: no other host, no "//" or backslash, no hash, and no dot or escape in the path part (no ".." segments).
-  if (typeof value !== "string" || value.length > 300 || !value.startsWith("/") || value.startsWith("//") || value.includes("\\") || value.includes("#") || /[.%]/.test(value.split("?")[0])) return null;
+  // A plain path: no other host, no "//" or backslash, no hash, no "@", no control characters (the URL parser would silently
+  // drop tabs and newlines), and no dot or escape in the path part (no ".." or encoded "/" segments).
+  if (typeof value !== "string" || value.length > RETURN_PATH_MAX || !value.startsWith("/") || value.startsWith("//") || /[\\#@\u0000-\u001f\u007f]/.test(value) || /[.%]/.test(value.split("?")[0])) return null;
   let url: URL;
   try { url = new URL(value, "https://return.invalid"); } catch { return null; }
   if (url.origin !== "https://return.invalid") return null;
@@ -73,6 +80,22 @@ export function parseBookingReturnPath(value: unknown): BookingSelection | null 
 
 /** A valid customer return path, normalised (rebuilt from its validated parts), or null. */
 export const googleCustomerNextPath = (value: unknown) => { const selection = parseBookingReturnPath(value); return selection ? bookingReturnPath(selection) : null; };
+
+/**
+ * The one rule for where a Google sign-in may return, used by the web (building the start link) and the API (checking it):
+ * vendor, an app section; customer, a booking page. Returns the normalised path, or null when it is not allowed.
+ */
+export const isAllowedReturnPath = (intent: GoogleIntent, value: unknown) => intent === "customer" ? googleCustomerNextPath(value) : googleNextPath(value);
+
+/**
+ * Where to send a customer back when the return path itself was refused: their vendor's booking page if the first segment is
+ * a valid vendor slug (nothing else from the path is kept), else null (the caller uses the site home).
+ */
+export function bookingSlugFrom(value: unknown) {
+  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) return null;
+  const slug = /^\/([a-z0-9-]{1,60})(?:[/?]|$)/.exec(value)?.[1];
+  return slug && SLUG.test(slug) && !slugProblem(slug) ? slug : null;
+}
 
 /**
  * Versions of the published policies a person agrees to (PV-01). Bump a version when the text of that page changes; each

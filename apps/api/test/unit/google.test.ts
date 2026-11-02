@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bookingReturnPath, googleCustomerNextPath, googleIntent, parseBookingReturnPath } from "@bayana/shared";
+import { RETURN_PATH_MAX, bookingReturnPath, bookingSlugFrom, googleCustomerNextPath, googleIntent, isAllowedReturnPath, parseBookingReturnPath, type BookingSelection } from "@bayana/shared";
 import { loadConfig } from "../../src/config.js";
 import { decodeGoogleCookie, encodeGoogleCookie, pkceChallenge, safeNextPath } from "../../src/google/provider.js";
 
@@ -76,4 +76,57 @@ describe("customer Google sign-in: intent and the booking return path", () => {
     ["too many days", `/studio-sunday/book?service=${service}&days=31`],
     ["an upper-case slug", `/Studio/book?service=${service}`]
   ])("refuses %s", (_case, value) => expect(googleCustomerNextPath(value)).toBeNull());
+});
+
+describe("isAllowedReturnPath: one rule for the web and the API", () => {
+  const service = "11111111-1111-4111-8111-111111111111", day = "2026-11-12", at = "2026-11-12T08:30:00.000Z";
+  // The live failure (2 November 2026): the deployed API predated customer sign-in, so it checked a booking path with the
+  // vendor rule (app sections only) and answered INVALID_NEXT. The same decoded value under each rule:
+  const live = `/sau-studio/book?service=${service}&date=${day}&start=${encodeURIComponent(at)}&google=1`;
+  it("reproduces the live INVALID_NEXT: the vendor rule refuses a booking path that the customer rule accepts", () => {
+    expect(isAllowedReturnPath("vendor", live)).toBeNull();
+    expect(isAllowedReturnPath("customer", live)).toBe(live);
+  });
+  // Every selection the booking page can build (booking-flow.tsx: date, then start and blocks > 1 for hourly, or days for daily).
+  const longest = "a".repeat(20) + "-" + "b".repeat(19);
+  const shapes: [string, BookingSelection][] = [
+    ["a service only (before choosing a time)", { slug: "sau-studio", service }],
+    ["hourly, one session (blocks omitted)", { slug: "sau-studio", service, date: day, start: at }],
+    ["hourly, 3 sessions", { slug: "sau-studio", service, date: day, start: at, blocks: 3 }],
+    ["hourly, 12 sessions", { slug: "sau-studio", service, date: day, start: at, blocks: 12 }],
+    ["a time without milliseconds", { slug: "sau-studio", service, date: day, start: "2026-11-12T08:30:00Z" }],
+    ["daily, one day", { slug: "sau-studio", service, date: day, days: 1 }],
+    ["daily, a 3-day range", { slug: "sau-studio", service, date: day, days: 3 }],
+    ["daily, a range across a month end", { slug: "sau-studio", service, date: "2027-01-30", days: 4 }],
+    ["daily, 30 days", { slug: "sau-studio", service, date: day, days: 30 }],
+    ["daily, a date only (before choosing days)", { slug: "sau-studio", service, date: day }],
+    ["the longest slug with every field", { slug: longest, service, date: day, start: at, blocks: 12, days: 30 }]
+  ];
+  it.each(shapes)("accepts %s, unchanged, under the length cap", (_case, selection) => {
+    const path = bookingReturnPath(selection);
+    expect(path.length).toBeLessThanOrEqual(RETURN_PATH_MAX);
+    expect(isAllowedReturnPath("customer", path)).toBe(path);
+    expect(parseBookingReturnPath(path)).toEqual(selection);
+    // No personal data ever travels in the return path: only these keys exist.
+    expect([...new URL(path, "https://x.invalid").searchParams.keys()].every(key => ["service", "date", "start", "blocks", "days", "google"].includes(key))).toBe(true);
+  });
+  it.each([
+    ["a tab inside the slug (the URL parser would drop it)", `/sau-\tstudio/book?service=${service}`],
+    ["a newline", `/sau-studio/book?service=${service}\n&date=${day}`],
+    ["an @ (user info)", `/@evil.example/book?service=${service}`],
+    ["an encoded slash in the path", `/sau-studio%2F..%2Fdashboard/book?service=${service}`],
+    ["a name in the query", `/sau-studio/book?service=${service}&name=Asha`],
+    ["a phone in the query", `/sau-studio/book?service=${service}&phone=9820000000`],
+    ["an email in the query", `/sau-studio/book?service=${service}&email=a%40b.in`],
+    ["a path over the cap", `/sau-studio/book?service=${service}&date=${day}&x=${"y".repeat(RETURN_PATH_MAX)}`]
+  ])("refuses %s", (_case, value) => expect(isAllowedReturnPath("customer", value)).toBeNull());
+  it("keeps the two intents apart", () => {
+    expect(isAllowedReturnPath("customer", "/dashboard")).toBeNull();
+    expect(isAllowedReturnPath("vendor", "/dashboard/settings")).toBe("/dashboard/settings");
+  });
+  it("after a refused path, keeps only a valid vendor slug to send the customer back to", () => {
+    expect(bookingSlugFrom(`/sau-studio/book?service=bad&name=Asha`)).toBe("sau-studio");
+    expect(bookingSlugFrom("/sau-studio")).toBe("sau-studio");
+    for (const value of ["/dashboard/book", "//evil.example/book", "https://evil.example", "/Sau/book", "/a/book", "", 42, null]) expect(bookingSlugFrom(value), String(value)).toBeNull();
+  });
 });

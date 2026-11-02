@@ -78,7 +78,8 @@ export function BookingFlow() {
     const selection = parseBookingReturnPath(`/${value.slug}/book?${params}`);
     const chosen = selection && value.services.find(item => item.id === selection.service);
     window.history.replaceState(null, "", `/${value.slug}/book${chosen ? `?service=${chosen.id}` : ""}`);
-    if (!selection || !chosen) { setStep(0); setMessage("Your choice could not be restored. Please choose the service and time again."); return; }
+    // A refused start comes back to /<slug>/book with only google_error: say why, then start the choice again.
+    if (!selection || !chosen) { setStep(0); setMessage(error ? `${googleErrorCopy[error] ?? googleErrorCopy.google_failed} Please choose the service and time again.` : "Your choice could not be restored. Please choose the service and time again."); return; }
     setServiceId(chosen.id); setSlotDate(selection.date ?? ""); setSlotStart(chosen.booking_mode === "daily" ? "" : selection.start ?? "");
     setDayCount(chosen.booking_mode === "daily" ? selection.days ?? 0 : 0); setBlockCount(chosen.booking_mode === "daily" ? 0 : selection.blocks ?? chosen.min_blocks ?? 1);
     const kept = loadDetails(value.slug);

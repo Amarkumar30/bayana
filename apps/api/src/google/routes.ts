@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
-import { googleCustomerNextPath, googleIntent } from "@bayana/shared";
+import { bookingSlugFrom, googleIntent, isAllowedReturnPath, type GoogleIntent } from "@bayana/shared";
 import { currentUser, event, findUserByEmail, hashPassword, invalidCredentials, validatePassword, verifyPassword, type PublicUser, type SessionUser } from "../auth.js";
 import { cookieOptions, cookieToken, meta, perIp, readCookie, rotateInto } from "../auth-routes.js";
 import { config } from "../config.js";
@@ -10,7 +10,7 @@ import { recordConsent } from "../consent.js";
 import { pool, transaction } from "../database.js";
 import { AppError } from "../errors.js";
 import { log } from "../logger.js";
-import { decodeGoogleCookie, encodeGoogleCookie, GOOGLE_COOKIE, GOOGLE_COOKIE_MINUTES, googleProvider, GoogleSignInError, pkceChallenge, randomToken, safeNextPath, stateHash, verifyIdToken } from "./provider.js";
+import { decodeGoogleCookie, encodeGoogleCookie, GOOGLE_COOKIE, GOOGLE_COOKIE_MINUTES, googleProvider, GoogleSignInError, pkceChallenge, randomToken, stateHash, verifyIdToken } from "./provider.js";
 
 // Google sign-in routes (SPEC 4.1 AU-02, 12.1) and the signed-in user's sign-in methods (Settings > Sign-in methods).
 
@@ -35,21 +35,47 @@ googleRouter.get("/providers", perIp(120), (_req, res) => { res.json({ google: g
  */
 googleRouter.get("/google/start", perIp(30), handle(async (req, res) => {
   const provider = googleProvider();
-  if (!provider) throw disabled();
   const intent = googleIntent(req.query.intent);
+  // A customer reached this by a full-page navigation from a booking: any failure takes them back to that booking (or the
+  // site home) with a sentence, never to a raw JSON error. Vendor and link failures keep their API errors.
+  if (intent === "customer") {
+    const next = isAllowedReturnPath("customer", req.query.next);
+    if (!provider) return failStart(res, "google_unavailable", "disabled", next ?? req.query.next);
+    if (req.query.mode === "link") return failStart(res, "google_customer_failed", "link_not_allowed", next ?? req.query.next);
+    if (!next) return failStart(res, "google_customer_failed", "invalid_next", req.query.next);
+    try { return await begin(res, provider, { next, intent, linkUserId: null }); }
+    catch (error) { log("error", "google.start_error", { requestId: res.locals.requestId, err: error instanceof Error ? error.message : String(error) }); return failStart(res, "google_customer_failed", "start_error", next); }
+  }
+  if (!provider) throw disabled();
   if (!intent) throw new AppError(400, "INVALID_INTENT", "Choose vendor or customer sign-in");
   const link = req.query.mode === "link";
-  if (link && intent === "customer") throw new AppError(400, "INVALID_INTENT", "Connecting Google is for business accounts");
-  const next = intent === "customer" ? googleCustomerNextPath(req.query.next)
-    : req.query.next === undefined ? (link ? "/dashboard/settings" : "/dashboard") : safeNextPath(req.query.next);
+  const next = req.query.next === undefined ? (link ? "/dashboard/settings" : "/dashboard") : isAllowedReturnPath("vendor", req.query.next);
   if (!next) throw new AppError(400, "INVALID_NEXT", "That return address is not allowed");
   const linkUserId = link ? (await requireSession(req)).id : null;
+  await begin(res, provider, { next, intent, linkUserId });
+}));
+
+/** State, nonce and PKCE into the one-time cookie, the state's hash stored for single use, then off to Google. */
+async function begin(res: Response, provider: NonNullable<ReturnType<typeof googleProvider>>, target: { next: string; intent: GoogleIntent; linkUserId: string | null }) {
   const state = randomToken(), nonce = randomToken(), verifier = randomToken();
   await pool.query("INSERT INTO oauth_login_states(state_hash) VALUES($1)", [stateHash(state)]);
-  res.cookie(GOOGLE_COOKIE, encodeGoogleCookie({ state, nonce, verifier, next, linkUserId, intent, expires: Date.now() + GOOGLE_COOKIE_MINUTES * 60_000 }), googleCookieOptions());
-  log("info", "google.start", { requestId: res.locals.requestId, link, intent });
+  res.cookie(GOOGLE_COOKIE, encodeGoogleCookie({ state, nonce, verifier, ...target, expires: Date.now() + GOOGLE_COOKIE_MINUTES * 60_000 }), googleCookieOptions());
+  log("info", "google.start", { requestId: res.locals.requestId, link: target.linkUserId !== null, intent: target.intent });
   res.redirect(302, provider.authorizationUrl({ state, nonce, codeChallenge: pkceChallenge(verifier) }));
-}));
+}
+
+/**
+ * A customer's start failed: back to their booking with ?google_error=. A valid return path is used as it is; a refused one
+ * keeps only its vendor slug (/<slug>/book); with no usable slug, the site home. One reason code is logged, no path or email.
+ */
+function failStart(res: Response, code: string, reason: string, path: unknown) {
+  log("warn", "google.start_failed", { requestId: res.locals.requestId, code, reason });
+  const allowed = isAllowedReturnPath("customer", path), slug = allowed ? null : bookingSlugFrom(path);
+  const url = new URL(allowed ?? (slug ? `/${slug}/book` : "/"), "https://return.invalid");
+  url.searchParams.delete("google");
+  url.searchParams.set("google_error", code);
+  res.redirect(302, web(`${url.pathname}${url.search}`));
+}
 
 type Outcome = { user: PublicUser; path: string; kind: "signin" | "linked" | "created" | "connected" };
 /**
