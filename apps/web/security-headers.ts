@@ -13,3 +13,6 @@ export function securityHeaders(production: boolean, siteUrl: string | undefined
     ...(production && siteUrl?.startsWith("https:") ? [{ key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" }] : [])
   ];
 }
+
+/** Booking pages (/b/<id>?t=<private link>): the address carries a token, so no Referer is ever sent from them. */
+export const BOOKING_REFERRER_POLICY = { key: "Referrer-Policy", value: "no-referrer" };

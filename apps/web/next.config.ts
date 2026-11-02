@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 import { loadServerEnv, loadWebEnv } from "./env-schema";
 import { assertBusinessDetailsReady } from "./lib/business-details";
-import { securityHeaders as createSecurityHeaders } from "./security-headers";
+import { BOOKING_REFERRER_POLICY, securityHeaders as createSecurityHeaders } from "./security-headers";
 import { NOINDEX_HEADER, indexingAllowed, productionWebProblems, wwwRedirects } from "./lib/site";
 
 // Fail `next dev` and `next build` early, with variable names only, when the public env is missing or invalid, and refuse a
@@ -26,7 +26,9 @@ const nextConfig: NextConfig = {
   experimental: { inlineCss: true },
   reactStrictMode: true, devIndicators: false, onDemandEntries: { maxInactiveAge: 60 * 60 * 1000, pagesBufferLength: 100 },
   poweredByHeader: false,
-  async headers() { return [{ source: "/:path*", headers: [...securityHeaders, ...robotsHeaders] }]; },
+  // Booking pages carry a private link token in their address (?t=): no referrer at all, so it never leaves in one, even to
+  // our own pages. Later rules override earlier ones for the same header.
+  async headers() { return [{ source: "/:path*", headers: [...securityHeaders, ...robotsHeaders] }, { source: "/b/:path*", headers: [BOOKING_REFERRER_POLICY] }]; },
   // www.bayana.in -> https://bayana.in, permanently, path and query kept (nothing for staging or local hosts).
   async redirects() { return wwwRedirects(process.env.NEXT_PUBLIC_SITE_URL); }
 };

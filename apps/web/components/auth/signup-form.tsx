@@ -30,7 +30,7 @@ export function SignupForm() {
     <div className="grid gap-6">
       <Stepper steps={["Your email", "Your code"]} current={step} />
       <div className="grid gap-1"><h1 className="text-2xl">{step === 0 ? "Create your account" : "Check your email"}</h1><p className="text-sm text-muted">{step === 0 ? "No password needed. We'll email you a six-digit code to confirm it's you." : "Enter the code we sent. You can add a password later in Settings if you like."}</p></div>
-      {step === 0 && <><GoogleButton next="/onboarding" label="Sign up with Google" />{google && <p className="flex items-center gap-3 text-xs uppercase tracking-wide text-muted" aria-hidden><span className="h-px flex-1 bg-border" />or<span className="h-px flex-1 bg-border" /></p>}</>}
+      {step === 0 && <><GoogleButton next="/onboarding" label="Sign up with Google" mode="signup" />{google && <p className="flex items-center gap-3 text-xs uppercase tracking-wide text-muted" aria-hidden><span className="h-px flex-1 bg-border" />or<span className="h-px flex-1 bg-border" /></p>}</>}
       <form onSubmit={submit} noValidate className="grid gap-4">
         <EmailField value={email} onChange={setEmail} onBlur={() => touched.touch("email")} error={shown("email")} disabled={step === 1} />
         {step === 1 && <CodeField email={email} value={code} onChange={setCode} onBlur={() => touched.touch("code")} error={shown("code")} />}

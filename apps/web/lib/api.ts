@@ -74,4 +74,8 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
 }
 
 /** Only same-site relative paths are followed after sign-in, never `//evil.example`. */
-export const safeNext = (value: string | null, fallback = "/dashboard") => value && value.startsWith("/") && !value.startsWith("//") ? value : fallback;
+/**
+ * A same-site path to go to after signing in, else the fallback. Browsers read "\" as "/", so "/\evil.example" would leave
+ * the site; backslashes, control characters, whitespace and "//" are refused.
+ */
+export const safeNext = (value: string | null, fallback = "/dashboard") => value && /^\/(?![/\\])[^\\\s\u0000-\u001f\u007f]*$/.test(value) ? value : fallback;

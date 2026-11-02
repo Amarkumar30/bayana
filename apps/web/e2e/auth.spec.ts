@@ -99,28 +99,40 @@ test("settings lists signed-in devices from the API", async ({ page }) => {
   await expect(page.getByText("This device")).toBeVisible();
 });
 
-test("login leads with Continue with Google, linking to the API with a safe next path", async ({ page }) => {
+test("login offers two separate Google paths: the vendor dashboard (with a safe next) and the customer's bookings", async ({ page }) => {
   await page.goto("/login?next=/dashboard/bookings");
-  const google = page.getByRole("link", { name: "Continue with Google" });
-  await expect(google).toHaveAttribute("href", `${MOCK_API_URL}/v1/auth/google/start?next=%2Fdashboard%2Fbookings`);
+  await expect(page.getByRole("link", { name: "Open my dashboard with Google" })).toHaveAttribute("href", `${MOCK_API_URL}/v1/auth/google/start?next=%2Fdashboard%2Fbookings`);
+  await expect(page.getByRole("link", { name: "See my bookings with Google" })).toHaveAttribute("href", `${MOCK_API_URL}/v1/auth/google/start?intent=customer&next=%2Fmy-bookings`);
+  // Vendor first here; the customer path leads when the person came from My bookings (customer.spec.ts).
+  await expect(page.getByRole("heading", { level: 2 })).toHaveText(["I'm a vendor", "I booked with someone"]);
   await expect(page.getByRole("button", { name: "Email me a code" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Use password" })).toBeVisible();
 });
 
-test("the Google button is hidden when the API has Google sign-in off", async ({ page }) => {
+test("the Google buttons are hidden when the API has Google sign-in off", async ({ page }) => {
   await page.route(`${MOCK_API_URL}/v1/auth/providers`, route => route.fulfill({ json: { google: false } }));
   await page.goto("/login");
   await expect(page.getByRole("button", { name: "Email me a code" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Continue with Google" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /with Google/ })).toHaveCount(0);
 });
 
-test("a cancelled Google sign-in comes back with a human message", async ({ page }) => {
+test("a cancelled Google sign-in comes back with a human message; an unknown code shows none", async ({ page }) => {
   await page.goto("/login?error=google_cancelled");
   await expect(page.getByText("Google sign-in was cancelled. Try again, or sign in with an email code.")).toBeVisible();
   await page.goto("/login?error=something-unknown");
-  // Only the button label and the sign-up consent line under it mention Google: no stray message for an unknown code.
-  await expect(page.getByText(/New to Bayana\? Continuing with Google creates your account/)).toHaveCount(1);
-  await expect(page.getByText(/Google/).filter({ hasNotText: "New to Bayana? Continuing with Google" })).toHaveCount(1);
+  await expect(page.getByRole("link", { name: "Open my dashboard with Google" })).toBeVisible();
+  await expect(page.locator("main").getByText(/cancelled|couldn't|isn't available|took too long/)).toHaveCount(0);
+});
+
+test("a next path that would leave the site is refused after signing in (backslash and protocol-relative)", async ({ page }) => {
+  for (const next of ["/\\evil.example", "//evil.example"]) {
+    await page.goto(`/login?next=${encodeURIComponent(next)}`);
+    await page.getByLabel("Email", { exact: true }).fill("studio@example.in");
+    await page.getByRole("button", { name: "Email me a code" }).click();
+    await page.getByLabel("Six-digit code").fill(MOCK_CODE);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page).toHaveURL(/127\.0\.0\.1:\d+\/dashboard$/);
+  }
 });
 
 test("settings lists sign-in methods and lets a vendor add a password", async ({ page }) => {

@@ -54,7 +54,8 @@ export function useGoogleEnabled() {
  * A full-page navigation to the API, which redirects to Google. vendor (default): the API accepts return paths from the shared
  * allowlist only. customer: the return path is a booking page (/<slug>/book?...), validated the same way on both sides.
  */
-export const googleStartUrl = (next?: string | null, mode?: "link", intent: GoogleIntent = "vendor") => {
+/** mode: "link" connects Google in Settings; "signup" is the explicit vendor sign-up, the only Google path that makes a vendor. */
+export const googleStartUrl = (next?: string | null, mode?: "link" | "signup", intent: GoogleIntent = "vendor") => {
   const safe = isAllowedReturnPath(intent, next);
   const params = new URLSearchParams({ ...(intent === "customer" ? { intent } : {}), ...(safe ? { next: safe } : {}), ...(mode ? { mode } : {}) });
   return `${env.NEXT_PUBLIC_API_URL}/v1/auth/google/start${params.size ? `?${params}` : ""}`;
@@ -64,14 +65,14 @@ export const googleStartUrl = (next?: string | null, mode?: "link", intent: Goog
  * "Continue with Google". Hidden only when the API says Google is off. If the check failed, the button still shows (it is a
  * plain navigation, which works even when the check could not reach the API) with a link to check again.
  */
-export function GoogleButton({ next, label = "Continue with Google", intent = "vendor", onLeave }: { next?: string | null; label?: string; intent?: GoogleIntent; onLeave?: () => void }) {
+export function GoogleButton({ next, label = "Continue with Google", intent = "vendor", mode, quiet = false, onLeave }: { next?: string | null; label?: string; intent?: GoogleIntent; mode?: "signup"; quiet?: boolean; onLeave?: () => void }) {
   const { status, retry } = useGoogleStatus();
   if (status === "loading") return <LoadingState label="Checking Google sign-in…"><Skeleton className="h-12 w-full" /></LoadingState>;
   if (status === "off") return null;
   return (
     <div className="grid gap-1.5">
-      <a href={googleStartUrl(next, undefined, intent)} onClick={onLeave} className={cn(buttonVariants({ variant: "secondary", size: "lg", block: true }), "gap-3")}><GoogleMark />{label}</a>
-      {status === "error" && <p className="text-center text-xs text-muted" role="status">We couldn&apos;t check Google sign-in just now. <button type="button" onClick={retry} className="min-h-11 font-medium text-primary underline">Check again</button></p>}
+      <a href={googleStartUrl(next, mode, intent)} onClick={onLeave} className={cn(buttonVariants({ variant: "secondary", size: "lg", block: true }), "gap-3")}><GoogleMark />{label}</a>
+      {status === "error" && !quiet && <p className="text-center text-xs text-muted" role="status">We couldn&apos;t check Google sign-in just now. <button type="button" onClick={retry} className="min-h-11 font-medium text-primary underline">Check again</button></p>}
     </div>
   );
 }

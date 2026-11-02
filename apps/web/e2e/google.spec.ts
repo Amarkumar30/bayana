@@ -13,9 +13,11 @@ test("the button shows when Google is on, and a failed check shows it with a ret
   let answer: "fail" | "on" = "fail";
   await page.route(`${MOCK_API_URL}/v1/auth/providers`, route => answer === "fail" ? route.abort("connectionrefused") : route.fulfill({ json: { google: true } }));
   await page.goto("/login");
-  const google = page.getByRole("link", { name: "Continue with Google" });
+  const google = page.getByRole("link", { name: "Open my dashboard with Google" });
   await expect(google).toBeVisible();
   await expect(google).toHaveAttribute("href", `${MOCK_API_URL}/v1/auth/google/start?next=%2Fdashboard`);
+  // The note shows once, not under each of the two Google buttons.
+  await expect(page.getByText("We couldn't check Google sign-in just now.")).toHaveCount(1);
   await expect(page.getByText("We couldn't check Google sign-in just now.")).toBeVisible();
   // A failure is not remembered: checking again finds Google on and the note goes away.
   answer = "on";
@@ -28,7 +30,8 @@ test("the button shows when Google is on, and a failed check shows it with a ret
 test("sign-up offers Google above the email code, with an or divider", async ({ page }) => {
   await mockApi(page);
   await page.goto("/signup");
-  await expect(page.getByRole("link", { name: "Sign up with Google" })).toHaveAttribute("href", `${MOCK_API_URL}/v1/auth/google/start?next=%2Fonboarding`);
+  // mode=signup: the deliberate vendor sign-up, the only Google path that may turn a customer into a vendor.
+  await expect(page.getByRole("link", { name: "Sign up with Google" })).toHaveAttribute("href", `${MOCK_API_URL}/v1/auth/google/start?next=%2Fonboarding&mode=signup`);
   await expect(page.getByRole("button", { name: "Email me a code" })).toBeVisible();
 });
 

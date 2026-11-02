@@ -53,7 +53,10 @@ export function BookingPage() {
         <h1 className="text-2xl sm:text-4xl">{headline[view.status] ?? "Your booking"}</h1>
         <p className="text-muted">{view.service_name} · {formatBookingWhen(view, view.timezone)} ({view.timezone})</p>
       </div>
-      <StatusHelp view={view} token={token} finishHref={finishHref} onExpire={expire} onPaid={setView} />
+      {view.viewer === "customer" && <p className="-mt-3 text-sm"><Link href="/my-bookings" className="inline-flex min-h-11 items-center">See all my bookings</Link></p>}
+      {/* An email's private link only shows the booking; paying, agreeing and cancelling need the customer signed in. */}
+      {view.read_only ? <Notice tone="info">You opened this from an email link, so it is view-only. To pay, agree to the terms or cancel, <Link href="/my-bookings">sign in with the email you booked with</Link>.</Notice>
+        : <StatusHelp view={view} token={token} finishHref={finishHref} onExpire={expire} onPaid={setView} />}
 
       <Card><CardHeader title="Payment summary" />
         <dl className="grid gap-2 text-sm">

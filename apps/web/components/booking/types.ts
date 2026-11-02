@@ -14,6 +14,8 @@ export type BookingView = DailyFields & {
   contract_preview: { body: string; sha256: string } | null;
   cancellation_tiers: CancellationTier[];
   can_cancel: boolean;
+  /** Opened by an email's private link: view only (no paying, agreeing or cancelling). */
+  read_only?: boolean;
   refund_preview: { refund_paise: number; refund_percent: number; paid_paise: number } | null;
 };
 /** The private link travels in a header; only receipt downloads (plain links) put it in the query string, which the API never logs. */

@@ -1,6 +1,14 @@
 // Timezone helpers on top of Intl (IANA names), shared by the API slot engine and the dashboard.
 export const isIanaTimezone = (value: string) => { try { Intl.DateTimeFormat("en-US", { timeZone: value }); return value.length > 0; } catch { return false; } };
 
+/** India's zone under both names browsers report (older Chrome and Windows still say Asia/Calcutta). */
+const INDIA = new Set(["Asia/Kolkata", "Asia/Calcutta"]);
+/**
+ * How a timezone is named to people: "IST" (or "Indian Standard Time (IST)" when long) for India, the IANA name otherwise.
+ * Display only; data and logic keep the IANA name.
+ */
+export const timezoneLabel = (timezone: string, form: "short" | "long" = "short") => INDIA.has(timezone) ? (form === "long" ? "Indian Standard Time (IST)" : "IST") : timezone.replace(/_/g, " ");
+
 // Building an Intl.DateTimeFormat is far more expensive than using one; the slot engine converts thousands of times per month view.
 const formatters = new Map<string, Intl.DateTimeFormat>();
 const formatterFor = (timezone: string) => {
