@@ -71,7 +71,7 @@ export function GoogleButton({ next, label = "Continue with Google", intent = "v
   if (status === "off") return null;
   return (
     <div className="grid gap-1.5">
-      <a href={googleStartUrl(next, mode, intent)} onClick={onLeave} className={cn(buttonVariants({ variant: "secondary", size: "lg", block: true }), "gap-3")}><GoogleMark />{label}</a>
+      <a href={googleStartUrl(next, mode, intent)} onClick={onLeave} className={cn(buttonVariants({ variant: "secondary", size: "lg", block: true }), "gap-3 whitespace-normal py-2 text-center")}><GoogleMark />{label}</a>
       {status === "error" && !quiet && <p className="text-center text-xs text-muted" role="status">We couldn&apos;t check Google sign-in just now. <button type="button" onClick={retry} className="min-h-11 font-medium text-primary underline">Check again</button></p>}
     </div>
   );
