@@ -1,4 +1,5 @@
 "use client";
+import { ONLINE_PAYMENT_LABEL, TEST_PAYMENT_DONE } from "@bayana/shared";
 import Link from "next/link";
 import { Wallet } from "lucide-react";
 import { PageHeader } from "@/components/layout/brand";
@@ -10,7 +11,7 @@ import { Badge, Card, CardHeader, EmptyState, LoadingState, Money, Notice, Skele
 
 const statusWord: Record<string, string> = { captured: "Received", refunded: "Refunded", partially_refunded: "Partly refunded", authorized: "Confirming", failed: "Failed" };
 const refundWord: Record<string, string> = { pending: "On its way", processed: "Refunded", failed: "Failed", manual: "You return it" };
-const methodWord = (method: string | null, provider: string) => `${provider === "offline" ? "Offline" : "Online"}${method ? ` · ${method.replace("_", " ")}` : ""}`;
+const methodWord = (method: string | null, provider: string) => `${provider === "offline" ? "Offline" : ONLINE_PAYMENT_LABEL}${method ? ` · ${method.replace("_", " ")}` : ""}`;
 
 /** SPEC 5.3 payments: totals, balances due, the payment ledger and refunds; online money settles straight to the vendor. */
 export function PaymentsView() {
@@ -21,7 +22,7 @@ export function PaymentsView() {
       <PageHeader eyebrow="Payments" title="Money in and out" description="Every advance, balance and refund, recorded once." />
       <Gate state={state} skeleton={skeleton} retry={() => void reload()} next="/dashboard/payments">{data => { const tz = data.timezone; return (
         <div className="grid gap-6">
-          <Notice tone="info">{data.payout.mode === "razorpay_direct" ? "Online advances are paid into your own Razorpay account; Bayana never holds your money. Payout timing follows your Razorpay settlement schedule." : "Online payments are off. Record cash, UPI or bank transfers on each booking; they appear here."}</Notice>
+          <Notice tone="info">{data.payout.mode === "razorpay_test" ? `Online payments are switched on for you in test mode: ${TEST_PAYMENT_DONE.charAt(0).toLowerCase()}${TEST_PAYMENT_DONE.slice(1)} Real advances are paid to you directly; record them on each booking.` : "Online payments are off. Record cash, UPI or bank transfers on each booking; they appear here."}</Notice>
           <dl className="grid gap-4 sm:grid-cols-3">
             <Card className="grid gap-1"><dt className="text-sm text-muted">Received</dt><dd><Money paise={data.summary.received_paise} size="xl" /></dd><dd className="text-xs text-muted">Online <Money paise={data.summary.online_paise} size="sm" /> · offline <Money paise={data.summary.offline_paise} size="sm" /></dd></Card>
             <Card className="grid gap-1"><dt className="text-sm text-muted">Balances still due</dt><dd><Money paise={data.summary.balance_due_paise} size="xl" /></dd><dd className="text-xs text-muted">On confirmed and completed bookings</dd></Card>

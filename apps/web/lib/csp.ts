@@ -1,4 +1,6 @@
-// Content Security Policy (SPEC 12.5). Third parties: Razorpay Checkout (script, frames, API, images) and, only when
+// Content Security Policy (SPEC 12.5). Third parties: Razorpay Checkout, by exact host only (no wildcard): its script and frame
+// (checkout.razorpay.com, api.razorpay.com), its API calls and event reporting (api., lumberjack.razorpay.com) and bank logos
+// (cdn.razorpay.com). And, only when
 // NEXT_PUBLIC_SENTRY_DSN is set, Sentry's ingest host for error reports. Nothing else.
 
 /** Pages that handle accounts or personal data render per request and get a nonce-based script policy. */
@@ -20,10 +22,10 @@ export function contentSecurityPolicy(options: { nonce: string | null; apiOrigin
     `script-src 'self' ${scripts}${dev ? " 'unsafe-eval'" : ""} https://checkout.razorpay.com`,
     // React and Radix set style attributes at runtime, which nonces cannot cover.
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https://*.razorpay.com",
+    "img-src 'self' data: blob: https://cdn.razorpay.com",
     "font-src 'self' data:",
-    `connect-src 'self' ${apiOrigin} https://*.razorpay.com${sentry ? ` ${sentry}` : ""}${dev ? " ws: wss:" : ""}`,
-    "frame-src https://*.razorpay.com",
+    `connect-src 'self' ${apiOrigin} https://api.razorpay.com https://lumberjack.razorpay.com${sentry ? ` ${sentry}` : ""}${dev ? " ws: wss:" : ""}`,
+    "frame-src https://api.razorpay.com https://checkout.razorpay.com",
     "worker-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'self'",

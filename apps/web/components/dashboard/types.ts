@@ -21,7 +21,7 @@ export type CalendarData = { timezone: string; from: string; to: string; booking
 export type PaymentsData = {
   timezone: string;
   summary: { received_paise: number; online_paise: number; offline_paise: number; refunded_paise: number; owed_by_you_paise: number; balance_due_paise: number };
-  payout: { mode: "razorpay_direct" | "offline_only" };
+  payout: { mode: "razorpay_test" | "offline_only" };
   payments: { id: string; booking_id: string; provider: "razorpay" | "offline"; kind: string; status: string; amount_paise: number; method: string | null; created_at: string; verified_at: string | null; client_name: string; service_name: string | null }[];
   refunds: { id: string; booking_id: string; amount_paise: number; status: string; reason: string; created_at: string; processed_at: string | null; client_name: string }[];
   balances_due: (DailyFields & { id: string; client_name: string; service_name: string | null; starts_at: string; status: string; balance_due_paise: number })[];

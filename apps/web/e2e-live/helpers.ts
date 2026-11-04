@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
+import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 
 const api = () => process.env.E2E_API_URL ?? "http://127.0.0.1:4100";
@@ -55,6 +57,19 @@ export async function publishedVendor(name = "Studio Live") {
   await call("/v1/vendor/me", { terms: "The advance confirms your date.", cancellation_policy: "Half the advance back until 48 hours before.", rescheduling_policy: "One free reschedule with 48 hours' notice.", phone_required: true }, cookie, "PATCH");
   await call("/v1/vendor/publish", {}, cookie);
   return { slug, serviceId: service.id, displayName: `${name} ${tag}`, email, password: "violet-harbour-lantern-42" };
+}
+
+/**
+ * Turns on online (test) payments for one vendor the documented way (SQL; admins also have a console button), on the *_test
+ * database only. Vendors cannot do this themselves. pg is loaded from the API package (the web app does not depend on it).
+ */
+export async function enableOnlinePayments(slug: string) {
+  const url = process.env.DATABASE_URL_TEST ?? "";
+  if (!/_test$/.test(new URL(url || "postgres://x/none").pathname)) throw new Error("enableOnlinePayments runs only against a *_test database");
+  const { Client } = createRequire(path.resolve(__dirname, "../../api/package.json"))("pg") as { Client: new (options: { connectionString: string }) => { connect(): Promise<void>; query(sql: string, values: unknown[]): Promise<{ rowCount: number | null }>; end(): Promise<void> } };
+  const client = new Client({ connectionString: url }); await client.connect();
+  try { const updated = await client.query("UPDATE vendors SET online_payments=true WHERE slug=$1", [slug]); if (!updated.rowCount) throw new Error(`no vendor ${slug}`); }
+  finally { await client.end(); }
 }
 
 /** Walks the stepper from the time step up to the code step, picking the first open time. */

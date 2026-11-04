@@ -1,14 +1,13 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Lock } from "lucide-react";
-import { formatINR } from "@bayana/shared";
-import { env } from "@/env";
+import { TEST_PAYMENT_NOTICE, formatINR } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/display";
 import { ApiError, api, humanMessage } from "@/lib/api";
 import { tokenHeaders, type BookingView } from "./types";
 
-type Order = { order_id: string; key_id: string; amount_paise: number; currency: string };
+type Order = { order_id: string; key_id: string; amount_paise: number; currency: string; prefill?: { name?: string; email?: string; contact?: string }; test?: boolean };
 type CheckoutResponse = { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string };
 type Verified = { outcome: "confirmed" | "already" | "reclaimed" | "refund_pending" | "authorized" | "pending"; booking: BookingView };
 type RazorpayInstance = { open: () => void; on: (event: "payment.failed", handler: (response: { error?: { description?: string } }) => void) => void };
@@ -29,6 +28,8 @@ const loadCheckout = () => new Promise<void>((resolve, reject) => {
  */
 export function PaymentPanel({ bookingId, token, amountPaise, businessName, email, onSettled }: { bookingId: string; token: string | null; amountPaise: number; businessName: string; email?: string; onSettled: (booking: BookingView) => void }) {
   const [state, setState] = useState<"idle" | "opening" | "verifying" | "waiting">("idle");
+  // After the payment window was closed (or a payment failed) the same button offers to try again.
+  const [retry, setRetry] = useState(false);
   const [message, setMessage] = useState<{ tone: "info" | "warning" | "danger"; text: string }>();
   const polling = useRef<ReturnType<typeof setInterval>>(undefined);
   useEffect(() => () => clearInterval(polling.current), []);
@@ -51,8 +52,10 @@ export function PaymentPanel({ bookingId, token, amountPaise, businessName, emai
     catch (failure) { setState("idle"); setMessage({ tone: "danger", text: failure instanceof ApiError ? humanMessage(failure) : "The payment window could not open. Check your connection and try again." }); return; }
     if (!window.Razorpay) { setState("idle"); setMessage({ tone: "danger", text: "The payment window could not open. Check your connection and try again." }); return; }
     const checkout = new window.Razorpay({
-      key: env.NEXT_PUBLIC_RAZORPAY_KEY_ID ?? order.key_id, order_id: order.order_id, amount: order.amount_paise, currency: order.currency, name: businessName,
-      description: "Advance to confirm your booking", prefill: email ? { email } : undefined,
+      // The public key id comes with the order from the API; the prefill comes from the booking. UPI, cards and netbanking are
+      // all offered (no method restriction), and Checkout fits a 375 px phone.
+      key: order.key_id, order_id: order.order_id, amount: order.amount_paise, currency: order.currency, name: businessName,
+      description: "Advance to confirm your booking", prefill: { ...(email ? { email } : {}), ...order.prefill },
       handler: async (response: CheckoutResponse) => {
         setState("verifying"); setMessage({ tone: "info", text: "Checking your payment with Razorpay…" });
         try {
@@ -65,16 +68,18 @@ export function PaymentPanel({ bookingId, token, amountPaise, businessName, emai
           settleWhenConfirmed();
         }
       },
-      modal: { ondismiss: () => { setState(current => current === "opening" ? "idle" : current); setMessage(current => current ?? { tone: "info", text: "Payment window closed. Nothing was charged. You can try again while your time is held." }); } }
+      modal: { ondismiss: () => { setState(current => current === "opening" ? "idle" : current); setRetry(true); setMessage(current => current ?? { tone: "info", text: "Payment window closed. Nothing was charged. You can try again while your time is held." }); } }
     });
-    checkout.on("payment.failed", response => setMessage({ tone: "danger", text: `That payment didn't go through${response.error?.description ? ` (${response.error.description})` : ""}. Try again, or use another card or UPI app.` }));
+    checkout.on("payment.failed", response => { setRetry(true); setMessage({ tone: "danger", text: `That payment didn't go through${response.error?.description ? ` (${response.error.description})` : ""}. Try again, or use another card or UPI app.` }); });
     checkout.open();
   };
 
   return (
     <div className="grid gap-3">
+      {/* Online payments exist only in test mode in this build: say so before anyone pays. */}
+      <Notice tone="warning"><strong className="font-semibold">{TEST_PAYMENT_NOTICE}</strong> Use Razorpay test cards or a test UPI id.</Notice>
       {message && <Notice tone={message.tone}>{message.text}</Notice>}
-      <Button size="lg" block loading={state !== "idle"} loadingText={state === "opening" ? "Opening secure payment…" : state === "verifying" ? "Verifying…" : "Waiting for confirmation…"} onClick={() => void pay()}>Pay {formatINR(amountPaise)}</Button>
+      <Button size="lg" block loading={state !== "idle"} loadingText={state === "opening" ? "Opening secure payment…" : state === "verifying" ? "Verifying…" : "Waiting for confirmation…"} onClick={() => void pay()}>{retry ? `Try again: pay ${formatINR(amountPaise)}` : `Pay ${formatINR(amountPaise)}`}</Button>
       <p className="inline-flex items-center justify-center gap-1.5 text-xs text-muted"><Lock className="size-3.5" aria-hidden />Secured by Razorpay. Bayana never sees your card details.</p>
     </div>
   );

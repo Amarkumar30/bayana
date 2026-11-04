@@ -52,6 +52,21 @@ export function AdminBookings({ initial }: { initial: { q?: string; status?: str
   </>;
 }
 
+type Reconciled = { checked: { payments: number; refunds: number }; differences: { kind: string; detail: string; booking_id: string | null; provider_id: string | null }[] };
+/** Compares the last 48 hours at Razorpay with our payments, refunds and ledger now (the nightly job does the same). Changes nothing. */
+function ReconcileNow() {
+  const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [report, setReport] = useState<Reconciled>();
+  const run = async () => { setBusy(true); setError(""); try { setReport(await api<Reconciled>("/v1/admin/payments/reconcile", { body: {} })); } catch (failure) { setError(humanMessage(failure)); } finally { setBusy(false); } };
+  return (
+    <div className="grid gap-2">
+      <Button className="w-fit" variant="secondary" loading={busy} loadingText="Comparing with Razorpay…" onClick={() => void run()}>Reconcile the last 48 hours</Button>
+      {error && <Notice tone="danger">{error}</Notice>}
+      {report && <Notice tone={report.differences.length ? "warning" : "success"}>Checked {report.checked.payments} payments and {report.checked.refunds} refunds at Razorpay: {report.differences.length ? `${report.differences.length} difference${report.differences.length === 1 ? "" : "s"} to review.` : "everything matches."}
+        {report.differences.length > 0 && <ul className="mt-2 grid list-disc gap-1 pl-5">{report.differences.map((item, index) => <li key={index}>{item.detail}{item.booking_id ? <> (<Link href={`/admin/bookings/${item.booking_id}`}>booking</Link>)</> : ""}{item.provider_id ? ` · ${item.provider_id}` : ""}</li>)}</ul>}</Notice>}
+    </div>
+  );
+}
+
 export function AdminPayments({ initial }: { initial: { q?: string; status?: string } }) {
   const { query, update, qs } = useQuery(initial);
   const [state, reload] = useAdmin<{ payments: Pay[] }>(`/v1/admin/payments${qs}`);
@@ -64,6 +79,7 @@ export function AdminPayments({ initial }: { initial: { q?: string; status?: str
   ];
   return <>
     <PageHeader eyebrow="Admin" title="Payments" description="Search by Razorpay order or payment id, booking id, or customer email." />
+    <ReconcileNow />
     <SearchForm value={query.q ?? ""} placeholder="order_…, pay_…, booking id or email" onSearch={q => update({ q })}><StatusFilter value={query.status ?? ""} options={[["created", "created"], ["authorized", "authorized"], ["captured", "captured"], ["failed", "failed"], ["refunded", "refunded"], ["partially_refunded", "partly refunded"]]} onChange={status => update({ status })} /></SearchForm>
     <ActionResult text={result} />
     <Show state={state} retry={() => void reload()}>{data => <AdminTable rows={data.payments} columns={columns} rowKey={row => row.id} caption="Payments" empty="No payments match." />}</Show>

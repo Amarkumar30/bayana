@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import { fakePayments } from "../playwright.live.config";
-import { chooseTimeAndDetails, codeFor, publishedVendor } from "./helpers";
+import { chooseTimeAndDetails, codeFor, enableOnlinePayments, publishedVendor } from "./helpers";
 
 // Test mode with FakeProvider: the real API verifies a real HMAC signature and asks the (fake) gateway for the payment.
 // Only Razorpay's checkout.js is replaced, by a stub that "pays" and signs with the fake key secret. No network, no keys.
@@ -23,6 +23,8 @@ window.Razorpay.prototype.open = async function () {
 async function reachPayStep(page: Page) {
   await page.route("https://checkout.razorpay.com/v1/checkout.js", route => route.fulfill({ contentType: "application/javascript", body: stubCheckout(fakePayments.keySecret) }));
   const vendor = await publishedVendor("Pay Studio");
+  // Online checkout shows only for a vendor an admin switched on (and only in test mode).
+  await enableOnlinePayments(vendor.slug);
   const email = `e2e-payer-${randomUUID().slice(0, 8)}@example.test`;
   await page.goto(`/${vendor.slug}/book?service=${vendor.serviceId}`);
   await chooseTimeAndDetails(page, { name: "Asha Rao", email });
@@ -44,7 +46,7 @@ test("a customer pays the advance in Checkout and sees confirmation only after t
   await expect(page.getByText("Your advance is verified.", { exact: false })).toBeVisible();
   await page.getByRole("link", { name: "View your booking" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Your booking is confirmed" })).toBeVisible();
-  await expect(page.getByText("Advance · paid online (card)")).toBeVisible();
+  await expect(page.getByText("Advance · Online (test) (card)")).toBeVisible();
   // Balance on the customer view: total minus verified payments.
   await expect(page.getByText("Balance due", { exact: true }).locator("..")).toContainText("₹6,000.00");
   const receipt = page.getByRole("link", { name: "Download receipt for ₹2,000.00" });
@@ -60,6 +62,6 @@ test("closing Checkout charges nothing, says so, and paying again still works", 
   await expect(page.getByText("Payment window closed. Nothing was charged. You can try again while your time is held.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "You're booked" })).toHaveCount(0);
   await page.evaluate(() => { (window as unknown as { __checkout: string }).__checkout = "pay"; });
-  await page.getByRole("button", { name: "Pay ₹2,000.00" }).click();
+  await page.getByRole("button", { name: "Try again: pay ₹2,000.00" }).click();
   await expect(page.getByRole("heading", { name: "You're booked" })).toBeVisible();
 });

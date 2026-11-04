@@ -1,9 +1,10 @@
 "use client";
 import Link from "next/link";
 import { ArrowLeft, ChevronDown, Download, FileText, Mail, Phone } from "lucide-react";
-import { formatINR, tiersInWords } from "@bayana/shared";
+import { formatINR, tiersInWords, ONLINE_PAYMENT_LABEL } from "@bayana/shared";
 import { env } from "@/env";
 import { OfflinePaymentForm } from "@/components/booking/offline-payment-form";
+import { OnlineRefundForm } from "@/components/booking/online-refund-form";
 import { formatBookingWhen, formatDate, formatDateTime } from "@/components/booking/time";
 import { CancelBookingDialog, CompleteButton, RescheduleDialog } from "@/components/dashboard/booking-actions";
 import { Gate, useVendorData } from "@/components/dashboard/load";
@@ -64,13 +65,14 @@ export function BookingDetailView({ id }: { id: string }) {
                 {booking.payments.length === 0 && booking.refunds.length === 0 ? <p className="rounded-card bg-surface-muted px-4 py-3 text-sm text-muted">No payments yet.</p> :
                   <ul className="grid divide-y divide-border rounded-card bg-surface ring-1 ring-border/70">
                     {booking.payments.map(payment => <li key={payment.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
-                      <span className="grid min-w-0"><span className="font-medium">{payment.kind === "advance" ? "Advance" : "Balance"} · {payment.provider === "offline" ? `offline${payment.method ? ` (${payment.method.replace("_", " ")})` : ""}` : `online${payment.method ? ` (${payment.method})` : ""}`}</span><span className="text-muted">{paymentStatus[payment.status] ?? payment.status} · {formatDateTime(payment.verified_at ?? payment.created_at, booking.timezone)}</span>{payment.note && <span className="text-muted">Note: {payment.note}</span>}</span>
+                      <span className="grid min-w-0"><span className="font-medium">{payment.kind === "advance" ? "Advance" : "Balance"} · {payment.provider === "offline" ? `offline${payment.method ? ` (${payment.method.replace("_", " ")})` : ""}` : `${ONLINE_PAYMENT_LABEL}${payment.method ? ` (${payment.method})` : ""}`}</span><span className="text-muted">{paymentStatus[payment.status] ?? payment.status} · {formatDateTime(payment.verified_at ?? payment.created_at, booking.timezone)}</span>{payment.note && <span className="text-muted">Note: {payment.note}</span>}</span>
                       <span className="flex items-center gap-1"><Money paise={payment.amount_paise} size="sm" />{payment.receipt && <Button asChild size="icon" variant="ghost"><a href={`${env.NEXT_PUBLIC_API_URL}/v1/bookings/${booking.id}/receipts/${payment.id}`} aria-label={`Download receipt for ${formatINR(payment.amount_paise)}`} rel="noreferrer"><Download aria-hidden /></a></Button>}</span>
                     </li>)}
                     {booking.refunds.map(refund => <li key={refund.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"><span className="grid"><span className="font-medium">{refundStatus[refund.status] ?? refund.status}</span><span className="text-muted">{refund.reason}</span></span><Money paise={-refund.amount_paise} size="sm" className="text-danger" /></li>)}
                   </ul>}
               </section>
               {booking.actions.record_payment && <OfflinePaymentForm view={booking} onRecorded={() => void reload()} />}
+            <OnlineRefundForm path={`/v1/vendor/bookings/${booking.id}/refund`} payments={booking.payments} refunds={booking.refunds} onDone={() => void reload()} />
 
               <section aria-labelledby="timeline" className="grid gap-3"><h2 id="timeline" className="text-lg">Timeline</h2>
                 <ol className="grid gap-3 border-l-2 border-border pl-4">

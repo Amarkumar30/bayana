@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { CalendarX2, ChevronDown, Download, FileText } from "lucide-react";
-import { describeRefund, formatINR, tiersInWords } from "@bayana/shared";
+import { describeRefund, formatINR, tiersInWords, ONLINE_PAYMENT_LABEL } from "@bayana/shared";
 import { env } from "@/env";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ const stepLabel: Record<string, string> = { HELD: "Time held for 15 minutes", PE
 const paymentLabel: Record<string, string> = { created: "Started, not paid", authorized: "Authorised, confirming", failed: "Did not go through", captured: "Paid", refunded: "Refunded", partially_refunded: "Partly refunded" };
 const refundLabel: Record<string, string> = { pending: "Refund on its way", processed: "Refunded", failed: "Refund failed; we're looking into it", manual: "To be returned by the business directly" };
 const methodLabel: Record<string, string> = { card: "card", upi: "UPI", netbanking: "net banking", wallet: "wallet", cash: "cash", bank_transfer: "bank transfer", other: "other" };
-const paymentTitle = (payment: BookingView["payments"][number]) => `${payment.kind === "advance" ? "Advance" : "Balance"} · ${payment.provider === "offline" ? "paid to the business" : "paid online"}${payment.method ? ` (${methodLabel[payment.method] ?? payment.method})` : ""}`;
+const paymentTitle = (payment: BookingView["payments"][number]) => `${payment.kind === "advance" ? "Advance" : "Balance"} · ${payment.provider === "offline" ? "paid to the business" : ONLINE_PAYMENT_LABEL}${payment.method ? ` (${methodLabel[payment.method] ?? payment.method})` : ""}`;
 
 export function BookingSkeleton() {
   return <LoadingState label="Loading your booking…" className="grid gap-4"><Skeleton className="h-6 w-28" /><Skeleton className="h-10 w-3/4" /><Skeleton className="h-40 rounded-card" /><Skeleton className="h-32 rounded-card" /></LoadingState>;

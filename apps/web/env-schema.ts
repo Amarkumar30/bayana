@@ -1,14 +1,12 @@
 ﻿import { z } from "zod";
 
 const origin = z.string().url().refine(value => new URL(value).origin === value);
-// The Razorpay key id is public by design (Checkout needs it); the key secret never reaches the web app. Live ids are refused in this build.
-const razorpayKeyId = z.preprocess(value => value === "" ? undefined : value, z.string().regex(/^rzp_test_[A-Za-z0-9]+$/).optional());
+// No Razorpay variable: the API returns the public key id with each order, and the key secret never reaches the web app.
 const optionalUrl = z.preprocess(value => value === "" ? undefined : value, z.string().url().optional());
-const schema = z.object({ NEXT_PUBLIC_API_URL: origin, NEXT_PUBLIC_SITE_URL: origin, NEXT_PUBLIC_RAZORPAY_KEY_ID: razorpayKeyId, NEXT_PUBLIC_SENTRY_DSN: optionalUrl });
+const schema = z.object({ NEXT_PUBLIC_API_URL: origin, NEXT_PUBLIC_SITE_URL: origin, NEXT_PUBLIC_SENTRY_DSN: optionalUrl });
 const allowed: Record<keyof z.infer<typeof schema>, string> = {
   NEXT_PUBLIC_API_URL: "the API origin with no path or trailing slash, e.g. http://localhost:4000",
   NEXT_PUBLIC_SITE_URL: "this site's origin with no path or trailing slash, e.g. http://localhost:3000",
-  NEXT_PUBLIC_RAZORPAY_KEY_ID: "empty, or your Razorpay test key id (rzp_test_...); never the key secret",
   NEXT_PUBLIC_SENTRY_DSN: "empty, or the Sentry DSN URL (only its ingest host is allowed by the CSP)"
 };
 
@@ -43,7 +41,7 @@ export function loadServerEnv(input: Record<string, string | undefined> = server
   const names = [...new Set(parsed.error.issues.map(issue => String(issue.path[0])))] as (keyof typeof serverAllowed)[];
   throw new Error([`Invalid web environment. Edit ${envFile} (compare with apps/web/.env.example):`, ...names.map(name => `  - ${name}: must be ${serverAllowed[name]}`)].join("\n"));
 }
-export function loadWebEnv(input: Record<string, string | undefined> = { NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL, NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL, NEXT_PUBLIC_RAZORPAY_KEY_ID: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID, NEXT_PUBLIC_SENTRY_DSN: process.env.NEXT_PUBLIC_SENTRY_DSN }, envFile = "apps/web/.env.local") {
+export function loadWebEnv(input: Record<string, string | undefined> = { NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL, NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL, NEXT_PUBLIC_SENTRY_DSN: process.env.NEXT_PUBLIC_SENTRY_DSN }, envFile = "apps/web/.env.local") {
   const problems = webEnvProblems(input);
   if (!problems.length) return schema.parse(input);
   throw new Error([`Invalid web environment. Edit ${envFile} (compare with apps/web/.env.example):`, ...problems.map(problem => `  - ${problem.name}: ${problem.rule}`)].join("\n"));

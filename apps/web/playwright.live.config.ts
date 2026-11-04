@@ -38,7 +38,7 @@ export default defineConfig({
     {
       command: `pnpm exec next dev --port ${webPort}`,
       url: `${liveUrls.web}/waking`, timeout: 180_000, reuseExistingServer: false,
-      env: { NEXT_PUBLIC_API_URL: liveUrls.api, NEXT_PUBLIC_SITE_URL: liveUrls.web, NEXT_PUBLIC_RAZORPAY_KEY_ID: "", NEXT_TELEMETRY_DISABLED: "1" }
+      env: { NEXT_PUBLIC_API_URL: liveUrls.api, NEXT_PUBLIC_SITE_URL: liveUrls.web, NEXT_TELEMETRY_DISABLED: "1" }
     }
   ]
 });

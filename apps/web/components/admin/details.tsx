@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge, Card, CardHeader, Notice, StatusBadge } from "@/components/ui/display";
 import { api, humanMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { OnlineRefundForm } from "@/components/booking/online-refund-form";
 import { AdminTable, Show, useAdmin, when } from "./admin-data";
 
 type Finding = { level: "ok" | "info" | "warning" | "problem"; text: string; action?: { kind: "reverify_payment" | "reprocess_webhook" | "retry_email" | "run_tick"; id?: string; label: string } };
@@ -14,7 +15,7 @@ type Diagnosis = {
   booking: { booking_mode?: "hourly" | "daily"; days_count?: number | null; first_date?: string | null; blocks_count?: number | null; vendor_timezone?: string; id: string; status: string; vendor_slug: string; vendor_name: string; vendor_email: string | null; timezone: string; client_name: string; client_email: string; client_phone: string; service_name: string | null; starts_at: string; ends_at: string; hold_expires_at: string | null; total_paise: string; advance_paise: string; created_at: string; terms_accepted_at: string | null };
   events: { from_status: string | null; to_status: string; actor: string; reason: string | null; meta: unknown; created_at: string }[];
   payments: { id: string; provider: string; kind: string; status: string; amount_paise: number; provider_order_id: string | null; provider_payment_id: string | null; method: string | null; failure_reason: string | null; created_at: string; verified_at: string | null }[];
-  refunds: { id: string; amount_paise: number; status: string; provider_refund_id: string | null; reason: string; error: string | null; created_at: string; processed_at: string | null }[];
+  refunds: { id: string; payment_id: string; amount_paise: number; status: string; provider_refund_id: string | null; reason: string; error: string | null; created_at: string; processed_at: string | null }[];
   outbox: { id: string; template: string; recipient: string; status: string; attempts: number; last_error: string | null; sent_at: string | null; created_at: string }[];
   webhooks: { event_id: string; type: string; received_at: string; processed_at: string | null; error: string | null; needs_review: boolean }[];
   contract: { sha256: string; accepted_at: string; accepted_email: string } | null;
@@ -58,6 +59,7 @@ export function AdminBookingDetail({ id }: { id: string }) {
           <section className="grid gap-3"><h2 className="text-lg">Events</h2><AdminTable rows={data.events} rowKey={row => row.created_at + row.to_status} caption="Events" empty="No events (a consistency problem)." columns={[{ label: "When", render: row => when(row.created_at) }, { label: "Change", render: row => `${row.from_status ?? "new"} → ${row.to_status}` }, { label: "By", render: row => row.actor }, { label: "Reason", render: row => row.reason ?? "—" }, { label: "Meta", render: row => <Json value={row.meta} /> }]} /></section>
           <section className="grid gap-3"><h2 className="text-lg">Payments</h2><AdminTable rows={data.payments} rowKey={row => row.id} caption="Payments" empty="No payment rows." columns={[{ label: "Status", render: row => <Badge tone={row.verified_at ? "success" : row.status === "failed" ? "danger" : "warning"}>{row.status}</Badge> }, { label: "Amount", render: row => `${formatINR(row.amount_paise)} · ${row.kind}` }, { label: "Provider", render: row => <>{row.provider}{row.method ? ` · ${row.method}` : ""}<span className="block break-all font-mono text-xs text-muted">{row.provider_order_id ?? ""} {row.provider_payment_id ?? ""}</span></> }, { label: "Failure", render: row => row.failure_reason ?? "—" }, { label: "Verified", render: row => when(row.verified_at) }]} /></section>
           {data.refunds.length > 0 && <section className="grid gap-3"><h2 className="text-lg">Refunds</h2><AdminTable rows={data.refunds} rowKey={row => row.id} caption="Refunds" empty="" columns={[{ label: "Status", render: row => <Badge tone={row.status === "processed" ? "success" : row.status === "failed" ? "danger" : "warning"}>{row.status}</Badge> }, { label: "Amount", render: row => formatINR(row.amount_paise) }, { label: "Razorpay id", render: row => <span className="font-mono text-xs">{row.provider_refund_id ?? "—"}</span> }, { label: "Reason", render: row => row.error ? `${row.reason} (error: ${row.error})` : row.reason }, { label: "Created", render: row => when(row.created_at) }]} /></section>}
+          <OnlineRefundForm path={`/v1/admin/bookings/${data.booking.id}/refund`} payments={data.payments} refunds={data.refunds} onDone={() => void reload()} />
           <section className="grid gap-3"><h2 className="text-lg">Webhooks for this booking</h2><AdminTable rows={data.webhooks} rowKey={row => row.event_id} caption="Webhooks" empty="No Razorpay events matched this booking's orders." columns={[{ label: "Event", render: row => <Link href={`/admin/webhooks/${encodeURIComponent(row.event_id)}`} className="break-all font-mono text-xs">{row.type} · {row.event_id}</Link> }, { label: "State", render: row => row.needs_review ? "needs review" : row.processed_at ? "applied" : "waiting" }, { label: "Error", render: row => row.error ?? "—" }, { label: "Received", render: row => when(row.received_at) }]} /></section>
           <section className="grid gap-3"><h2 className="text-lg">Emails</h2><AdminTable rows={data.outbox} rowKey={row => row.id} caption="Emails" empty="No emails for this booking." columns={[{ label: "Email", render: row => row.template }, { label: "To", render: row => <span className="break-all">{row.recipient}</span> }, { label: "Status", render: row => <Badge tone={row.status === "sent" ? "success" : row.status === "failed" ? "danger" : "warning"}>{row.status}</Badge> }, { label: "Attempts", render: row => `${row.attempts}${row.last_error ? ` · ${row.last_error}` : ""}` }, { label: "Sent", render: row => when(row.sent_at) }]} /></section>
           <section className="grid gap-3"><h2 className="text-lg">Audit</h2><AdminTable rows={data.audit} rowKey={row => row.created_at + row.action} caption="Audit" empty="No audited changes (admin views are not listed here)." columns={[{ label: "When", render: row => when(row.created_at) }, { label: "Action", render: row => <span className="font-mono text-xs">{row.action}</span> }, { label: "Details", render: row => <Json value={row.metadata} /> }]} /></section>
@@ -81,13 +83,35 @@ export function AdminUserDetail({ id }: { id: string }) {
   )}</Show></div>;
 }
 
-type VendorDetail = { vendor: { id: string; slug: string; display_name: string; city: string; timezone: string; published: boolean; bookings_enabled: boolean; created_at: string; min_notice_minutes: number; max_advance_days: number; owner_user_id: string | null; owner_email: string | null }; services: { id: string; name: string; price_paise: number; duration_minutes: number; advance_type: string; advance_value: number; active: boolean }[]; bookings: { id: string; status: string; starts_at: string; client_name: string; service_name: string | null }[] };
+/**
+ * The per-vendor switch for online (test) payments. Off by default; vendors cannot turn it on. Checkout appears only while
+ * the API runs with PAYMENT_MODE=test; every other vendor keeps the offline advance.
+ */
+function OnlinePaymentsCard({ vendorId, enabled, onChanged }: { vendorId: string; enabled: boolean; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [result, setResult] = useState<{ payment_mode: string; checkout_shown: boolean }>();
+  const set = async (next: boolean) => {
+    if (!window.confirm(next ? "Turn on online test payments for this vendor? Their customers will see Razorpay test checkout while PAYMENT_MODE=test." : "Turn off online payments for this vendor? Their customers go back to the offline advance.")) return;
+    setBusy(true); setError("");
+    try { setResult(await api<{ payment_mode: string; checkout_shown: boolean }>(`/v1/admin/vendors/${vendorId}/online-payments`, { body: { enabled: next } })); onChanged(); }
+    catch (failure) { setError(humanMessage(failure)); } finally { setBusy(false); }
+  };
+  return (
+    <Card className="grid gap-3"><CardHeader title="Online payments (test)" description="Razorpay test checkout for this vendor's customers. No real money moves; in this phase vendors are paid directly." />
+      <p className="text-sm">Now: <strong>{enabled ? "On" : "Off"}</strong>{result && ` · API mode ${result.payment_mode}${result.checkout_shown ? ", checkout is shown" : ", checkout is not shown (needs PAYMENT_MODE=test)"}`}</p>
+      {error && <Notice tone="danger">{error}</Notice>}
+      <Button className="w-fit" variant={enabled ? "secondary" : "primary"} loading={busy} loadingText="Saving…" onClick={() => void set(!enabled)}>{enabled ? "Turn off online payments" : "Turn on online test payments"}</Button>
+    </Card>
+  );
+}
+
+type VendorDetail = { vendor: { id: string; slug: string; display_name: string; city: string; timezone: string; published: boolean; bookings_enabled: boolean; online_payments: boolean; created_at: string; min_notice_minutes: number; max_advance_days: number; owner_user_id: string | null; owner_email: string | null }; services: { id: string; name: string; price_paise: number; duration_minutes: number; advance_type: string; advance_value: number; active: boolean }[]; bookings: { id: string; status: string; starts_at: string; client_name: string; service_name: string | null }[] };
 export function AdminVendorDetail({ id }: { id: string }) {
   const [state, reload] = useAdmin<VendorDetail>(`/v1/admin/vendors/${id}`);
   return <div className="grid gap-6"><Back href="/admin/vendors" label="Vendors" /><Show state={state} retry={() => void reload()}>{data => (
     <>
       <h1 className="text-2xl sm:text-4xl">{data.vendor.display_name}</h1>
       <Card><Facts rows={[["Page", <a key="p" href={`/${data.vendor.slug}`} target="_blank" rel="noreferrer">/{data.vendor.slug}</a>], ["Owner", data.vendor.owner_user_id ? <Link key="o" href={`/admin/users/${data.vendor.owner_user_id}`}>{data.vendor.owner_email}</Link> : "—"], ["Published", data.vendor.published ? "Yes" : "No"], ["Taking bookings", data.vendor.bookings_enabled ? "Yes" : "No"], ["Timezone", data.vendor.timezone], ["Notice / window", `${data.vendor.min_notice_minutes} min / ${data.vendor.max_advance_days} days`], ["Joined", when(data.vendor.created_at)]]} /></Card>
+      <OnlinePaymentsCard vendorId={data.vendor.id} enabled={data.vendor.online_payments} onChanged={() => void reload()} />
       <section className="grid gap-3"><h2 className="text-lg">Services</h2><AdminTable rows={data.services} rowKey={row => row.id} caption="Services" empty="No services." columns={[{ label: "Service", render: row => row.name }, { label: "Price", render: row => formatINR(row.price_paise) }, { label: "Length", render: row => `${row.duration_minutes} min` }, { label: "Advance", render: row => `${row.advance_type} ${row.advance_value}` }, { label: "Active", render: row => row.active ? "yes" : "no" }]} /></section>
       <section className="grid gap-3"><h2 className="text-lg">Recent bookings</h2><AdminTable rows={data.bookings} rowKey={row => row.id} caption="Bookings" empty="No bookings." columns={[{ label: "Booking", render: row => <Link href={`/admin/bookings/${row.id}`}>{row.client_name}</Link> }, { label: "Status", render: row => <StatusBadge status={row.status} /> }, { label: "Service", render: row => row.service_name ?? "—" }, { label: "Starts", render: row => when(row.starts_at) }]} /></section>
     </>
