@@ -1,6 +1,8 @@
 # Razorpay test mode on your machine
 
-This is how to take a real **test-mode** payment through Bayana on localhost, including webhooks and refunds. No real money moves in test mode. Live mode is refused by this build.
+This is how to take a real **test-mode** payment through Bayana on localhost, including webhooks and refunds. No real money moves in test mode. Live mode is refused by this build: `PAYMENT_MODE=live` never starts, whatever keys or `LIVE_PAYMENTS_ACK` say.
+
+In this phase vendors are paid directly (they record the advance on the booking). Online payment is a **test feature**, shown only when **both** are true: the API runs with `PAYMENT_MODE=test`, and an admin switched **online payments** on for that vendor (section 1a). Every other vendor keeps the offline flow, unchanged. Wherever test checkout, a test payment's email or its receipt appears, it says "Test payment: no real money will be charged" (or "was charged").
 
 ## 1. Prerequisites
 
@@ -10,11 +12,21 @@ This is how to take a real **test-mode** payment through Bayana on localhost, in
    PAYMENT_MODE=test
    RAZORPAY_KEY_ID=rzp_test_...        # from Razorpay Dashboard > Test mode > Account & Settings > API keys
    RAZORPAY_KEY_SECRET=...             # the matching key secret
-   RAZORPAY_WEBHOOK_SECRET=            # leave empty until step 3; the webhook answers 503 until it is set
+   RAZORPAY_WEBHOOK_SECRET=...         # required in test mode: any value of 16+ characters locally; the same value you set in the Razorpay webhook
    ```
-   The API refuses to start with an `rzp_live_` key unless the mode is `live`, and live is not allowed yet.
-3. Optional: in `apps/web/.env.local`, set `NEXT_PUBLIC_RAZORPAY_KEY_ID=rzp_test_...`. Checkout uses the key id the API returns with each order, so this is only a convenience. Never put the key secret in the web app.
+   With `PAYMENT_MODE=test` the API refuses to start unless the key id starts with `rzp_test_` and all three are set; it names the missing variable, never a value. An `rzp_live_` key is refused in every mode.
+3. The web app needs no Razorpay variable: the API returns the public key id with each order.
 4. Run `pnpm.cmd db:up` (Postgres and Mailpit), then `pnpm.cmd dev`.
+
+## 1a. Turn on online payments for one vendor (admin only)
+
+Vendors cannot turn this on themselves. Either:
+- **Admin console:** sign in as an admin, open Admin > Vendors > the vendor, and press **Turn on online test payments** in the "Online payments (test)" card (audited); or
+- **SQL** (local: `docker exec -it bayana-postgres-1 psql -U bayana -d bayana_dev`; on Neon: the SQL editor):
+  ```sql
+  UPDATE vendors SET online_payments = true WHERE slug = 'your-test-vendor-slug' RETURNING slug, online_payments;
+  ```
+  Turn it off again with `false`. With `PAYMENT_MODE=disabled` the switch does nothing.
 
 ## 2. Pay once, with the browser only (no webhook needed)
 
@@ -39,6 +51,20 @@ The script polls until the booking is **CONFIRMED**, then prints the ledger: pay
 - checked the Checkout signature, HMAC-SHA256 of `order_id|payment_id` with the key secret;
 - fetched the payment from Razorpay;
 - matched it as `captured`, with the stored amount, currency and order.
+
+## 3a. Webhooks without a tunnel: a signed sample
+
+`scripts/send-test-webhook.mjs` sends a Razorpay-style event to your local API, signed with `RAZORPAY_WEBHOOK_SECRET` from `apps/api/.env` exactly as Razorpay signs it (HMAC-SHA256 of the raw body). The secret is never printed, and the script refuses any non-local URL unless you add `--allow-remote`.
+
+```powershell
+# the order id is in the payment-order reply, or: SELECT provider_order_id FROM payments ORDER BY created_at DESC LIMIT 1;
+node scripts/send-test-webhook.mjs payment.captured --order order_XXXX --amount 20000   # confirms a pending booking (closed tab)
+node scripts/send-test-webhook.mjs payment.captured --order order_XXXX --amount 20000 --event-id evt_same   # twice: the second is a duplicate
+node scripts/send-test-webhook.mjs payment.captured --order order_XXXX --amount 100     # wrong amount: stored, flagged, not applied
+node scripts/send-test-webhook.mjs payment.failed --order order_XXXX                    # the booking stays PENDING; retry is possible
+```
+
+With `PAYMENT_PROVIDER=razorpay` the API also asks Razorpay about a payment only on checkout verify, not on webhooks, so these work offline. Real Razorpay test webhooks for the live site go to `https://api.bayana.in/webhooks/razorpay`.
 
 ## 3. Webhooks through a tunnel
 
@@ -89,6 +115,17 @@ This shows that a payment confirms even if the browser never reports back.
 
 A payment that lands after the hold expired re-claims the slot if it is still free. Otherwise it is refunded in full automatically and the customer is emailed (queued in the outbox).
 
+### Refund without cancelling (vendor or admin)
+
+On a booking paid online, the vendor's booking page (Dashboard > Bookings > the booking) and the admin booking page show **Refund an online payment**: full or partial, never more than was paid online and not yet refunded. The booking stays as it is; the refund goes through the same refund path, and its status arrives with `refund.processed` or `refund.failed`.
+
 ## 6. Reconcile
 
-`pnpm.cmd payments:reconcile [hours]` (default 48) compares Razorpay's payments and refunds with the local ledger and prints each difference. It is report-only, never changes money, and exits with code 1 when it finds differences.
+`pnpm.cmd payments:reconcile [hours]` (default 48) compares Razorpay's payments and refunds with the local ledger and prints each difference. It is report-only, never changes money, and exits with code 1 when it finds differences. Admins can run the same check from Admin > Payments > **Reconcile the last 48 hours**; the nightly job (once a day, `.github/workflows/nightly.yml`) runs it too, in test mode only.
+
+## 7. On bayana.in (test mode)
+
+1. Render > the API service > Environment: `PAYMENT_MODE=test`, `RAZORPAY_KEY_ID=rzp_test_...`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` (16+ characters). Save; Render restarts the API. It refuses to start if any is missing or the key is not a test key (see the Render logs).
+2. Razorpay Dashboard (Test mode) > Webhooks: URL `https://api.bayana.in/webhooks/razorpay`, the same secret, events `payment.captured`, `payment.failed`, `order.paid`, `refund.processed`, `refund.failed`.
+3. Turn on online payments for your own test vendor only (section 1a).
+4. To switch off: set `PAYMENT_MODE=disabled` in Render. Every vendor is offline again; switches stay as they were.
