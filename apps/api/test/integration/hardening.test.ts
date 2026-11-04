@@ -23,6 +23,7 @@ import { createUser } from "../helpers.js";
 // an anonymised ledger (PV-02), an IDOR suite that covers every route with an id, and a scan of everything logged.
 let server: ReturnType<typeof app.listen>; let base = ""; let fake: FakeProvider;
 beforeAll(async () => { server = await new Promise(resolve => { const s = app.listen(0, () => resolve(s)); }); base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`; });
+// These vendors pay online, so an admin has switched online (test) payments on for them (vendors.online_payments).
 beforeEach(() => { fake = new FakeProvider(); useTestPayments({ mode: "test", provider: fake }); });
 afterAll(async () => { useTestPayments(null); await new Promise<void>(resolve => server.close(() => resolve())); await pool.end(); });
 
@@ -38,7 +39,7 @@ const at = (time: string) => { const [h, m] = time.split(":").map(Number); retur
 
 async function vendor() {
   const owner = await createUser(pool); const id = randomUUID(), serviceId = randomUUID(), slug = `hard-${randomUUID().slice(0, 8)}`;
-  await pool.query("INSERT INTO vendors(id,owner_user_id,slug,display_name,city,bio,base_price_paise,advance_type,advance_value,published,bookings_enabled,timezone,min_notice_minutes,max_advance_days,terms,phone_required) VALUES($1,$2,$3,'Hard Studio','Pune','',100000,'PERCENT',20,true,true,'Asia/Kolkata',0,365,'Advance confirms.',false)", [id, owner.id, slug]);
+  await pool.query("INSERT INTO vendors(id,owner_user_id,slug,display_name,city,bio,base_price_paise,advance_type,advance_value,published,bookings_enabled,timezone,min_notice_minutes,max_advance_days,terms,phone_required,online_payments) VALUES($1,$2,$3,'Hard Studio','Pune','',100000,'PERCENT',20,true,true,'Asia/Kolkata',0,365,'Advance confirms.',false,true)", [id, owner.id, slug]);
   await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value) VALUES($1,$2,'Session',100000,60,'hourly','PERCENT',20)", [serviceId, id]);
   for (let weekday = 0; weekday < 7; weekday++) await pool.query("INSERT INTO availability_rules(id,vendor_id,weekday,start_time,end_time) VALUES($1,$2,$3,'09:00','18:00')", [randomUUID(), id, weekday]);
   return { id, serviceId, slug, ownerId: owner.id, cookie: await sessionFor(owner.id) };
@@ -178,6 +179,7 @@ describe("IDOR suite (SPEC 12.4)", () => {
       "POST /v1/vendor/bookings/:id/offline-payments": async () => [await call("POST", `/v1/vendor/bookings/${booking.id}/offline-payments`, { ...asB, body: { kind: "balance", amount_paise: 100, method: "cash", note: "not mine" } })],
       "GET /v1/vendor/bookings/:id": async () => [await call("GET", `/v1/vendor/bookings/${booking.id}`, asB)],
       "POST /v1/vendor/bookings/:id/cancel": async () => [await call("POST", `/v1/vendor/bookings/${booking.id}/cancel`, { ...asB, body: { reason: "not mine" } })],
+      "POST /v1/vendor/bookings/:id/refund": async () => [await call("POST", `/v1/vendor/bookings/${booking.id}/refund`, { ...asB, body: { amount_paise: 100, reason: "not mine" } })],
       "POST /v1/vendor/bookings/:id/complete": async () => [await call("POST", `/v1/vendor/bookings/${booking.id}/complete`, { ...asB, body: {} })],
       "POST /v1/vendor/bookings/:id/reschedule": async () => [await call("POST", `/v1/vendor/bookings/${booking.id}/reschedule`, { ...asB, body: { date: day, time: "15:00" } })],
       "GET /v1/bookings/:id": async () => [await call("GET", `/v1/bookings/${booking.id}`, asB), await call("GET", `/v1/bookings/${booking.id}`, asStranger), await call("GET", `/v1/bookings/${booking.id}`, { token: "x".repeat(43) })],

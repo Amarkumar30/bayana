@@ -12,6 +12,7 @@ import { createUser } from "../helpers.js";
 // Phase 9: vendor dashboard (SPEC 5.3, BK-09, BK-11..13) and admin console (AD-01..04, AU-10), through the real HTTP routes.
 let server: ReturnType<typeof app.listen>; let base = ""; let fake: FakeProvider;
 beforeAll(async () => { server = await new Promise(resolve => { const s = app.listen(0, () => resolve(s)); }); base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`; });
+// These vendors pay online, so an admin has switched online (test) payments on for them (vendors.online_payments).
 beforeEach(() => { fake = new FakeProvider(); useTestPayments({ mode: "test", provider: fake }); });
 afterAll(async () => { useTestPayments(null); await new Promise<void>(resolve => server.close(() => resolve())); await pool.end(); });
 
@@ -27,7 +28,7 @@ const at = (time: string) => { const [h, m] = time.split(":").map(Number); retur
 
 async function vendor() {
   const owner = await createUser(pool); const id = randomUUID(), serviceId = randomUUID(), slug = `dash-${randomUUID().slice(0, 8)}`;
-  await pool.query("INSERT INTO vendors(id,owner_user_id,slug,display_name,city,bio,base_price_paise,advance_type,advance_value,published,bookings_enabled,timezone,min_notice_minutes,max_advance_days,terms,phone_required) VALUES($1,$2,$3,'Studio Dash','Pune','',100000,'PERCENT',20,true,true,'Asia/Kolkata',0,365,'Advance confirms.',false)", [id, owner.id, slug]);
+  await pool.query("INSERT INTO vendors(id,owner_user_id,slug,display_name,city,bio,base_price_paise,advance_type,advance_value,published,bookings_enabled,timezone,min_notice_minutes,max_advance_days,terms,phone_required,online_payments) VALUES($1,$2,$3,'Studio Dash','Pune','',100000,'PERCENT',20,true,true,'Asia/Kolkata',0,365,'Advance confirms.',false,true)", [id, owner.id, slug]);
   await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value,cancellation_tiers) VALUES($1,$2,'Session',100000,60,'hourly','PERCENT',20,$3)", [serviceId, id, JSON.stringify([{ min_hours_before: 48, refund_percent: 50 }])]);
   for (let weekday = 0; weekday < 7; weekday++) await pool.query("INSERT INTO availability_rules(id,vendor_id,weekday,start_time,end_time) VALUES($1,$2,$3,'09:00','18:00')", [randomUUID(), id, weekday]);
   return { id, serviceId, slug, ownerId: owner.id, ownerEmail: owner.email, cookie: await sessionFor(owner.id) };
