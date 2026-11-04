@@ -6,7 +6,7 @@ import { dailyRange, hourlyRange } from "./availability.js";
 import { expireOverdueHolds, lockVendorSchedule, recordCreated, transitionBooking } from "./booking-transition.js";
 import { recordConsent } from "./consent.js";
 import { loadContract } from "./contract.js";
-import { paymentsEnabled } from "./payments/runtime.js";
+import { onlinePaymentsFor } from "./payments/runtime.js";
 import { bookingFacts, bookingUrl, notifyConfirmed, notifyRequestToVendor } from "./notifications/booking-mail.js";
 import { enqueue, PRIORITY } from "./notifications/outbox.js";
 import { AppError } from "./errors.js";
@@ -27,7 +27,7 @@ const rangeTaken = (blocks: number) => new AppError(409, "SLOT_TAKEN", `${sessio
  */
 export async function createHold(db: PoolClient, input: HoldInput) {
   const fingerprint = createHash("sha256").update(JSON.stringify({ slug: input.slug, date: input.date, name: input.name, phone: input.phone ?? "", notes: input.notes ?? "", referral: input.referral ?? "", serviceId: input.serviceId, startsAt: input.startsAt, clientUserId: input.clientUserId, ...(input.days === undefined ? {} : { days: input.days }), ...(input.blocks === undefined ? {} : { blocks: input.blocks }) })).digest("hex");
-  const vendor = await db.query<{ id: string; phone_required: boolean; payment_required: boolean; owner_email: string | null; terms: string; cancellation_policy: string; rescheduling_policy: string }>("SELECT v.id,v.phone_required,v.payment_required,u.email::text AS owner_email,v.terms,v.cancellation_policy,v.rescheduling_policy FROM vendors v LEFT JOIN users u ON u.id=v.owner_user_id WHERE v.slug=$1 AND v.bookings_enabled AND v.published", [input.slug]);
+  const vendor = await db.query<{ id: string; phone_required: boolean; payment_required: boolean; owner_email: string | null; terms: string; cancellation_policy: string; rescheduling_policy: string; online_payments: boolean }>("SELECT v.id,v.phone_required,v.payment_required,u.email::text AS owner_email,v.terms,v.cancellation_policy,v.rescheduling_policy,v.online_payments FROM vendors v LEFT JOIN users u ON u.id=v.owner_user_id WHERE v.slug=$1 AND v.bookings_enabled AND v.published", [input.slug]);
   if (!vendor.rowCount) throw new AppError(404, "NOT_FOUND", "Vendor is unavailable");
   const p = vendor.rows[0];
   await lockVendorSchedule(db, p.id);
@@ -72,7 +72,7 @@ export async function createHold(db: PoolClient, input: HoldInput) {
   await recordCreated(db, id, "HELD", "client", "slot held");
   // The first WEB_ORIGINS entry is the canonical public site used in emailed links.
   const { facts } = await bookingFacts(db, id);
-  await enqueue(db, "hold_started", input.email, { ...facts, link: bookingUrl(id, accessToken), holdUntil: expires, online: paymentsEnabled() }, { bookingId: id, priority: PRIORITY.urgent, dedupeKey: `hold:${id}`, senderName: facts.businessName });
+  await enqueue(db, "hold_started", input.email, { ...facts, link: bookingUrl(id, accessToken), holdUntil: expires, online: onlinePaymentsFor(p.online_payments) }, { bookingId: id, priority: PRIORITY.urgent, dedupeKey: `hold:${id}`, senderName: facts.businessName });
   // The raw token is returned once, to the customer who created the hold; only its hash is stored.
   return { ...(await db.query(`SELECT ${bookingView} FROM bookings WHERE id=$1`, [id])).rows[0], access_token: accessToken };
 }
@@ -83,7 +83,7 @@ type Acceptance = { bookingId: string; termsHash: string; email: string; ip: str
  * text and evidence are frozen, and the hold moves on to PENDING (and CONFIRMED when there is nothing to pay).
  */
 export async function acceptTerms(db: PoolClient, input: Acceptance) {
-  const found = await db.query<{ status: string; hold_expires_at: Date | null; advance_paise: string; client_email: string; client_name: string; service_name: string; owner_email: string | null }>("SELECT b.status,b.hold_expires_at,b.advance_paise,b.client_email::text AS client_email,b.client_name,b.service_name,u.email::text AS owner_email FROM bookings b JOIN vendors v ON v.id=b.vendor_id LEFT JOIN users u ON u.id=v.owner_user_id WHERE b.id=$1 FOR UPDATE OF b", [input.bookingId]);
+  const found = await db.query<{ status: string; hold_expires_at: Date | null; advance_paise: string; client_email: string; client_name: string; service_name: string; owner_email: string | null; online_payments: boolean }>("SELECT b.status,b.hold_expires_at,b.advance_paise,b.client_email::text AS client_email,b.client_name,b.service_name,u.email::text AS owner_email,v.online_payments FROM bookings b JOIN vendors v ON v.id=b.vendor_id LEFT JOIN users u ON u.id=v.owner_user_id WHERE b.id=$1 FOR UPDATE OF b", [input.bookingId]);
   if (!found.rowCount) throw new AppError(404, "NOT_FOUND", "Not found");
   const booking = found.rows[0];
   const signed = await db.query<{ sha256: string }>("SELECT sha256 FROM booking_contracts WHERE booking_id=$1", [input.bookingId]);
@@ -97,8 +97,9 @@ export async function acceptTerms(db: PoolClient, input: Acceptance) {
   const customer = (await db.query<{ client_user_id: string | null }>("SELECT client_user_id FROM bookings WHERE id=$1", [input.bookingId])).rows[0];
   await recordConsent(db, { userId: customer.client_user_id, bookingId: input.bookingId, kinds: ["booking_terms", "account_terms", "refund_policy", "privacy_policy"], source: "booking_accept", ip: input.ip, userAgent: input.userAgent });
   const advance = Number(booking.advance_paise);
-  // Without online payments the booking waits (PENDING) for the vendor to record an offline advance, so the hold lengthens.
-  const awaitsOffline = advance > 0 && !paymentsEnabled();
+  // Without online payments for this vendor (test mode and the vendor's switch, onlinePaymentsFor) the booking waits
+  // (PENDING) for the vendor to record an offline advance, so the hold lengthens.
+  const awaitsOffline = advance > 0 && !onlinePaymentsFor(booking.online_payments);
   await db.query(`UPDATE bookings SET terms_accepted_at=now()${awaitsOffline ? ", hold_expires_at=now()+make_interval(hours => $2)" : ""} WHERE id=$1`, awaitsOffline ? [input.bookingId, config.REQUEST_HOLD_HOURS] : [input.bookingId]);
   await transitionBooking(db, input.bookingId, "PENDING", "client", advance === 0 ? "terms accepted, nothing to pay" : awaitsOffline ? "terms accepted, advance to be arranged offline" : "terms accepted, advance to be paid online", { terms_sha256: contract.sha256 });
   if (advance === 0) await transitionBooking(db, input.bookingId, "CONFIRMED", "system", "no advance required");

@@ -11,6 +11,11 @@ let configured: PaymentProvider | null = null;
 /** The mode in force. Integration tests may switch it with useTestPayments(); nothing else can. */
 export const paymentMode = (): PaymentMode => override?.mode ?? config.PAYMENT_MODE;
 export const paymentsEnabled = () => paymentMode() !== "disabled";
+/**
+ * Online checkout for one vendor's bookings: only with PAYMENT_MODE=test, and only for a vendor an admin switched on
+ * (vendors.online_payments). Every other vendor keeps the offline flow (the vendor records the advance). Live never qualifies.
+ */
+export const onlinePaymentsFor = (vendorSwitch: boolean | null | undefined) => paymentMode() === "test" && vendorSwitch === true;
 
 /** The gateway for this process. Live mode is refused outright until the go-live gates (SPEC 16.8) are cleared. */
 export function paymentProvider(): PaymentProvider {

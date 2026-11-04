@@ -34,10 +34,11 @@ describe("configuration", () => {
     expect(loadConfig(production).DATABASE_URL_DIRECT).toBe(production.DATABASE_URL_DIRECT);
   });
   it("uses DATABASE_URL for migrations when no direct URL is set outside production", () => expect(loadConfig(base).DATABASE_URL_DIRECT).toBe(base.DATABASE_URL));
-  it("refuses live payments without production and LIVE_PAYMENTS_ACK", () => {
+  it("refuses live payments everywhere, with or without production and LIVE_PAYMENTS_ACK", () => {
     const live = { RAZORPAY_KEY_ID: "rzp_live_x", RAZORPAY_KEY_SECRET: "s", RAZORPAY_WEBHOOK_SECRET: "w".repeat(16), PAYMENT_MODE: "live" };
-    expect(() => loadConfig({ ...base, ...live })).toThrow("LIVE_PAYMENTS_ACK");
-    expect(() => loadConfig({ ...production, ...live })).toThrow("LIVE_PAYMENTS_ACK");
+    expect(() => loadConfig({ ...base, ...live })).toThrow("may not be live in this build");
+    expect(() => loadConfig({ ...production, ...live })).toThrow("may not be live in this build");
+    expect(() => loadConfig({ ...production, ...live, LIVE_PAYMENTS_ACK: "yes" })).toThrow("may not be live in this build");
   });
   it("aborts on a key and mode mismatch (PY-01)", () => {
     expect(() => loadConfig({ ...base, PAYMENT_MODE: "test", RAZORPAY_KEY_ID: "rzp_live_x", RAZORPAY_KEY_SECRET: "s", RAZORPAY_WEBHOOK_SECRET: "w".repeat(16) })).toThrow("is a live key");
@@ -46,9 +47,19 @@ describe("configuration", () => {
     expect(() => loadConfig({ ...base, PAYMENT_MODE: "test", RAZORPAY_KEY_ID: "key_without_prefix", RAZORPAY_KEY_SECRET: "s" })).toThrow("must start with rzp_test_ or rzp_live_");
     expect(() => loadConfig({ ...base, PAYMENT_MODE: "test", RAZORPAY_KEY_ID: "rzp_test_x" })).toThrow("RAZORPAY_KEY_SECRET: is required when PAYMENT_MODE=test");
   });
-  it("lets test keys stay in the file while payments are disabled, and allows test mode before the webhook secret exists", () => {
+  it("lets test keys stay in the file while payments are disabled; test mode needs all three (key id, key secret, webhook secret)", () => {
     expect(loadConfig({ ...base, PAYMENT_MODE: "disabled", RAZORPAY_KEY_ID: "rzp_test_x", RAZORPAY_KEY_SECRET: "s" }).PAYMENT_MODE).toBe("disabled");
-    expect(loadConfig({ ...base, PAYMENT_MODE: "test", RAZORPAY_KEY_ID: "rzp_test_x", RAZORPAY_KEY_SECRET: "s" }).PAYMENT_MODE).toBe("test");
+    // Without the webhook secret a customer who closes the tab after paying would never be confirmed.
+    expect(() => loadConfig({ ...base, PAYMENT_MODE: "test", RAZORPAY_KEY_ID: "rzp_test_x", RAZORPAY_KEY_SECRET: "s" })).toThrow("RAZORPAY_WEBHOOK_SECRET: is required when PAYMENT_MODE=test");
+    expect(loadConfig({ ...base, PAYMENT_MODE: "test", RAZORPAY_KEY_ID: "rzp_test_x", RAZORPAY_KEY_SECRET: "s", RAZORPAY_WEBHOOK_SECRET: "w".repeat(16) }).PAYMENT_MODE).toBe("test");
+  });
+  it("never starts in live mode in this build, even with live keys, the acknowledgement and production", () => {
+    const live = { PAYMENT_MODE: "live", RAZORPAY_KEY_ID: "rzp_live_x", RAZORPAY_KEY_SECRET: "s", RAZORPAY_WEBHOOK_SECRET: "w".repeat(16), LIVE_PAYMENTS_ACK: "yes" };
+    expect(() => loadConfig({ ...base, ...live })).toThrow("may not be live in this build");
+    // Test keys with mode live are refused too, and the message names variables, never their values.
+    let message = "";
+    try { loadConfig({ ...base, ...live, RAZORPAY_KEY_ID: "rzp_test_secretish_value" }); } catch (error) { message = (error as Error).message; }
+    expect(message).toContain("PAYMENT_MODE"); expect(message).not.toContain("secretish_value");
   });
   it("allows the fake payment provider only under test", () => expect(() => loadConfig({ ...base, PAYMENT_PROVIDER: "fake" })).toThrow("fake only when NODE_ENV=test"));
   it("uses DATABASE_URL_TEST in test mode and requires a _test name", () => {

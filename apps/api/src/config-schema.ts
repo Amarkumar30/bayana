@@ -32,7 +32,7 @@ export const allowedValues: Record<keyof Shape, string> = {
   DATABASE_URL: "a postgres:// URL, e.g. postgres://bayana:bayana@localhost:5433/bayana_dev", DATABASE_URL_DIRECT: "a postgres:// URL for migrations (may be empty outside production)", DATABASE_URL_TEST: "a postgres:// URL whose database name ends in _test, e.g. .../bayana_test",
   HOLD_MINUTES: "a whole number of minutes, at least 1", REQUEST_HOLD_HOURS: "a whole number of hours from 1 to 168", MIN_ADVANCE_PAISE: "a positive whole number of paise",
   PAYMENT_MODE: "one of disabled, test, live (use disabled locally)", LIVE_PAYMENTS_ACK: "empty, or yes (production with live payments only)", RAZORPAY_KEY_ID: "an rzp_test_ key id with PAYMENT_MODE=test (may stay set, unused, while disabled); rzp_live_ only with PAYMENT_MODE=live",
-  RAZORPAY_KEY_SECRET: "the key secret paired with RAZORPAY_KEY_ID (required when PAYMENT_MODE=test or live)", RAZORPAY_WEBHOOK_SECRET: "the secret you chose for the Razorpay webhook, at least 16 characters (optional in test mode until the webhook exists)", PAYMENT_PROVIDER: "razorpay, or fake (NODE_ENV=test only, used by automated tests)",
+  RAZORPAY_KEY_SECRET: "the key secret paired with RAZORPAY_KEY_ID (required when PAYMENT_MODE=test or live)", RAZORPAY_WEBHOOK_SECRET: "the secret you chose for the Razorpay webhook, at least 16 characters (required when PAYMENT_MODE=test)", PAYMENT_PROVIDER: "razorpay, or fake (NODE_ENV=test only, used by automated tests)",
   EMAIL_TRANSPORT: "one of smtp, brevo_api (HTTPS, no SMTP port needed), log (development only), capture (test only); defaults to capture when NODE_ENV=test, otherwise smtp", BREVO_API_KEY: "the Brevo API key (SMTP & API > API keys), required when EMAIL_TRANSPORT=brevo_api", SMTP_URL: "an smtp:// URL, e.g. smtp://localhost:1025 for Mailpit", EMAIL_FROM: "a sender like Bayana <hello@bayana.in>",
   SESSION_SECRET: "a random value of at least 32 characters (pnpm.cmd setup:env generates one)", OTP_PEPPER: "a random value of at least 16 characters (required in production)",
   TICK_SECRET: "a random value of at least 32 characters that the scheduled job runner sends (required in production; pnpm.cmd setup:env generates one)", OPS_EMAIL: "empty, or the address that receives payment and consistency reviews",
@@ -108,7 +108,6 @@ export function productionProblems(v: Partial<Parsed>, webOrigins: string[] | un
   else if (web && !cookieDomainCovers(v.SESSION_COOKIE_DOMAIN, web)) add("SESSION_COOKIE_DOMAIN", "must cover the web host (the first WEB_ORIGINS entry), for example .bayana.in for https://bayana.in");
   else if (v.GOOGLE_REDIRECT_URI && publicHttps(v.GOOGLE_REDIRECT_URI) && !cookieDomainCovers(v.SESSION_COOKIE_DOMAIN, new URL(v.GOOGLE_REDIRECT_URI).hostname)) add("SESSION_COOKIE_DOMAIN", "must also cover the API host (the GOOGLE_REDIRECT_URI host), for example .bayana.in for api.bayana.in");
   for (const name of ["SESSION_SECRET", "OTP_PEPPER", "TICK_SECRET"] as const) { const value = v[name]; if (!value) add(name, "is required when APP_ENV=production"); else if (looksLikePlaceholder(value)) add(name, "looks like a placeholder; generate a random value (pnpm.cmd setup:env) when APP_ENV=production"); }
-  if (v.PAYMENT_MODE === "live") add("PAYMENT_MODE", "may not be live in this build; use disabled or test");
   return out;
 }
 
@@ -140,14 +139,16 @@ export function loadConfig(input: NodeJS.ProcessEnv = process.env, envFile = "ap
   if (transport === "capture" && v.NODE_ENV !== "test") problem("EMAIL_TRANSPORT", "may be capture only when NODE_ENV=test");
   const razorpay = { RAZORPAY_KEY_ID: v.RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET: v.RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET: v.RAZORPAY_WEBHOOK_SECRET };
   // Keys may stay in the file, unused, while payments are disabled; a key of the wrong kind for the mode always aborts (PY-01).
-  const required = v.PAYMENT_MODE === "live" ? Object.keys(razorpay) : v.PAYMENT_MODE === "test" ? ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET"] : [];
+  // Test mode needs all three: without the webhook secret a closed tab after paying would never confirm.
+  const required = v.PAYMENT_MODE === "disabled" ? [] : Object.keys(razorpay);
   for (const name of required) if (!razorpay[name as keyof typeof razorpay]) problem(name, `is required when PAYMENT_MODE=${v.PAYMENT_MODE}`);
   const keyId = v.RAZORPAY_KEY_ID;
   if (keyId && !keyId.startsWith("rzp_test_") && !keyId.startsWith("rzp_live_")) problem("RAZORPAY_KEY_ID", "must start with rzp_test_ or rzp_live_");
   if (keyId?.startsWith("rzp_live_") && v.PAYMENT_MODE !== "live") problem("RAZORPAY_KEY_ID", "is a live key (rzp_live_...); live keys are allowed only with PAYMENT_MODE=live");
   if (keyId?.startsWith("rzp_test_") && v.PAYMENT_MODE === "live") problem("RAZORPAY_KEY_ID", "must be a live key (rzp_live_...) when PAYMENT_MODE=live");
   if (v.PAYMENT_PROVIDER === "fake" && v.NODE_ENV !== "test") problem("PAYMENT_PROVIDER", "may be fake only when NODE_ENV=test");
-  if (v.PAYMENT_MODE === "live" && (!production || v.LIVE_PAYMENTS_ACK !== "yes")) problem("PAYMENT_MODE", "may be live only with NODE_ENV=production and LIVE_PAYMENTS_ACK=yes");
+  // Live payments are refused in this build whatever else is set: no key, environment or LIVE_PAYMENTS_ACK enables them.
+  if (v.PAYMENT_MODE === "live") problem("PAYMENT_MODE", "may not be live in this build; use disabled or test");
   // Google sign-in is optional: without a client id it is simply off. With one, the secret and callback URL must be set too.
   if (v.GOOGLE_CLIENT_ID) for (const name of ["GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"] as const) if (!v[name]) problem(name, `is required when GOOGLE_CLIENT_ID is set; set it to ${allowedValues[name]}`);
   for (const item of productionProblems(v, webOrigins)) problem(item.name, item.rule);

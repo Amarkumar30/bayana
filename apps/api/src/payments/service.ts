@@ -9,7 +9,7 @@ import { enqueue, PRIORITY } from "../notifications/outbox.js";
 import { AppError } from "../errors.js";
 import { log } from "../logger.js";
 import type { ProviderPayment, ProviderRefund } from "./provider.js";
-import { paymentProvider } from "./runtime.js";
+import { onlinePaymentsFor, paymentProvider } from "./runtime.js";
 
 // Money movement for one booking (SPEC 11). Every booking confirmation that follows a payment happens in the same transaction
 // that records the verified payment row (PY-05). Amounts are integer paise.
@@ -28,25 +28,31 @@ const audit = (db: Db, action: string, resourceId: string, metadata: Record<stri
 
 // ---- Orders -------------------------------------------------------------------------------------------------------
 
-/** PY-02: the order amount is the booking's snapshotted advance; a repeated request reuses the open order. */
+/**
+ * PY-02: the order amount is the booking's snapshotted advance; a repeated request reuses the open order. Only for a vendor
+ * whose online payments an admin switched on, in test mode (onlinePaymentsFor); every other vendor is paid offline.
+ */
 export async function createPaymentOrder(bookingId: string) {
   const provider = paymentProvider();
   return transaction(async db => {
-    const found = await db.query<{ status: string; hold_expires_at: Date | null; advance_paise: string; total_paise: string }>("SELECT status,hold_expires_at,advance_paise,total_paise FROM bookings WHERE id=$1 FOR UPDATE", [bookingId]);
+    const found = await db.query<{ status: string; hold_expires_at: Date | null; advance_paise: string; total_paise: string; vendor_id: string; online_payments: boolean; client_name: string; client_email: string; client_phone: string }>("SELECT b.status,b.hold_expires_at,b.advance_paise,b.total_paise,b.vendor_id,v.online_payments,b.client_name,b.client_email::text AS client_email,b.client_phone FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.id=$1 FOR UPDATE OF b", [bookingId]);
     if (!found.rowCount) throw new AppError(404, "NOT_FOUND", "Not found");
     const booking = found.rows[0];
+    if (!onlinePaymentsFor(booking.online_payments)) throw new AppError(409, "PAYMENT_DISABLED", "Online payment is not switched on for this business");
     if (booking.status === "CONFIRMED" || booking.status === "COMPLETED") throw new AppError(409, "ALREADY_PAID", "This booking is already confirmed");
     if (booking.status === "HELD") throw new AppError(409, "TERMS_REQUIRED", "Agree to the terms before paying");
     if (booking.status !== "PENDING" || !booking.hold_expires_at || booking.hold_expires_at <= new Date()) throw new AppError(409, "HOLD_EXPIRED", "The hold has expired");
     const amount = Number(booking.advance_paise);
     if (amount <= 0) throw new AppError(409, "NOTHING_TO_PAY", "This booking needs no advance");
     const open = await db.query<{ provider_order_id: string; amount_paise: string; currency: string }>("SELECT provider_order_id,amount_paise,currency FROM payments WHERE booking_id=$1 AND kind='advance' AND provider='razorpay' AND status = ANY($2)", [bookingId, OPEN]);
-    if (open.rowCount) return { order_id: open.rows[0].provider_order_id, key_id: provider.keyId, amount_paise: Number(open.rows[0].amount_paise), currency: open.rows[0].currency, reused: true };
+    // Checkout is prefilled from the booking itself (never from the browser); the public key id comes with the order.
+    const prefill = { name: booking.client_name, email: booking.client_email, contact: booking.client_phone || undefined };
+    if (open.rowCount) return { order_id: open.rows[0].provider_order_id, key_id: provider.keyId, amount_paise: Number(open.rows[0].amount_paise), currency: open.rows[0].currency, reused: true, prefill, test: true };
     // The booking row lock above makes concurrent clicks wait here, so at most one order is created per booking.
-    const order = await provider.createOrder({ amountPaise: amount, currency: "INR", receipt: bookingReference(bookingId), notes: { booking_id: bookingId } });
+    const order = await provider.createOrder({ amountPaise: amount, currency: "INR", receipt: bookingReference(bookingId), notes: { booking_id: bookingId, vendor_id: booking.vendor_id } });
     if (order.amount !== amount || order.currency !== "INR") throw new AppError(502, "PAYMENT_PROVIDER_ERROR", "The payment provider returned an unexpected order");
     await db.query("INSERT INTO payments(id,booking_id,provider,provider_order_id,status,amount_paise,currency,kind) VALUES($1,$2,'razorpay',$3,'created',$4,'INR','advance')", [randomUUID(), bookingId, order.id, amount]);
-    return { order_id: order.id, key_id: provider.keyId, amount_paise: amount, currency: "INR", reused: false };
+    return { order_id: order.id, key_id: provider.keyId, amount_paise: amount, currency: "INR", reused: false, prefill, test: true };
   });
 }
 
@@ -185,6 +191,28 @@ export async function createRefundRows(db: PoolClient, bookingId: string, amount
     if (left === 0) break;
   }
   return pending;
+}
+
+/**
+ * A refund of a booking's online (test) payment without cancelling it: full or partial, never more than is still refundable
+ * online. Through createRefundRows and issueRefund like every other refund, so the gateway's webhooks settle the status.
+ * vendorId limits it to that vendor's own bookings; without it (admin) any booking. Offline money is returned by the vendor.
+ */
+export async function refundOnlinePayment(input: { bookingId: string; amountPaise: number; reason: string; actorUserId: string; vendorId?: string }) {
+  const pending = await transaction(async db => {
+    const found = await db.query("SELECT id FROM bookings WHERE id=$1 AND ($2::uuid IS NULL OR vendor_id=$2) FOR UPDATE", [input.bookingId, input.vendorId ?? null]);
+    if (!found.rowCount) throw new AppError(404, "NOT_FOUND", "Booking not found");
+    const online = await db.query<{ id: string; refundable: string }>(`SELECT p.id,p.amount_paise - COALESCE((SELECT SUM(r.amount_paise) FROM refunds r WHERE r.payment_id=p.id AND r.status<>'failed'),0) AS refundable
+      FROM payments p WHERE p.booking_id=$1 AND p.provider='razorpay' AND p.status IN ('captured','partially_refunded') AND p.verified_at IS NOT NULL`, [input.bookingId]);
+    const refundable = online.rows.reduce((total, row) => total + Math.max(0, Number(row.refundable)), 0);
+    if (refundable <= 0) throw new AppError(409, "NOTHING_TO_REFUND", "No online payment on this booking is left to refund. Money paid directly is returned by the business.");
+    if (input.amountPaise > refundable) throw new AppError(400, "AMOUNT_EXCEEDS_REFUNDABLE", `At most ${formatINR(refundable)} can be refunded online`, { refundable_paise: refundable });
+    const ids = await createRefundRows(db, input.bookingId, input.amountPaise, `${input.vendorId ? "Refund by the business" : "Refund by Bayana"}: ${input.reason}`, online.rows.map(row => row.id));
+    await audit(db, "refund.requested", input.bookingId, { amount_paise: input.amountPaise, refundable_paise: refundable, reason: input.reason, by: input.vendorId ? "vendor" : "admin" }, input.actorUserId);
+    return ids;
+  });
+  for (const refundId of pending) await issueRefund(refundId);
+  return { refund_ids: pending };
 }
 
 /** Sends one pending refund to the gateway. Safe to call twice: the row lock and the provider id make the second call a no-op. */

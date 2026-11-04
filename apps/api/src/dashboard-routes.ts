@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { addLocalDays, bookingListQuerySchema, calendarQuerySchema, localDateOf, manualBookingSchema, missingPublishRequirements, notifyPrefsSchema, rescheduleSchema, vendorCancelSchema } from "@bayana/shared";
+import { addLocalDays, bookingListQuerySchema, calendarQuerySchema, localDateOf, manualBookingSchema, missingPublishRequirements, notifyPrefsSchema, onlineRefundSchema, rescheduleSchema, vendorCancelSchema } from "@bayana/shared";
 import type { SessionUser } from "./auth.js";
 import { closeLogin } from "./privacy.js";
 import { writeAudit } from "./audit.js";
@@ -11,8 +11,8 @@ import { config } from "./config.js";
 import { pool, transaction } from "./database.js";
 import { AppError } from "./errors.js";
 import { kickUrgent } from "./notifications/outbox.js";
-import { paidSql } from "./payments/service.js";
-import { paymentsEnabled } from "./payments/runtime.js";
+import { paidSql, refundOnlinePayment } from "./payments/service.js";
+import { onlinePaymentsFor } from "./payments/runtime.js";
 import { checklistInput, requireVendor, type VendorRow } from "./vendor-routes.js";
 import { vendorCancel, vendorComplete, vendorManualBooking, vendorReschedule } from "./vendor-bookings.js";
 
@@ -55,7 +55,7 @@ dashboardRouter.get("/overview", requireVendor, handle(async (_req, res) => {
   ]);
   const m = money.rows[0];
   res.json({
-    timezone, upcoming: upcoming.rows, payments_enabled: paymentsEnabled(),
+    timezone, upcoming: upcoming.rows, payments_enabled: onlinePaymentsFor(vendorOf(res).online_payments),
     money: { collected_30d_paise: Number(m.collected_30d) - Number(m.refunded_30d), balance_due_paise: Number(m.balance_due) },
     todo: todo.rows.map(row => ({ ...row, amount_paise: row.amount_paise === null ? null : Number(row.amount_paise) })),
     publish_missing: missingPublishRequirements(checklist), published: checklist.published
@@ -97,6 +97,12 @@ dashboardRouter.get("/bookings/:id", requireVendor, handle(async (req, res) => {
 dashboardRouter.post("/bookings/:id/cancel", requireVendor, handle(async (req, res) => {
   const body = vendorCancelSchema.parse(req.body); const id = bookingId(req);
   await vendorCancel(actorOf(res), id, body.reason);
+  res.json(await bookingView(id, true)); kickUrgent();
+}));
+// A refund of an online (test) payment without cancelling: full or partial, never more than was paid online (and not yet refunded).
+dashboardRouter.post("/bookings/:id/refund", requireVendor, handle(async (req, res) => {
+  const body = onlineRefundSchema.parse(req.body); const id = bookingId(req);
+  await refundOnlinePayment({ bookingId: id, amountPaise: body.amount_paise, reason: body.reason, actorUserId: actorOf(res).userId, vendorId: actorOf(res).vendorId });
   res.json(await bookingView(id, true)); kickUrgent();
 }));
 dashboardRouter.post("/bookings/:id/complete", requireVendor, handle(async (req, res) => {
@@ -144,7 +150,7 @@ dashboardRouter.get("/payments", requireVendor, handle(async (_req, res) => {
     timezone: vendorOf(res).timezone,
     summary: { received_paise: sum(verified), online_paise: sum(verified.filter(row => row.provider === "razorpay")), offline_paise: sum(verified.filter(row => row.provider === "offline")), refunded_paise: sum(refunds.rows.filter(row => row.status === "processed")), owed_by_you_paise: sum(refunds.rows.filter(row => row.status === "manual")), balance_due_paise: due.rows.reduce((total, row) => total + row.balance_due_paise, 0) },
     // Online advances settle to the vendor's own Razorpay account; Bayana never holds the money (SPEC 11.6).
-    payout: { mode: paymentsEnabled() ? "razorpay_direct" : "offline_only" },
+    payout: { mode: onlinePaymentsFor(vendorOf(res).online_payments) ? "razorpay_test" : "offline_only" },
     payments: payments.rows, refunds: refunds.rows, balances_due: due.rows
   });
 }));

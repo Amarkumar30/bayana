@@ -10,7 +10,8 @@ import { pool, transaction } from "../../src/database.js";
 import { createLogger, setLogger } from "../../src/logger.js";
 import { FakeProvider } from "../../src/payments/fake-provider.js";
 import { reconcile } from "../../src/payments/reconcile.js";
-import { applyProviderRefund } from "../../src/payments/service.js";
+import { TEST_PAYMENT_DONE } from "@bayana/shared";
+import { applyProviderRefund, refundOnlinePayment } from "../../src/payments/service.js";
 import { useTestPayments } from "../../src/payments/runtime.js";
 import { createUser } from "../helpers.js";
 
@@ -31,9 +32,10 @@ const sessionFor = async (userId: string) => `bayana_session=${await transaction
 const day = new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10);
 const nineIst = `${day}T03:30:00.000Z`;
 
-async function vendor() {
+/** A vendor taking bookings; online (test) payments switched on unless { online: false } (the default for real vendors). */
+async function vendor(options: { online?: boolean } = {}) {
   const owner = await createUser(pool); const id = randomUUID(), serviceId = randomUUID(), slug = `pay-${randomUUID().slice(0, 8)}`;
-  await pool.query("INSERT INTO vendors(id,owner_user_id,slug,display_name,city,bio,base_price_paise,advance_type,advance_value,published,bookings_enabled,timezone,min_notice_minutes,max_advance_days,terms,phone_required) VALUES($1,$2,$3,'Studio Pay','Pune','',100000,'PERCENT',20,true,true,'Asia/Kolkata',0,365,'Advance confirms.',false)", [id, owner.id, slug]);
+  await pool.query("INSERT INTO vendors(id,owner_user_id,slug,display_name,city,bio,base_price_paise,advance_type,advance_value,published,bookings_enabled,timezone,min_notice_minutes,max_advance_days,terms,phone_required,online_payments) VALUES($1,$2,$3,'Studio Pay','Pune','',100000,'PERCENT',20,true,true,'Asia/Kolkata',0,365,'Advance confirms.',false,$4)", [id, owner.id, slug, options.online ?? true]);
   await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value,cancellation_tiers) VALUES($1,$2,'Session',100000,60,'hourly','PERCENT',20,$3)", [serviceId, id, JSON.stringify([{ min_hours_before: 48, refund_percent: 50 }])]);
   for (let weekday = 0; weekday < 7; weekday++) await pool.query("INSERT INTO availability_rules(id,vendor_id,weekday,start_time,end_time) VALUES($1,$2,$3,'09:00','18:00')", [randomUUID(), id, weekday]);
   return { id, serviceId, slug, ownerCookie: await sessionFor(owner.id) };
@@ -158,6 +160,100 @@ describe("checkout verification (PY-03, PY-05)", () => {
     expect((await order(booking)).order_id).toBe(order_id);
     const retry = fake.pay(order_id);
     expect((await verify(booking, { razorpay_order_id: order_id, razorpay_payment_id: retry.razorpay_payment_id, razorpay_signature: retry.razorpay_signature })).body.outcome).toBe("confirmed");
+  });
+});
+
+describe("the per-vendor switch (online_payments, admin only)", () => {
+  it("a vendor without the switch never gets an order: its customers keep the offline flow, unchanged", async () => {
+    const offline = await vendor({ online: false });
+    const customer = await createUser(pool, { role: "CLIENT" }); const cookie = await sessionFor(customer.id);
+    const held = await call("POST", "/v1/bookings", { cookie, key: randomUUID(), body: { slug: offline.slug, date: day, service_id: offline.serviceId, starts_at: nineIst, name: "Asha Rao" } });
+    const booking = { id: held.body.booking.id as string, token: held.body.booking.access_token as string };
+    const view = await call("GET", `/v1/bookings/${booking.id}`, { token: booking.token });
+    expect(view.body).toMatchObject({ payments_enabled: false, can_pay: false });
+    await call("POST", `/v1/bookings/${booking.id}/accept`, { token: booking.token, body: { terms_hash: view.body.contract_preview.sha256, accepted: true } });
+    // The offline request: the hold lengthens for the vendor to arrange the advance, and the vendor is told to collect it.
+    const row = (await pool.query<{ status: string; hold_expires_at: Date }>("SELECT status,hold_expires_at FROM bookings WHERE id=$1", [booking.id])).rows[0];
+    expect(row.status).toBe("PENDING"); expect(row.hold_expires_at.getTime()).toBeGreaterThan(Date.now() + 3_600_000);
+    expect((await pool.query("SELECT 1 FROM email_outbox WHERE booking_id=$1 AND template='booking_request_vendor'", [booking.id])).rowCount).toBe(1);
+    expect((await call("POST", `/v1/bookings/${booking.id}/payment-order`, { token: booking.token, body: {} })).body.error.code).toBe("PAYMENT_DISABLED");
+    expect((await call("GET", `/v1/vendors/${offline.slug}`)).body.payments_enabled).toBe(false);
+    expect(fake.calls).toEqual([]);
+  });
+  it("with the switch on, the order carries the booking and vendor ids, the prefill from the booking, and the public key id", async () => {
+    const booking = await pending();
+    const reply = await call("POST", `/v1/bookings/${booking.id}/payment-order`, { token: booking.token, body: { prefill: { name: "Not from the browser" } } });
+    expect(reply.body).toMatchObject({ key_id: fake.keyId, test: true, prefill: { name: "Asha Rao" } });
+    expect(fake.orders.get(reply.body.order_id)?.notes).toEqual({ booking_id: booking.id, vendor_id: booking.vendor.id });
+    expect((await call("GET", `/v1/vendors/${booking.vendor.slug}`)).body.payments_enabled).toBe(true);
+  });
+  it("the switch takes effect only in test mode: with payments disabled the same vendor is offline", async () => {
+    const booking = await pending();
+    useTestPayments({ mode: "disabled", provider: fake });
+    expect((await call("GET", `/v1/bookings/${booking.id}`, { token: booking.token })).body).toMatchObject({ payments_enabled: false, can_pay: false });
+    expect((await call("GET", `/v1/vendors/${booking.vendor.slug}`)).body.payments_enabled).toBe(false);
+  });
+});
+
+describe("two verifies at once", () => {
+  it("confirm exactly once", async () => {
+    const booking = await pending(); const { order_id } = await order(booking);
+    const checkout = fake.pay(order_id);
+    const replies = await Promise.all([0, 1, 2].map(() => verify(booking, { razorpay_order_id: checkout.razorpay_order_id, razorpay_payment_id: checkout.razorpay_payment_id, razorpay_signature: checkout.razorpay_signature })));
+    expect(replies.map(reply => reply.status).sort()).toEqual([200, 200, 200]);
+    expect(replies.map(reply => reply.body.outcome).sort()).toEqual(["already", "already", "confirmed"]);
+    expect(await counts(booking.id)).toEqual({ captured: 1, ledger: 1, confirmations: 1 });
+  });
+});
+
+describe("refunds without cancelling (vendor and admin)", () => {
+  const paid = async () => { const booking = await pending(); const { order_id } = await order(booking); const checkout = fake.pay(order_id); await verify(booking, { razorpay_order_id: checkout.razorpay_order_id, razorpay_payment_id: checkout.razorpay_payment_id, razorpay_signature: checkout.razorpay_signature }); return booking; };
+  const refund = (booking: Awaited<ReturnType<typeof pending>>, amount: number, cookie = booking.vendor.ownerCookie) => call("POST", `/v1/vendor/bookings/${booking.id}/refund`, { cookie, body: { amount_paise: amount, reason: "Goodwill" } });
+  const refunds = async (id: string) => (await pool.query<{ amount_paise: number; status: string }>("SELECT amount_paise::int AS amount_paise,status FROM refunds WHERE booking_id=$1 ORDER BY created_at", [id])).rows;
+  it("a partial then the rest: each through the gateway, the booking stays confirmed, the paid figure follows", async () => {
+    const booking = await paid();
+    expect((await refund(booking, 5000)).body).toMatchObject({ status: "CONFIRMED", paid_paise: 15000 });
+    expect((await pool.query("SELECT status FROM payments WHERE booking_id=$1 AND provider='razorpay'", [booking.id])).rows[0].status).toBe("partially_refunded");
+    expect((await refund(booking, 15000)).body).toMatchObject({ status: "CONFIRMED", paid_paise: 0 });
+    expect(await refunds(booking.id)).toEqual([{ amount_paise: 5000, status: "processed" }, { amount_paise: 15000, status: "processed" }]);
+    expect((await pool.query("SELECT status FROM payments WHERE booking_id=$1 AND provider='razorpay'", [booking.id])).rows[0].status).toBe("refunded");
+    expect(fake.calls.filter(name => name === "createRefund")).toHaveLength(2);
+  });
+  it("never more than was paid online, and nothing for a booking paid only offline", async () => {
+    const booking = await paid();
+    expect((await refund(booking, 20001)).body.error).toMatchObject({ code: "AMOUNT_EXCEEDS_REFUNDABLE", details: { refundable_paise: 20000 } });
+    await refund(booking, 20000);
+    expect((await refund(booking, 100)).body.error.code).toBe("NOTHING_TO_REFUND");
+    const offline = await pending(await vendor({ online: false }));
+    await call("POST", `/v1/vendor/bookings/${offline.id}/offline-payments`, { cookie: offline.vendor.ownerCookie, body: { kind: "advance", amount_paise: 20000, method: "upi", note: "UPI" } });
+    expect((await refund(offline, 100)).body.error.code).toBe("NOTHING_TO_REFUND");
+  });
+  it("another vendor cannot refund the booking; the amount must be whole paise of at least a rupee", async () => {
+    const booking = await paid(); const other = await vendor();
+    expect((await refund(booking, 1000, other.ownerCookie)).status).toBe(404);
+    expect((await refund(booking, 99)).status).toBe(400);
+    expect((await call("POST", `/v1/vendor/bookings/${booking.id}/refund`, { cookie: booking.vendor.ownerCookie, body: { amount_paise: 1000.5, reason: "Goodwill" } })).status).toBe(400);
+    expect(await refunds(booking.id)).toEqual([]);
+  });
+  it("the admin path refunds any booking with the same limits", async () => {
+    const booking = await paid(); const admin = await createUser(pool, { role: "ADMIN" });
+    await expect(refundOnlinePayment({ bookingId: booking.id, amountPaise: 30000, reason: "Check", actorUserId: admin.id })).rejects.toMatchObject({ code: "AMOUNT_EXCEEDS_REFUNDABLE" });
+    await refundOnlinePayment({ bookingId: booking.id, amountPaise: 20000, reason: "Customer asked", actorUserId: admin.id });
+    expect(await refunds(booking.id)).toEqual([{ amount_paise: 20000, status: "processed" }]);
+    expect((await pool.query("SELECT 1 FROM audit_logs WHERE resource_id=$1 AND action='refund.requested'", [booking.id])).rowCount).toBe(1);
+  });
+});
+
+describe("test payments are labelled as test payments", () => {
+  it("the confirmation after an online payment says no real money was charged; an offline confirmation does not", async () => {
+    const online = await pending(); const { order_id } = await order(online); const checkout = fake.pay(order_id);
+    await verify(online, { razorpay_order_id: checkout.razorpay_order_id, razorpay_payment_id: checkout.razorpay_payment_id, razorpay_signature: checkout.razorpay_signature });
+    const offline = await pending(await vendor({ online: false }));
+    await call("POST", `/v1/vendor/bookings/${offline.id}/offline-payments`, { cookie: offline.vendor.ownerCookie, body: { kind: "advance", amount_paise: 20000, method: "upi", note: "UPI" } });
+    const bodies = async (id: string, template: string) => (await pool.query<{ text_body: string; html_body: string }>("SELECT text_body,html_body FROM email_outbox WHERE booking_id=$1 AND template=$2", [id, template])).rows;
+    for (const mail of await bodies(online.id, "booking_confirmed_customer")) if (mail.text_body !== "[removed]") { expect(mail.text_body).toContain(TEST_PAYMENT_DONE); expect(mail.html_body).toContain(TEST_PAYMENT_DONE); }
+    expect((await bodies(online.id, "booking_confirmed_customer")).length).toBe(1);
+    for (const mail of await bodies(offline.id, "payment_recorded")) expect(mail.text_body).not.toContain("Test payment");
   });
 });
 

@@ -13,12 +13,12 @@ type Db = Pool | PoolClient;
 export { bookingUrl };
 
 export async function bookingFacts(db: Db, bookingId: string) {
-  const row = (await db.query<{ client_name: string; client_email: string; service_name: string | null; starts_at: Date; ends_at: Date; booking_mode: "hourly" | "daily"; days_count: number | null; blocks_count: number | null; vendor_timezone: string; total_paise: string; advance_paise: string; terms_snapshot: string | null; display_name: string; timezone: string; place: string | null; owner_email: string | null; paid: string; notify_prefs: Partial<NotifyPrefs> }>(
-    `SELECT b.client_name,b.client_email::text AS client_email,b.service_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,b.vendor_timezone,b.total_paise,b.advance_paise,b.terms_snapshot,v.display_name,v.timezone,COALESCE(v.service_area,v.city) AS place,u.email::text AS owner_email,v.notify_prefs,
+  const row = (await db.query<{ client_name: string; client_email: string; service_name: string | null; starts_at: Date; ends_at: Date; booking_mode: "hourly" | "daily"; days_count: number | null; blocks_count: number | null; vendor_timezone: string; total_paise: string; advance_paise: string; terms_snapshot: string | null; display_name: string; timezone: string; place: string | null; owner_email: string | null; paid: string; notify_prefs: Partial<NotifyPrefs>; test_payment: boolean }>(
+    `SELECT b.client_name,b.client_email::text AS client_email,b.service_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,b.vendor_timezone,b.total_paise,b.advance_paise,b.terms_snapshot,v.display_name,v.timezone,COALESCE(v.service_area,v.city) AS place,u.email::text AS owner_email,v.notify_prefs,EXISTS(SELECT 1 FROM payments tp WHERE tp.booking_id=b.id AND tp.provider='razorpay' AND tp.verified_at IS NOT NULL) AS test_payment,
        COALESCE((SELECT SUM(amount_paise) FROM payments WHERE booking_id=b.id AND status IN ('captured','refunded','partially_refunded') AND verified_at IS NOT NULL),0) - COALESCE((SELECT SUM(amount_paise) FROM refunds WHERE booking_id=b.id AND status='processed'),0) AS paid
      FROM bookings b JOIN vendors v ON v.id=b.vendor_id LEFT JOIN users u ON u.id=v.owner_user_id WHERE b.id=$1`, [bookingId])).rows[0];
   return {
-    facts: { businessName: row.display_name, customerName: row.client_name, service: row.service_name ?? "Booking", startsAt: row.starts_at,
+    facts: { testPayment: row.test_payment, businessName: row.display_name, customerName: row.client_name, service: row.service_name ?? "Booking", startsAt: row.starts_at,
       // Daily bookings read in the timezone their days were computed in (the snapshot); hourly ones in the vendor's timezone, as before.
       timezone: row.booking_mode === "daily" ? row.vendor_timezone : row.timezone, days: row.booking_mode === "daily" ? row.days_count : null, blocks: row.booking_mode === "daily" ? null : row.blocks_count, endsAt: row.ends_at, totalPaise: Number(row.total_paise), advancePaise: Number(row.advance_paise), paidPaise: Number(row.paid), link: bookingUrl(bookingId) },
     customerEmail: row.client_email, vendorEmail: row.owner_email,

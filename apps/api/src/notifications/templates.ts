@@ -1,4 +1,4 @@
-import { dayRangeLabel, durationLabel, formatINR, localDateOf } from "@bayana/shared";
+import { dayRangeLabel, durationLabel, formatINR, localDateOf, TEST_PAYMENT_DONE } from "@bayana/shared";
 
 // Email templates (SPEC 15.2). Every email has a subject, a plain-text part and a small responsive HTML part:
 // table layout and inline styles (what mail clients understand), no images or tracking pixels, and the brand mark drawn
@@ -6,7 +6,8 @@ import { dayRangeLabel, durationLabel, formatINR, localDateOf } from "@bayana/sh
 
 export type Rendered = { subject: string; text: string; html: string };
 type Row = [label: string, value: string];
-type Layout = { preheader: string; heading: string; paragraphs: string[]; rows?: Row[]; action?: { label: string; url: string }; note?: string };
+/** banner: a line shown above the heading, for example that a payment was a test payment. */
+type Layout = { preheader: string; heading: string; paragraphs: string[]; rows?: Row[]; action?: { label: string; url: string }; note?: string; banner?: string };
 
 const escape = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[char]!);
 export const when = (iso: Date | string, timezone: string) => `${new Intl.DateTimeFormat("en-IN", { timeZone: timezone, weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(iso))} (${timezone})`;
@@ -30,6 +31,7 @@ function html(layout: Layout) {
 <tr><td style="padding:24px 28px 8px"><table role="presentation" cellpadding="0" cellspacing="0"><tr>
 <td style="width:6px;height:28px;background:${INK};border-radius:2px"></td><td style="width:4px"></td><td style="width:16px;height:16px;background:${SAFFRON};border-radius:8px;vertical-align:bottom"></td>
 <td style="padding-left:10px;font-size:18px;font-weight:700;letter-spacing:-0.2px;color:${INK}">Bayana</td></tr></table></td></tr>
+${layout.banner ? `<tr><td style="padding:8px 28px 0"><p style="margin:0;padding:8px 12px;border-radius:8px;background:#fef3c7;color:#92400e;font-size:13px;font-weight:600">${escape(layout.banner)}</p></td></tr>` : ""}
 <tr><td style="padding:12px 28px 4px"><h1 style="margin:0;font-size:22px;line-height:1.3;color:${INK}">${escape(layout.heading)}</h1></td></tr>
 <tr><td style="padding:4px 28px">${layout.paragraphs.map(text => `<p style="margin:12px 0;font-size:15px;line-height:1.55;color:${INK}">${escape(text)}</p>`).join("")}</td></tr>
 ${rows ? `<tr><td style="padding:8px 28px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid ${LINE};border-bottom:1px solid ${LINE};padding:6px 0">${rows}</table></td></tr>` : ""}
@@ -39,13 +41,13 @@ ${layout.note ? `<tr><td style="padding:4px 28px 8px"><p style="margin:8px 0;fon
 </table></td></tr></table></body></html>`;
 }
 function text(layout: Layout) {
-  return [layout.heading, "", ...layout.paragraphs.flatMap(paragraph => [paragraph, ""]), ...(layout.rows ?? []).map(([label, value]) => `${label}: ${value}`), ...(layout.rows?.length ? [""] : []),
+  return [...(layout.banner ? [layout.banner, ""] : []), layout.heading, "", ...layout.paragraphs.flatMap(paragraph => [paragraph, ""]), ...(layout.rows ?? []).map(([label, value]) => `${label}: ${value}`), ...(layout.rows?.length ? [""] : []),
     ...(layout.action ? [`${layout.action.label}: ${layout.action.url}`, ""] : []), ...(layout.note ? [layout.note, ""] : []), "Sent by Bayana for the business named above."].join("\n");
 }
 const render = (subject: string, layout: Layout): Rendered => ({ subject, text: text(layout), html: html(layout) });
 
 // ---- Data each template needs ---------------------------------------------------------------------------------------
-type BookingFacts = { businessName: string; customerName: string; service: string; startsAt: Date | string; timezone: string; /** Daily bookings: how many days (shown as a date range, never a time). */ days?: number | null; /** Hourly bookings of more than one session: the range is shown, not just the start. */ blocks?: number | null; endsAt?: Date | string | null; totalPaise: number; advancePaise: number; paidPaise: number; link: string };
+type BookingFacts = { /** A verified online payment exists: in this build always a test payment. */ testPayment?: boolean; businessName: string; customerName: string; service: string; startsAt: Date | string; timezone: string; /** Daily bookings: how many days (shown as a date range, never a time). */ days?: number | null; /** Hourly bookings of more than one session: the range is shown, not just the start. */ blocks?: number | null; endsAt?: Date | string | null; totalPaise: number; advancePaise: number; paidPaise: number; link: string };
 export type TemplateData = {
   otp: { code: string; action: string; minutes: number };
   hold_started: BookingFacts & { holdUntil: Date | string; online: boolean };
@@ -80,12 +82,12 @@ export const templates: { [K in TemplateName]: (data: TemplateData[K]) => Render
     paragraphs: [`${data.customerName} (${data.customerEmail}) agreed to your terms for ${data.service}. Online payment is off, so please collect the ${money(data.advancePaise)} advance and record it to confirm the booking.`],
     rows: bookingRows(data), action: { label: "Open the booking", url: data.link }
   }),
-  booking_confirmed_customer: data => render(`Confirmed: ${data.service} with ${data.businessName}`, {
+  booking_confirmed_customer: data => render(`Confirmed: ${data.service} with ${data.businessName}`, { banner: data.testPayment ? TEST_PAYMENT_DONE : undefined, 
     preheader: whenOf(data), heading: "Your booking is confirmed",
     paragraphs: [`Hi ${data.customerName}, you're booked. ${data.paidPaise > 0 ? `We received ${money(data.paidPaise)}.` : "No advance was needed."}`, `If you cancel: ${data.cancellation}`],
     rows: bookingRows(data), action: { label: "View booking, contract and receipt", url: data.link }
   }),
-  booking_confirmed_vendor: data => render(`Booking confirmed: ${data.customerName}, ${data.service}`, {
+  booking_confirmed_vendor: data => render(`Booking confirmed: ${data.customerName}, ${data.service}`, { banner: data.testPayment ? TEST_PAYMENT_DONE : undefined, 
     preheader: whenOf(data), heading: "A booking is confirmed",
     paragraphs: [`${data.customerName} (${data.customerEmail}) is booked for ${data.service}. ${data.paidPaise > 0 ? `${money(data.paidPaise)} is paid; ${money(data.totalPaise - data.paidPaise)} is due later.` : "No advance was required."}`],
     rows: bookingRows(data), action: { label: "Open the booking", url: data.link }
@@ -93,9 +95,9 @@ export const templates: { [K in TemplateName]: (data: TemplateData[K]) => Render
   booking_cancelled: data => {
     const who = data.cancelledBy === data.audience ? "You" : data.cancelledBy === "customer" ? data.customerName : data.businessName;
     const refund = data.refundPaise === 0 ? "No refund is due." : data.refundManual ? `${money(data.refundPaise)} is to be returned by ${data.businessName} directly, as it was paid to them directly.` : `${money(data.refundPaise)} is being refunded to the original payment method; it usually arrives in 5 to 7 working days.`;
-    return render(`Cancelled: ${data.service} on ${whenOf(data)}`, { preheader: refund, heading: "Booking cancelled", paragraphs: [`${who} cancelled ${data.service}${data.audience === "vendor" ? ` booked by ${data.customerName}` : ` with ${data.businessName}`}.`, `Reason: ${data.reason}`, refund], rows: [["Service", data.service], ["Was booked for", whenOf(data)]], action: { label: "View the booking", url: data.link } });
+    return render(`Cancelled: ${data.service} on ${whenOf(data)}`, { banner: data.testPayment ? TEST_PAYMENT_DONE : undefined, preheader: refund, heading: "Booking cancelled", paragraphs: [`${who} cancelled ${data.service}${data.audience === "vendor" ? ` booked by ${data.customerName}` : ` with ${data.businessName}`}.`, `Reason: ${data.reason}`, refund], rows: [["Service", data.service], ["Was booked for", whenOf(data)]], action: { label: "View the booking", url: data.link } });
   },
-  refund_issued: data => render(`Refund of ${money(data.amountPaise)} from ${data.businessName}`, { preheader: "Usually 5 to 7 working days to reach you", heading: "Your refund is on its way", paragraphs: [`Hi ${data.customerName}, ${money(data.amountPaise)} for ${data.service} has been refunded to your original payment method.`, "Banks usually take 5 to 7 working days to show it."], action: { label: "View the booking", url: data.link } }),
+  refund_issued: data => render(`Refund of ${money(data.amountPaise)} from ${data.businessName}`, { banner: TEST_PAYMENT_DONE, preheader: "Usually 5 to 7 working days to reach you", heading: "Your refund is on its way", paragraphs: [`Hi ${data.customerName}, ${money(data.amountPaise)} for ${data.service} has been refunded to your original payment method.`, "Banks usually take 5 to 7 working days to show it."], action: { label: "View the booking", url: data.link } }),
   reminder_24h: data => render(`Tomorrow: ${data.service}${data.audience === "customer" ? ` with ${data.businessName}` : ` for ${data.customerName}`}`, {
     preheader: whenOf(data), heading: data.audience === "customer" ? "See you soon" : "Booking tomorrow",
     paragraphs: [data.audience === "customer" ? `Hi ${data.customerName}, a reminder of your booking with ${data.businessName}.` : `${data.customerName} (${data.customerEmail}) is booked for ${data.service}.`, data.totalPaise - data.paidPaise > 0 ? `${money(data.totalPaise - data.paidPaise)} is still due, as agreed.` : "Everything is paid."],

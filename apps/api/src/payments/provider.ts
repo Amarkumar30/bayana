@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 // The one seam between Bayana and a payment gateway. RazorpayProvider talks to Razorpay; FakeProvider backs every automated test.
 
-export type ProviderOrder = { id: string; amount: number; currency: string; receipt: string; status: string };
+export type ProviderOrder = { id: string; amount: number; currency: string; receipt: string; status: string; notes?: Record<string, string> };
 export type ProviderPaymentStatus = "created" | "authorized" | "captured" | "refunded" | "failed";
 export type ProviderPayment = { id: string; order_id: string; amount: number; currency: string; status: ProviderPaymentStatus; method: string | null; amount_refunded: number; error_description: string | null; created_at: number };
 export type ProviderRefund = { id: string; payment_id: string; amount: number; currency: string; status: "pending" | "processed" | "failed"; created_at: number };

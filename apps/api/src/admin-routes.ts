@@ -1,6 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { formatINR } from "@bayana/shared";
+import { formatINR, onlineRefundSchema } from "@bayana/shared";
 import { currentUser, event, type SessionUser } from "./auth.js";
 import { cookieToken, perIp } from "./auth-routes.js";
 import { writeAudit } from "./audit.js";
@@ -9,7 +9,8 @@ import { AppError } from "./errors.js";
 import { runNightly, runTick } from "./jobs.js";
 import { sendOutbox } from "./notifications/outbox.js";
 import { paymentMode, paymentProvider, paymentsEnabled } from "./payments/runtime.js";
-import { applyCapturedPayment, markOpenPayment } from "./payments/service.js";
+import { reconcile } from "./payments/reconcile.js";
+import { applyCapturedPayment, markOpenPayment, refundOnlinePayment } from "./payments/service.js";
 import { processWebhookEvent } from "./payments/webhooks.js";
 import { decryptSecret, encryptSecret, matchTotp, newTotpSecret, otpauthUrl, base32Encode } from "./totp.js";
 
@@ -137,7 +138,7 @@ adminRouter.get("/vendors", handle(async (req, res) => {
 }));
 adminRouter.get("/vendors/:id", handle(async (req, res) => {
   const id = uuid(req.params.id);
-  const vendor = (await pool.query("SELECT v.id,v.slug::text AS slug,v.display_name,v.city,v.timezone,v.published,v.bookings_enabled,v.created_at,v.min_notice_minutes,v.max_advance_days,u.id AS owner_user_id,u.email::text AS owner_email FROM vendors v LEFT JOIN users u ON u.id=v.owner_user_id WHERE v.id=$1", [id])).rows[0];
+  const vendor = (await pool.query("SELECT v.id,v.slug::text AS slug,v.display_name,v.city,v.timezone,v.published,v.bookings_enabled,v.online_payments,v.created_at,v.min_notice_minutes,v.max_advance_days,u.id AS owner_user_id,u.email::text AS owner_email FROM vendors v LEFT JOIN users u ON u.id=v.owner_user_id WHERE v.id=$1", [id])).rows[0];
   if (!vendor) throw new AppError(404, "NOT_FOUND", "Vendor not found");
   const [services, bookings] = await Promise.all([
     pool.query("SELECT id,name,price_paise::int AS price_paise,duration_minutes,advance_type,advance_value,active FROM services WHERE vendor_id=$1 ORDER BY sort_order", [id]),
@@ -278,6 +279,31 @@ adminRouter.post("/payments/:id/reverify", handle(async (req, res) => {
   else outcome = "no_payment_found";
   await writeAudit(pool, adminOf(res).id, "admin.payment_reverified", "booking", row.booking_id, { payment_id: id, outcome, provider_statuses: candidates.map(payment => payment.status) });
   res.json({ outcome, provider_payments: candidates.map(payment => ({ id: payment.id, status: payment.status, amount: payment.amount })) });
+}));
+/** Refund a booking's online (test) payment, fully or partly, without cancelling; never more than is refundable online. */
+adminRouter.post("/bookings/:id/refund", handle(async (req, res) => {
+  const id = uuid(req.params.id); const body = onlineRefundSchema.parse(req.body);
+  const result = await refundOnlinePayment({ bookingId: id, amountPaise: body.amount_paise, reason: body.reason, actorUserId: adminOf(res).id });
+  await writeAudit(pool, adminOf(res).id, "admin.refund_requested", "booking", id, { amount_paise: body.amount_paise, refunds: result.refund_ids.length });
+  res.json(result);
+}));
+/** Compare the last 48 hours at Razorpay with our payments, refunds and ledger now (the nightly job does the same). Changes nothing. */
+adminRouter.post("/payments/reconcile", handle(async (_req, res) => {
+  if (!paymentsEnabled()) throw new AppError(409, "PAYMENTS_DISABLED", "Online payments are off (PAYMENT_MODE=disabled).");
+  const report = await reconcile(pool, paymentProvider(), { hours: 48 });
+  await writeAudit(pool, adminOf(res).id, "admin.payments_reconciled", "payments", "48h", { report });
+  res.json(report);
+}));
+/**
+ * The per-vendor switch for online (test) payments. Only here (or by SQL, docs/PAYMENTS_LOCAL.md): vendors cannot turn it on.
+ * It takes effect only while PAYMENT_MODE=test; every other vendor keeps the offline advance.
+ */
+adminRouter.post("/vendors/:id/online-payments", handle(async (req, res) => {
+  const id = uuid(req.params.id); const body = z.object({ enabled: z.boolean() }).strict().parse(req.body);
+  const updated = await pool.query<{ online_payments: boolean }>("UPDATE vendors SET online_payments=$2 WHERE id=$1 RETURNING online_payments", [id, body.enabled]);
+  if (!updated.rowCount) throw new AppError(404, "NOT_FOUND", "Vendor not found");
+  await writeAudit(pool, adminOf(res).id, "admin.vendor_online_payments", "vendor", id, { enabled: body.enabled, payment_mode: paymentMode() });
+  res.json({ online_payments: updated.rows[0].online_payments, payment_mode: paymentMode(), checkout_shown: body.enabled && paymentMode() === "test" });
 }));
 adminRouter.post("/webhooks/:id/reprocess", handle(async (req, res) => {
   const id = z.string().min(1).max(200).parse(req.params.id);

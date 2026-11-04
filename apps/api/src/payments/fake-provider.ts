@@ -15,9 +15,10 @@ export class FakeProvider implements PaymentProvider {
   private counter = 0;
   constructor(readonly keyId = "rzp_test_fakeKeyId", private readonly keySecret = "fake_key_secret_for_tests", private readonly webhookSecret = "fake_webhook_secret_for_tests") {}
 
-  async createOrder(input: { amountPaise: number; currency: "INR"; receipt: string }) {
+  async createOrder(input: { amountPaise: number; currency: "INR"; receipt: string; notes?: Record<string, string> }) {
     this.calls.push("createOrder");
-    const order = { id: `order_fake${String(++this.counter).padStart(6, "0")}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, amount: input.amountPaise, currency: input.currency, receipt: input.receipt, status: "created" };
+    // Like Razorpay, the order keeps its notes (booking and vendor ids), so tests can check what the gateway was told.
+    const order = { id: `order_fake${String(++this.counter).padStart(6, "0")}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, amount: input.amountPaise, currency: input.currency, receipt: input.receipt, status: "created", notes: input.notes ?? {} };
     this.orders.set(order.id, order);
     return order;
   }

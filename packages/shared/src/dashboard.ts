@@ -7,6 +7,11 @@ import { localDateSchema, localTimeSchema } from "./vendor.js";
 const text = (max: number) => z.string().trim().max(max);
 
 export const vendorCancelSchema = z.object({ reason: text(500).min(3, "Tell the customer why, in a few words.") }).strict();
+/** A refund of an online payment without cancelling: whole paise, at least ₹1; the server caps it at what is still refundable. */
+export const onlineRefundSchema = z.object({
+  amount_paise: z.number({ error: "Enter an amount." }).int("Use whole paise.").min(100, "Refund at least ₹1."),
+  reason: text(300).min(3, "Say why, in a few words.")
+}).strict();
 // Hourly bookings move to a date and time; daily bookings move to a new first date and keep their number of days.
 export const rescheduleSchema = z.object({ date: localDateSchema, time: localTimeSchema.optional() }).strict();
 export const manualBookingSchema = z.object({

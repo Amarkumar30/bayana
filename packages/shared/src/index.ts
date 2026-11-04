@@ -8,3 +8,4 @@ export * from "./blocks.js";
 export * from "./vendor.js";
 export * from "./dashboard.js";
 export * from "./auth.js";
+export * from "./payments.js";

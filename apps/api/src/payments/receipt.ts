@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import { dayRangeLabel, durationLabel, localDateOf } from "@bayana/shared";
+import { dayRangeLabel, durationLabel, localDateOf, ONLINE_PAYMENT_LABEL, TEST_PAYMENT_DONE } from "@bayana/shared";
 import { bookingReference } from "./service.js";
 
 // Payment receipts (PY-11): one PDF per verified payment. Totals come from the ledger, so the PDF always equals it.
@@ -65,7 +65,9 @@ export async function receiptPdf(data: ReceiptData) {
   y -= 10;
   row(`Amount received (${data.payment.kind})`, inr(data.payment.amountPaise), true);
   row("Paid on", when(data.payment.paidAt, data.booking.timezone));
-  row("Paid via", data.payment.channel === "offline" ? `Paid to the business directly (${data.payment.method ?? "other"})` : `Razorpay (${data.payment.method ?? "online"})`);
+  row("Paid via", data.payment.channel === "offline" ? `Paid to the business directly (${data.payment.method ?? "other"})` : `${ONLINE_PAYMENT_LABEL}, Razorpay (${data.payment.method ?? "online"})`);
+  // Every online payment in this build is a test payment (live is refused); its receipt says so.
+  if (data.payment.channel !== "offline") row("Note", TEST_PAYMENT_DONE);
   if (data.payment.providerPaymentId) row("Payment id", data.payment.providerPaymentId);
   y -= 10;
   row("Booking total", inr(data.totals.totalPaise));

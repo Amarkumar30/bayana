@@ -14,7 +14,7 @@ import { AppError } from "./errors.js";
 import { kickUrgent } from "./notifications/outbox.js";
 import { recordOfflinePayment } from "./payments/service.js";
 
-export type VendorRow = { id: string; slug: string; owner_user_id: string; published: boolean; timezone: string };
+export type VendorRow = { id: string; slug: string; owner_user_id: string; published: boolean; timezone: string; online_payments: boolean };
 const notFound = (what: string) => new AppError(404, "NOT_FOUND", `${what} not found`);
 const uuidParam = (value: unknown, what: string) => { const parsed = z.string().uuid().safeParse(value); if (!parsed.success) throw notFound(what); return parsed.data; };
 const userOf = (res: Response) => res.locals.user as SessionUser;
@@ -38,7 +38,7 @@ export async function requireVendor(req: Request, res: Response, next: NextFunct
   requireVendorUser(req, res, async error => {
     if (error) return next(error);
     try {
-      const vendor = await pool.query<VendorRow>("SELECT id,slug::text AS slug,owner_user_id,published,timezone FROM vendors WHERE owner_user_id=$1", [userOf(res).id]);
+      const vendor = await pool.query<VendorRow>("SELECT id,slug::text AS slug,owner_user_id,published,timezone,online_payments FROM vendors WHERE owner_user_id=$1", [userOf(res).id]);
       if (!vendor.rowCount) throw new AppError(404, "PROFILE_NOT_FOUND", "Create your business profile first");
       res.locals.vendor = vendor.rows[0]; next();
     } catch (failure) { next(failure); }
