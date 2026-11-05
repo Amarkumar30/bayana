@@ -57,7 +57,8 @@ services:
         sync: false
       - key: SMTP_URL
         sync: false
-      # With EMAIL_TRANSPORT=brevo_api (HTTPS, recommended here) set BREVO_API_KEY and leave SMTP_URL empty.
+      # Required: EMAIL_TRANSPORT=brevo_api and BREVO_API_KEY. Render's free plan blocks SMTP ports, and the API refuses to start
+      # in production without them. Leave SMTP_URL empty.
       - key: BREVO_API_KEY
         sync: false
       - key: EMAIL_FROM

@@ -10,7 +10,7 @@ import { bookingView } from "./booking-routes.js";
 import { config } from "./config.js";
 import { pool, transaction } from "./database.js";
 import { AppError } from "./errors.js";
-import { kickUrgent } from "./notifications/outbox.js";
+import { kickOutbox } from "./notifications/outbox.js";
 import { paidSql, refundOnlinePayment } from "./payments/service.js";
 import { onlinePaymentsFor } from "./payments/runtime.js";
 import { checklistInput, requireVendor, type VendorRow } from "./vendor-routes.js";
@@ -97,13 +97,13 @@ dashboardRouter.get("/bookings/:id", requireVendor, handle(async (req, res) => {
 dashboardRouter.post("/bookings/:id/cancel", requireVendor, handle(async (req, res) => {
   const body = vendorCancelSchema.parse(req.body); const id = bookingId(req);
   await vendorCancel(actorOf(res), id, body.reason);
-  res.json(await bookingView(id, true)); kickUrgent();
+  res.json(await bookingView(id, true)); kickOutbox();
 }));
 // A refund of an online (test) payment without cancelling: full or partial, never more than was paid online (and not yet refunded).
 dashboardRouter.post("/bookings/:id/refund", requireVendor, handle(async (req, res) => {
   const body = onlineRefundSchema.parse(req.body); const id = bookingId(req);
   await refundOnlinePayment({ bookingId: id, amountPaise: body.amount_paise, reason: body.reason, actorUserId: actorOf(res).userId, vendorId: actorOf(res).vendorId });
-  res.json(await bookingView(id, true)); kickUrgent();
+  res.json(await bookingView(id, true)); kickOutbox();
 }));
 dashboardRouter.post("/bookings/:id/complete", requireVendor, handle(async (req, res) => {
   const id = bookingId(req); await vendorComplete(actorOf(res), id);
@@ -112,14 +112,14 @@ dashboardRouter.post("/bookings/:id/complete", requireVendor, handle(async (req,
 dashboardRouter.post("/bookings/:id/reschedule", requireVendor, handle(async (req, res) => {
   const body = rescheduleSchema.parse(req.body); const id = bookingId(req);
   await vendorReschedule(actorOf(res), id, body.date, body.time);
-  res.json(await bookingView(id, true)); kickUrgent();
+  res.json(await bookingView(id, true)); kickOutbox();
 }));
 dashboardRouter.post("/bookings", requireVendor, handle(async (req, res) => {
   const body = manualBookingSchema.parse(req.body);
   const key = req.header("idempotency-key");
   if (!key || !z.string().uuid().safeParse(key).success) throw new AppError(400, "VALID_IDEMPOTENCY_KEY_REQUIRED", "A valid idempotency key is required");
   const created = await vendorManualBooking(actorOf(res), { serviceId: body.service_id, date: body.date, time: body.time, days: body.days, blocks: body.blocks, name: body.name, email: body.email, phone: body.phone, notes: body.notes, key });
-  res.status(created.replayed ? 200 : 201).json(await bookingView(created.id, true)); kickUrgent();
+  res.status(created.replayed ? 200 : 201).json(await bookingView(created.id, true)); kickOutbox();
 }));
 
 // ---- Calendar -----------------------------------------------------------------------------------------------------

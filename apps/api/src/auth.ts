@@ -63,7 +63,7 @@ export async function createOtp(db: Pool | PoolClient, emailAddress: string, pur
 
 /**
  * Queues the code email (priority 0) in the caller's transaction. The route sends it right after the HTTP response
- * (kickUrgent), so SMTP latency never differs between known and unknown emails, and an SMTP outage only delays it.
+ * (kickOutbox), so SMTP latency never differs between known and unknown emails, and an SMTP outage only delays it.
  */
 export async function queueOtpEmail(db: PoolClient, to: string, code: string, purpose: Purpose) {
   const action = purpose === "signup" ? "finish creating your account" : purpose === "reset" ? "reset your password" : purpose === "booking_verify" ? "confirm your booking email" : "sign in";

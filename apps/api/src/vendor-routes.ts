@@ -11,7 +11,7 @@ import { cookieToken } from "./auth-routes.js";
 import { pool, transaction } from "./database.js";
 import { expireOverdueHolds, lockVendorSchedule } from "./booking-transition.js";
 import { AppError } from "./errors.js";
-import { kickUrgent } from "./notifications/outbox.js";
+import { kickOutbox } from "./notifications/outbox.js";
 import { recordOfflinePayment } from "./payments/service.js";
 
 export type VendorRow = { id: string; slug: string; owner_user_id: string; published: boolean; timezone: string; online_payments: boolean };
@@ -226,7 +226,7 @@ vendorRouter.post("/bookings/:id/offline-payments", requireVendor, handle(async 
   const body = offlinePaymentSchema.parse(req.body);
   const result = await recordOfflinePayment({ vendorId: vendorOf(res).id, userId: userOf(res).id, bookingId: uuidParam(req.params.id, "Booking"), kind: body.kind, amountPaise: body.amount_paise, method: body.method, note: body.note });
   res.status(201).json(result);
-  kickUrgent();
+  kickOutbox();
 }));
 
 // ---- Publishing ---------------------------------------------------------------------------------------------

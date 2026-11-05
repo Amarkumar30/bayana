@@ -31,7 +31,7 @@ describe("API startup with production env and missing variables", () => {
   it("exits 1 and names each missing variable without printing any value", () => {
     const run = start({ NODE_ENV: "production", PAYMENT_MODE: "disabled", ...secrets, GOOGLE_CLIENT_ID: "123-abc.apps.googleusercontent.com" });
     expect(run.code).toBe(1);
-    for (const name of ["WEB_ORIGINS", "DATABASE_URL_DIRECT", "OTP_PEPPER", "TICK_SECRET", "EMAIL_FROM", "GOOGLE_REDIRECT_URI"]) expect(run.output).toContain(`${name}:`);
+    for (const name of ["WEB_ORIGINS", "DATABASE_URL_DIRECT", "OTP_PEPPER", "TICK_SECRET", "EMAIL_TRANSPORT", "EMAIL_FROM", "GOOGLE_REDIRECT_URI"]) expect(run.output).toContain(`${name}:`);
     for (const value of Object.values(secrets)) expect(run.output).not.toContain(value);
     expect(run.output).not.toMatch(/NEVER-PRINT/);
     expect(run.output).not.toMatch(/server\.started/);

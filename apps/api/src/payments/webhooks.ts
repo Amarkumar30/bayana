@@ -1,5 +1,5 @@
 import { pool } from "../database.js";
-import { kickUrgent } from "../notifications/outbox.js";
+import { kickOutbox } from "../notifications/outbox.js";
 import { log } from "../logger.js";
 import type { ProviderPayment, ProviderRefund } from "./provider.js";
 import { paymentProvider, paymentsEnabled } from "./runtime.js";
@@ -44,7 +44,7 @@ export async function processWebhookEvent(eventId: string) {
         await finish(null);
         // Refund events delivered before this payment were waiting for it.
         await processPendingWebhooks({ paymentId: payment.id, exceptEventId: eventId });
-        kickUrgent();
+        kickOutbox();
         return;
       }
       case "payment.authorized": case "payment.failed":
@@ -53,7 +53,7 @@ export async function processWebhookEvent(eventId: string) {
       case "refund.processed": case "refund.failed":
         if (!refund?.id || !refund.payment_id) return void await finish("Event has no refund entity", true);
         await applyProviderRefund(refund, event.payload.event === "refund.processed" ? "processed" : "failed");
-        kickUrgent();
+        kickOutbox();
         return void await finish(null);
       default: return void await finish(null);
     }

@@ -364,3 +364,16 @@ Facts for the next session:
 - Also: web safeNext refused "//" but allowed "/\evil" (open redirect after login): fixed. Login Google labels wrap on phones; login baselines updated.
 - Data check (read-only): docs/sql/wrongly-promoted-vendors.sql; 0 rows on bayana_dev; checked on rolled-back test rows. Cleanup not done: proposal in the report.
 - Next: back up Neon, apply 023 (docs/DEPLOY.md section 3), then push hosting-ready; run the check on Neon.
+
+## Payments in test mode, per vendor - 2026-11-03 (branch hosting-ready, pushed 298d020; entry added later)
+- Migration 024 vendors.online_payments (default false; applied on dev, test and Neon after a backup). Online checkout only when PAYMENT_MODE=test AND an admin turned the vendor's switch on (Admin > Vendors > vendor > "Online payments (test)", audited). PAYMENT_MODE=live never starts, whatever keys or LIVE_PAYMENTS_ACK say.
+- Test banner and "Online (test)" labels (packages/shared/src/payments.ts); the key id comes with each order (no web env var); refunds without cancelling (vendor and admin); admin reconcile (48 h); signed local webhooks (scripts/send-test-webhook.mjs). Guide: docs/PAYMENTS_LOCAL.md.
+
+## Email over Brevo's HTTPS API only, sent without a tick - 2026-11-05 (branch email-http-transport, merged into hosting-ready)
+- Root cause: Render's free plan blocks outbound SMTP, and EMAIL_TRANSPORT defaulted to smtp in production with nothing forcing brevo_api (the Brevo transport already existed). The user set EMAIL_TRANSPORT=brevo_api and BREVO_API_KEY on Render; codes arrived again before this change shipped.
+- Second bug: retries depended on the tick, which never runs (GitHub Actions jobs are off), so a failed email stayed queued until some later request kicked the outbox.
+- Config: NODE_ENV=production with APP_ENV staging or production refuses to start unless EMAIL_TRANSPORT=brevo_api (plus BREVO_API_KEY, EMAIL_FROM); unset EMAIL_TRANSPORT in production is refused too. APP_ENV=local keeps SMTP for the production-image rehearsal (DEPLOY.md now says APP_ENV=local there).
+- Brevo: template name as a tag; messageId stored in email_outbox.provider_message_id (migration 025, additive); a 4xx except 408/429 marks the row failed at once; 5xx, network errors and the 10 s timeout keep the 1/5/30/120-minute backoff.
+- Outbox: kickUrgent renamed kickOutbox and now sends everything due (urgent first) after the response; a failed send schedules one unref'd in-process retry at the end of its backoff (tick stays the backstop); a login code is not retried past its 10-minute expiry; claim lease scales with the batch; SMTP gives up after 10 s; the log transport masks addresses and code subjects.
+- Tests: unit email-brevo.test.ts (+8: tags, permanent rule, masking, startup gates), integration email-brevo-outbox.test.ts (9: messageId, 401/400 failed at once, 503/429 backoff and in-process retry, timeout then sent, expired code, the same 202 whether Brevo accepts or fails), startup-env names EMAIL_TRANSPORT. Gates: typecheck 0, lint 0, test 0 (190 API unit + 42 web unit + 295 integration), build 0.
+- Still off: the GitHub Actions tick (JOBS_ENABLED); 24-hour reminders are only queued by the tick.

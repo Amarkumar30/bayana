@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { config } from "../config.js";
 import { pool } from "../database.js";
+import { OTP_TTL_MINUTES } from "../auth.js";
 import { sendEmail } from "../email.js";
+import { BrevoSendError } from "../email-brevo.js";
 import { log } from "../logger.js";
 import { renderTemplate, type TemplateData, type TemplateName } from "./templates.js";
 
@@ -30,48 +32,89 @@ function fromHeader(senderName: string | null) {
   return `"${senderName.replace(/["\\\r\n]/g, "")} via Bayana" <${address}>`;
 }
 
-type Claimed = { id: string; recipient: string; subject: string; text_body: string; html_body: string | null; attempts: number; template: string; sender_name: string | null; priority: number };
+type Claimed = { id: string; recipient: string; subject: string; text_body: string; html_body: string | null; attempts: number; template: string; sender_name: string | null; priority: number; age_seconds: number };
+/** Each send gives up after about 10 s (Brevo and SMTP timeouts); a claim lasts long enough for its whole batch, plus a margin. */
+const SECONDS_PER_SEND = 12, LEASE_MARGIN_SECONDS = 60;
+
+/** Why an attempt is the last one: a permanent provider refusal (4xx), a login code that would arrive expired, or attempts used up. */
+function giveUpReason(error: unknown, email: Claimed, delay: number | undefined) {
+  if (error instanceof BrevoSendError && error.permanent) return "refused";
+  if (delay === undefined) return "attempts";
+  // A code is useful for OTP_TTL_MINUTES after it was queued; a retry that would land later only confuses the person.
+  if (email.template === "otp" && email.age_seconds + delay * 60 > OTP_TTL_MINUTES * 60) return "code_expired";
+  return null;
+}
+
 /**
- * Sends due emails, most urgent first. Rows are claimed with FOR UPDATE SKIP LOCKED plus a short lease, so two
- * overlapping ticks (or a tick and an immediate send) never send the same email twice.
+ * Sends due emails, most urgent first. Rows are claimed with FOR UPDATE SKIP LOCKED plus a lease, so two overlapping
+ * ticks (or a tick and an immediate send) never send the same email twice. Returns the counts, and when a failed email
+ * is next due (retryInMs) so the caller can try again without waiting for a tick.
  */
 export async function sendOutbox(options: { limit?: number; urgentOnly?: boolean } = {}) {
-  const claimed = await pool.query<Claimed>(`UPDATE email_outbox SET locked_until=now()+interval '2 minutes'
+  const limit = options.limit ?? 25;
+  const claimed = await pool.query<Claimed>(`UPDATE email_outbox SET locked_until=now()+make_interval(secs => $2)
     WHERE id IN (SELECT id FROM email_outbox WHERE status='queued' AND next_attempt_at<=now() AND (locked_until IS NULL OR locked_until<now()) ${options.urgentOnly ? `AND priority=${PRIORITY.urgent}` : ""}
       ORDER BY priority, next_attempt_at LIMIT $1 FOR UPDATE SKIP LOCKED)
-    RETURNING id,recipient::text AS recipient,subject,text_body,html_body,attempts,template,sender_name,priority`, [options.limit ?? 25]);
-  const result = { sent: 0, retrying: 0, failed: 0 };
+    RETURNING id,recipient::text AS recipient,subject,text_body,html_body,attempts,template,sender_name,priority,EXTRACT(EPOCH FROM now()-created_at)::int AS age_seconds`, [limit, limit * SECONDS_PER_SEND + LEASE_MARGIN_SECONDS]);
+  const result = { sent: 0, retrying: 0, failed: 0, retryInMs: null as number | null };
   for (const email of claimed.rows.sort((a, b) => a.priority - b.priority)) {
     try {
-      await sendEmail({ from: fromHeader(email.sender_name), to: email.recipient, subject: email.subject, text: email.text_body, html: email.html_body ?? undefined });
+      const sent = await sendEmail({ from: fromHeader(email.sender_name), to: email.recipient, subject: email.subject, text: email.text_body, html: email.html_body ?? undefined, tag: email.template });
       // A sent login code has no further use; do not keep it at rest.
-      await pool.query(`UPDATE email_outbox SET status='sent',sent_at=now(),locked_until=NULL,last_error=NULL${email.template === "otp" ? ",subject='Your Bayana code',text_body='[code removed after sending]',html_body=NULL,body_purged_at=now()" : ""} WHERE id=$1`, [email.id]);
+      await pool.query(`UPDATE email_outbox SET status='sent',sent_at=now(),locked_until=NULL,last_error=NULL,provider_message_id=$2${email.template === "otp" ? ",subject='Your Bayana code',text_body='[code removed after sending]',html_body=NULL,body_purged_at=now()" : ""} WHERE id=$1`, [email.id, sent.messageId?.slice(0, 200) ?? null]);
       result.sent++;
     } catch (error) {
       const attempts = email.attempts + 1, message = (error instanceof Error ? error.message : String(error)).slice(0, 500);
       const delay = BACKOFF_MINUTES[attempts - 1];
-      if (delay === undefined) await pool.query("UPDATE email_outbox SET status='failed',attempts=$2,last_error=$3,failed_at=now(),locked_until=NULL WHERE id=$1", [email.id, attempts, message]);
-      else await pool.query("UPDATE email_outbox SET attempts=$2,last_error=$3,next_attempt_at=now()+make_interval(mins => $4),locked_until=NULL WHERE id=$1", [email.id, attempts, message, delay]);
-      delay === undefined ? result.failed++ : result.retrying++;
-      log(delay === undefined ? "error" : "warn", "email.send_failed", { outboxId: email.id, template: email.template, attempts, err: message.slice(0, 200) });
+      const gaveUp = giveUpReason(error, email, delay);
+      if (gaveUp) await pool.query("UPDATE email_outbox SET status='failed',attempts=$2,last_error=$3,failed_at=now(),locked_until=NULL WHERE id=$1", [email.id, attempts, message]);
+      else {
+        await pool.query("UPDATE email_outbox SET attempts=$2,last_error=$3,next_attempt_at=now()+make_interval(mins => $4),locked_until=NULL WHERE id=$1", [email.id, attempts, message, delay]);
+        result.retryInMs = Math.min(result.retryInMs ?? Infinity, delay! * 60_000);
+      }
+      gaveUp ? result.failed++ : result.retrying++;
+      log(gaveUp ? "error" : "warn", "email.send_failed", { outboxId: email.id, template: email.template, attempts, ...(gaveUp ? { gaveUp } : { retryInMinutes: delay }), err: message.slice(0, 200) });
     }
   }
+  if (result.retryInMs !== null) scheduleRetry(result.retryInMs);
   return result;
 }
 
 /**
- * Called after a transaction that queued urgent mail commits: sends due priority-0 emails (codes, payments,
- * confirmations) now instead of at the next tick. Fire and forget; a failure just leaves the row for the tick.
- * Batches continue while they come back full (at most URGENT_BATCHES), so a backlog of older urgent mail never keeps a
- * new sign-in code waiting for the next tick.
+ * Sends every due email now, urgent first (codes, payments, confirmations), instead of waiting for the next tick. Batches
+ * continue while they come back full (at most DUE_BATCHES), so a backlog of older mail never keeps a new sign-in code
+ * waiting.
  */
-const URGENT_BATCH = 10, URGENT_BATCHES = 5;
-export async function sendUrgentNow() {
-  for (let batch = 0; batch < URGENT_BATCHES; batch++) {
-    const result = await sendOutbox({ urgentOnly: true, limit: URGENT_BATCH });
-    if (result.sent + result.retrying + result.failed < URGENT_BATCH) return;
+const DUE_BATCH = 10, DUE_BATCHES = 5;
+export async function sendDueNow() {
+  for (let batch = 0; batch < DUE_BATCHES; batch++) {
+    const result = await sendOutbox({ limit: DUE_BATCH });
+    if (result.sent + result.retrying + result.failed < DUE_BATCH) return;
   }
 }
-export function kickUrgent() {
-  setImmediate(() => { sendUrgentNow().catch(error => log("error", "email.kick_failed", { err: error instanceof Error ? error.message : String(error) })); });
+/**
+ * Called after a transaction that queued mail commits, and after the HTTP response is sent, so delivery time never shows in
+ * the response (the same reply and timing whether or not an email exists or sending works). Fire and forget: a failure
+ * leaves the row queued with its backoff.
+ */
+export function kickOutbox() {
+  setImmediate(() => { sendDueNow().catch(error => log("error", "email.kick_failed", { err: error instanceof Error ? error.message : String(error) })); });
 }
+
+/**
+ * Best-effort retry inside this process: when an email failed, kick again once its backoff has passed, so a retry never
+ * depends on the scheduled tick running. One timer, at the earliest due retry. It is unref'd and lost on restart or sleep;
+ * the tick (and the next kick from any request) still picks the row up, so correctness never depends on it.
+ */
+let retryTimer: ReturnType<typeof setTimeout> | null = null, retryAt = Infinity;
+const RETRY_SLACK_MS = 1_000;
+function scheduleRetry(inMs: number) {
+  const at = Date.now() + inMs;
+  if (retryTimer && retryAt <= at) return;
+  if (retryTimer) clearTimeout(retryTimer);
+  retryAt = at;
+  retryTimer = setTimeout(() => { retryTimer = null; retryAt = Infinity; kickOutbox(); }, inMs + RETRY_SLACK_MS);
+  retryTimer.unref();
+}
+/** When the in-process retry will run (ms from now), or null when none is pending. For tests. */
+export const pendingRetryInMs = () => retryTimer ? Math.max(0, retryAt - Date.now()) : null;

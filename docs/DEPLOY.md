@@ -31,7 +31,7 @@ Then create a rehearsal env file **outside the repo and outside OneDrive**, for 
 
 ```
 NODE_ENV=production
-APP_ENV=staging
+APP_ENV=local
 TRUST_PROXY=1
 WEB_ORIGINS=http://app.localtest.me:3200
 SESSION_COOKIE_DOMAIN=.localtest.me
@@ -46,7 +46,7 @@ OTP_PEPPER=<random>
 TICK_SECRET=<random>
 ```
 
-Production config refuses database names ending in `_dev` or `_test`, which is why a separate `bayana_rehearsal` database is used.
+Production config refuses database names ending in `_dev` or `_test`, which is why a separate `bayana_rehearsal` database is used. `APP_ENV=local` is what lets this production image send to Mailpit over SMTP: with `APP_ENV=staging` or `production` the API refuses to start unless `EMAIL_TRANSPORT=brevo_api`.
 
 ```powershell
 docker exec bayana-postgres-1 psql -U bayana -d postgres -c "CREATE DATABASE bayana_rehearsal"   # once
@@ -207,9 +207,16 @@ Rules:
   - Send one booking email to the address mail-tester.com gives you, and confirm SPF, DKIM and DMARC all pass (staging check 11).
   - Send one email from Zoho to Gmail and confirm "Show original" still shows SPF, DKIM and DMARC as PASS.
 
-**Sending from the API: use Brevo's HTTPS API.** Set `EMAIL_TRANSPORT=brevo_api` and `BREVO_API_KEY` (Brevo > SMTP & API > **API keys**, a key starting `xkeysib-`; not the SMTP key). Mail then goes over HTTPS on port 443 (`POST https://api.brevo.com/v3/smtp/email`, `apps/api/src/email-brevo.ts`), so it doesn't depend on the host allowing outbound SMTP ports. Behaviour is the same as SMTP: same templates and outbox. A non-2xx answer, a network error or no answer within 10 s leaves the email queued with the usual backoff (1, 5, 30, 120 minutes). Logs show only `email.sent` with Brevo's status and message id; the key, addresses and bodies are never logged.
+**Sending from the API: Brevo's HTTPS API (required).** Render's free plan blocks outbound SMTP (ports 25, 465 and 587), so a deployed API must send over HTTPS. With `NODE_ENV=production` and `APP_ENV=staging` or `production`, the API refuses to start unless `EMAIL_TRANSPORT=brevo_api`, `BREVO_API_KEY` (Brevo > SMTP & API > **API keys**, a key starting `xkeysib-`; not the SMTP key) and `EMAIL_FROM` are set; the error names the variable only. `SMTP_URL` is not needed. Mail goes to `POST https://api.brevo.com/v3/smtp/email` (`apps/api/src/email-brevo.ts`) with the template name as a Brevo tag.
 
-SMTP still works as an alternative: `EMAIL_TRANSPORT=smtp` with `SMTP_URL=smtp://<login>:<smtp-key>@smtp-relay.brevo.com:587`. URL-encode the login, because its `@` becomes `%40`.
+How sending works (`apps/api/src/notifications/outbox.ts`):
+- Every email is written to `email_outbox` in the business transaction. Right after the HTTP response is sent, the API tries to send everything due, urgent first (codes, payments, confirmations). The response never waits for delivery, so it is the same whether or not sending works.
+- A 2xx is sent; Brevo's message id is stored in `email_outbox.provider_message_id` (search it in Brevo > Transactional > Logs).
+- A 4xx (bad key, refused address or sender) marks the email `failed` at once: resending cannot help. 408 and 429 are treated as temporary.
+- A 5xx, a network error or no answer within 10 s keeps it queued with the backoff (1, 5, 30, 120 minutes, then `failed`). The API retries by itself when the backoff ends, so this does not depend on the scheduled tick; the tick is the backstop after a restart or sleep. A login code is not retried once the retry would land after the code's 10-minute expiry.
+- Logs show `email.sent` with Brevo's status, message id and template, and `email.send_failed` with the outbox id and error; never the key, an address, a code or a body.
+
+SMTP stays for local use only: Mailpit in development, and `APP_ENV=local` for the production-image rehearsal (section 1). The SMTP transport gives up after 10 s.
 
 Either way, `EMAIL_FROM` must use the authenticated domain, for example `Bayana <bookings@bayana.in>`, with replies going to the Zoho mailbox. Brevo receives the display name and address parsed from it, including the per-vendor "Studio via Bayana" names.
 
@@ -237,9 +244,9 @@ API variables are validated at startup (`apps/api/src/config-schema.ts`) and the
 | `OTP_PEPPER` | generated | new random | new random | yes |
 | `TICK_SECRET` | generated | new random (= GitHub secret) | new random (= GitHub secret) | yes |
 | `OPS_EMAIL` | optional | your inbox | your inbox | no |
-| `EMAIL_TRANSPORT` | smtp (Mailpit) | brevo_api | brevo_api | no |
-| `BREVO_API_KEY` | empty | Brevo API key | Brevo API key | yes |
-| `SMTP_URL` | smtp://localhost:1025 | empty (only with `EMAIL_TRANSPORT=smtp`) | empty (only with `EMAIL_TRANSPORT=smtp`) | yes |
+| `EMAIL_TRANSPORT` | smtp (Mailpit) | brevo_api (required) | brevo_api (required) | no |
+| `BREVO_API_KEY` | empty | Brevo API key (required) | Brevo API key (required) | yes |
+| `SMTP_URL` | smtp://localhost:1025 | empty (not used) | empty (not used) | yes |
 | `EMAIL_FROM` | Bayana <hello@bayana.local> | Bayana Staging <bookings@bayana.in> | Bayana <bookings@bayana.in> | no |
 | `PAYMENT_MODE` | disabled or test | test | disabled (live only after section 9) | no |
 | `RAZORPAY_KEY_ID` | rzp_test_… | rzp_test_… | empty while disabled | no |

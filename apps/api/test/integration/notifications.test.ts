@@ -85,7 +85,7 @@ describe("outbox delivery (SPEC 15.1)", () => {
       const held = await call("POST", "/v1/bookings", { cookie: await sessionFor(customer.id), key: randomUUID(), body: { slug: v.slug, date: day, service_id: v.serviceId, starts_at: `${day}T03:30:00.000Z`, name: "Asha Rao" } });
       expect(held.status).toBe(201);
       const rowFor = () => pool.query<{ id: string; status: string; attempts: number; wait: number }>("SELECT id,status,attempts,EXTRACT(EPOCH FROM next_attempt_at-now())::int AS wait FROM email_outbox WHERE booking_id=$1 AND template='hold_started'", [held.body.booking.id]).then(result => result.rows[0]);
-      // The first attempt is the immediate send right after the booking committed (kickUrgent); the rest come from ticks.
+      // The first attempt is the immediate send right after the booking committed (kickOutbox); the rest come from ticks.
       const first = await until(rowFor, value => value?.attempts === 1);
       expect(first.status).toBe("queued");
       expect(first.wait).toBeGreaterThan(BACKOFF_MINUTES[0] * 60 - 10); expect(first.wait).toBeLessThanOrEqual(BACKOFF_MINUTES[0] * 60);

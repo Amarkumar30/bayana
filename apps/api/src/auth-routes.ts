@@ -5,7 +5,7 @@ import { config } from "./config.js";
 import { recordConsent } from "./consent.js";
 import { pool, transaction } from "./database.js";
 import { AppError, errorBody } from "./errors.js";
-import { kickUrgent } from "./notifications/outbox.js";
+import { kickOutbox } from "./notifications/outbox.js";
 import {
   checkOtp, consumeOtp, createOtp, currentUser, queueOtpEmail, event, findUserByEmail, hashPassword, invalidCredentials, invalidOtp, listSessions,
   normalizeEmail, revokeAllSessions, revokeSessionById, revokeSessionToken, sessionCookieName, startSession, validatePassword, verifyPassword, type PublicUser
@@ -59,7 +59,7 @@ authRouter.post("/otp/request", ...guard(20, 5), async (req, res, next) => {
       if (body.purpose === "signup" || await findUserByEmail(db, body.email)) await queueOtpEmail(db, body.email, code, body.purpose);
     });
     res.status(202).json({ ok: true });
-    kickUrgent();
+    kickOutbox();
   } catch (error) { next(error); }
 });
 
@@ -172,7 +172,7 @@ authRouter.delete("/sessions/:id", perIp(60), async (req, res, next) => {
 
 /** Customer booking verification: unchanged behaviour (verified email gets a CLIENT account and session), now on otp_codes. */
 authRouter.post("/booking/otp/request", ...guard(20, 5), async (req, res, next) => {
-  try { const body = schemas.bookingOtpRequest.parse(req.body); await transaction(async db => queueOtpEmail(db, body.email, await createOtp(db, body.email, "booking_verify", req.ip), "booking_verify")); res.status(202).json({ ok: true }); kickUrgent(); } catch (error) { next(error); }
+  try { const body = schemas.bookingOtpRequest.parse(req.body); await transaction(async db => queueOtpEmail(db, body.email, await createOtp(db, body.email, "booking_verify", req.ip), "booking_verify")); res.status(202).json({ ok: true }); kickOutbox(); } catch (error) { next(error); }
 });
 authRouter.post("/booking/otp/verify", ...guard(20, 10), async (req, res, next) => {
   try {

@@ -5,7 +5,7 @@ import { config } from "./config.js";
 import { pool, transaction } from "./database.js";
 import { log } from "./logger.js";
 import { bookingFacts, notifyReview } from "./notifications/booking-mail.js";
-import { enqueue, kickUrgent, sendOutbox } from "./notifications/outbox.js";
+import { enqueue, kickOutbox, sendOutbox } from "./notifications/outbox.js";
 import { reconcile } from "./payments/reconcile.js";
 import { paymentProvider, paymentsEnabled } from "./payments/runtime.js";
 import { processPendingWebhooks } from "./payments/webhooks.js";
@@ -136,6 +136,6 @@ async function consistencyCheck() {
 
 export async function runNightly(trigger: Trigger = "nightly") {
   const results = [await run("reconcile_payments", trigger, reconcilePayments), await run("cleanup", trigger, cleanup), await run("consistency_check", trigger, consistencyCheck)];
-  kickUrgent();
+  kickOutbox();
   return { ok: results.every(result => result.status === "ok"), results };
 }

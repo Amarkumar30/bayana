@@ -10,7 +10,7 @@ import { loadContract, parseSnapshot } from "./contract.js";
 import { pool, transaction } from "./database.js";
 import { AppError } from "./errors.js";
 import { notifyCancelled } from "./notifications/booking-mail.js";
-import { kickUrgent } from "./notifications/outbox.js";
+import { kickOutbox } from "./notifications/outbox.js";
 import { receiptData, receiptPdf } from "./payments/receipt.js";
 import { onlinePaymentsFor } from "./payments/runtime.js";
 import { createPaymentOrder, createRefundRows, issueRefund, paidSql, verifyCheckout } from "./payments/service.js";
@@ -55,7 +55,7 @@ bookingRouter.post("/", perIp(20), handle(async (req, res) => {
   if (!key || !z.string().uuid().safeParse(key).success) throw new AppError(400, "VALID_IDEMPOTENCY_KEY_REQUIRED", "A valid idempotency key is required");
   const booking = await transaction(db => createHold(db, { slug: body.slug, date: body.date, name: body.name, email: user.email, clientUserId: user.id, phone: body.phone, notes: body.notes, referral: body.referral, serviceId: body.service_id, startsAt: body.starts_at, days: body.days, blocks: body.blocks, key }));
   res.status(201).json({ booking });
-  kickUrgent();
+  kickOutbox();
 }));
 
 bookingRouter.get("/:id", perIp(120), handle(async (req, res) => {
@@ -73,7 +73,7 @@ bookingRouter.post("/:id/accept", perIp(20), handle(async (req, res) => {
   const email = access.user?.role === "CLIENT" ? access.user.email : owner.rows[0].client_email;
   const result = await transaction(db => acceptTerms(db, { bookingId: access.id, termsHash: body.terms_hash, email, ip: req.ip ?? "", userAgent: req.header("user-agent") ?? "" }));
   res.json(result);
-  kickUrgent();
+  kickOutbox();
 }));
 
 bookingRouter.post("/:id/cancel", perIp(10), handle(async (req, res) => {
@@ -94,7 +94,7 @@ bookingRouter.post("/:id/cancel", perIp(10), handle(async (req, res) => {
   });
   for (const refundId of pending) await issueRefund(refundId);
   res.json(await bookingView(access.id, access.isVendor));
-  kickUrgent();
+  kickOutbox();
 }));
 
 // ---- Payments (SPEC 11.2) -------------------------------------------------------------------------------------------
@@ -113,7 +113,7 @@ bookingRouter.post("/:id/payment-verify", perIp(30), handle(async (req, res) => 
   const result = await verifyCheckout(access.id, { orderId: body.razorpay_order_id, paymentId: body.razorpay_payment_id, signature: body.razorpay_signature });
   // Authorized but not captured does not confirm; the payment.captured webhook (or a later verify) finishes it.
   res.status(result.outcome === "authorized" || result.outcome === "pending" ? 202 : 200).json({ outcome: result.outcome, booking: await bookingView(access.id, false) });
-  kickUrgent();
+  kickOutbox();
 }));
 bookingRouter.get("/:id/receipts/:paymentId", perIp(30), handle(async (req, res) => {
   const access = await bookingAccess(req);

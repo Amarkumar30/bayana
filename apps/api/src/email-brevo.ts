@@ -8,6 +8,11 @@ export const BREVO_TIMEOUT_MS = 10_000;
 /** A failed send. The message holds the HTTP status and Brevo's short error code only: never the key, address or body. */
 export class BrevoSendError extends Error {
   constructor(readonly status: number | null, detail: string) { super(`Brevo API ${status ?? "request"} failed: ${detail}`); this.name = "BrevoSendError"; }
+  /**
+   * A 4xx means Brevo refused this request as sent (bad key, bad address, unverified sender): resending it cannot help, so
+   * the outbox marks it failed at once. 408 and 429 (timeout, rate limit) are temporary and retry like a 5xx or no answer.
+   */
+  get permanent() { return this.status !== null && this.status >= 400 && this.status < 500 && this.status !== 408 && this.status !== 429; }
 }
 
 /** "Bayana <bookings@bayana.in>" or "Studio via Bayana <bookings@bayana.in>" -> { name, email }; a bare address -> { email }. */
@@ -23,7 +28,7 @@ export function parseSender(from: string): { name?: string; email: string } {
  */
 export async function sendViaBrevo(message: Email, options: { apiKey: string; fetch?: typeof fetch; timeoutMs?: number }): Promise<{ status: number; messageId: string | null }> {
   const { apiKey, fetch: send = fetch, timeoutMs = BREVO_TIMEOUT_MS } = options;
-  const body = { sender: parseSender(message.from), to: [{ email: message.to }], subject: message.subject, textContent: message.text, ...(message.html ? { htmlContent: message.html } : {}) };
+  const body = { sender: parseSender(message.from), to: [{ email: message.to }], subject: message.subject, textContent: message.text, ...(message.html ? { htmlContent: message.html } : {}), ...(message.tag ? { tags: [message.tag] } : {}) };
   let response: Response;
   try {
     response = await send(BREVO_SEND_URL, { method: "POST", headers: { "api-key": apiKey, "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
