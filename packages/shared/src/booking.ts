@@ -1,4 +1,4 @@
-import { formatINR, percentageOf } from "./money.js";
+import { formatAmount, percentageOf } from "./money.js";
 import type { CancellationTier } from "./vendor.js";
 
 /** Cancellation tiers in plain words, used in the contract and on the booking pages. */
@@ -20,11 +20,12 @@ export function refundPreview(paidPaise: number, tiers: CancellationTier[], star
   return { refund_percent: percent, refund_paise: Math.min(paidPaise, percentageOf(paidPaise, percent)), paid_paise: paidPaise };
 }
 export const describeRefund = (preview: ReturnType<typeof refundPreview>) =>
-  preview.paid_paise === 0 ? "Nothing has been paid yet, so there is nothing to refund." : preview.refund_paise === 0 ? `Your advance of ${formatINR(preview.paid_paise)} is not refunded at this point.` : `${formatINR(preview.refund_paise)} of your ${formatINR(preview.paid_paise)} advance will be refunded (${preview.refund_percent}%).`;
+  preview.paid_paise === 0 ? "Nothing has been paid yet, so there is nothing to refund." : preview.refund_paise === 0 ? `Your advance of ${formatAmount(preview.paid_paise)} is not refunded at this point.` : `${formatAmount(preview.refund_paise)} of your ${formatAmount(preview.paid_paise)} advance will be refunded (${preview.refund_percent}%).`;
 
 /** One human sentence per booking error code, shared by web and email (SPEC 5.6). */
 export const bookingErrorCopy: Record<string, string> = {
   SLOT_TAKEN: "This time was just booked by someone else. Pick another time below.",
+  BUSINESS_ACCOUNT_CANNOT_BOOK: "This email belongs to a business account on Bayana. To book as a customer, use a different email.",
   HOLD_EXPIRED: "Your 15-minute hold ran out, so the time was released. Choose a time again to continue.",
   OTP_INVALID: "That code is wrong or has expired. Check the latest email, or request a new code.",
   TERMS_CHANGED: "The business updated its terms a moment ago. Please read them again and agree to continue.",

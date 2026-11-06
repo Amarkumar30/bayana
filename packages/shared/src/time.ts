@@ -9,6 +9,19 @@ const INDIA = new Set(["Asia/Kolkata", "Asia/Calcutta"]);
  */
 export const timezoneLabel = (timezone: string, form: "short" | "long" = "short") => INDIA.has(timezone) ? (form === "long" ? "Indian Standard Time (IST)" : "IST") : timezone.replace(/_/g, " ");
 
+const offsetFormatters = new Map<string, Intl.DateTimeFormat>();
+/** A zone's UTC offset at an instant, as Intl names it ("GMT+05:30"; "GMT" for UTC itself). */
+export const utcOffsetAt = (timezone: string, instant: Date | string) => {
+  let formatter = offsetFormatters.get(timezone);
+  if (!formatter) { formatter = new Intl.DateTimeFormat("en-US", { timeZone: timezone, timeZoneName: "longOffset" }); offsetFormatters.set(timezone, formatter); }
+  return formatter.formatToParts(new Date(instant)).find(part => part.type === "timeZoneName")?.value ?? "";
+};
+/**
+ * Whether two IANA names show the same clock at an instant: aliases (Asia/Calcutta and Asia/Kolkata) and zones that share an
+ * offset then. Compared by resolved offset, never by name, so a visitor in India is never shown a second, identical time.
+ */
+export const sameClockAt = (a: string, b: string, instant: Date | string) => a === b || utcOffsetAt(a, instant) === utcOffsetAt(b, instant);
+
 // Building an Intl.DateTimeFormat is far more expensive than using one; the slot engine converts thousands of times per month view.
 const formatters = new Map<string, Intl.DateTimeFormat>();
 const formatterFor = (timezone: string) => {

@@ -22,3 +22,11 @@ export function advanceRuleProblem(pricePaise: number, type: AdvanceType, value:
 }
 
 export const formatINR = (paise: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(paise / 100);
+/**
+ * Amounts on screen: whole rupees without ".00" (₹8,000, ₹1,50,000), paise only when there are some (₹8,000.50). Receipts,
+ * contracts and emails keep formatINR's two decimals.
+ */
+export const formatAmount = (paise: number) => {
+  const digits = paise % 100 === 0 ? 0 : 2;
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: digits, maximumFractionDigits: digits }).format(paise / 100);
+};
