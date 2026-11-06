@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { expect, test, type Browser, type Page } from "@playwright/test";
 import { chooseTimeAndDetails, codeFor, freshIp, publishedVendor } from "./helpers";
+import { guardSideScroll } from "../e2e/side-scroll";
+
+// Every screen these tests visit must fit the width (no sideways scroll), not just the last one.
+guardSideScroll(test);
 
 // A customer who booked closes the browser and comes back later: still signed in, their booking on /my-bookings. Real
 // browser, real API (*_test), real email (Mailpit). The session is the same whether the email was confirmed by code or by

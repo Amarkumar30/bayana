@@ -1,5 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { MOCK_API_URL, mockApi, publicVendor } from "./mock-api";
+import { guardSideScroll } from "./side-scroll";
+
+// Every screen these tests visit must fit the width (no sideways scroll), not just the last one.
+guardSideScroll(test);
 
 // Hourly services of several sessions in the browser (mocked API), at 375px and 1280px: the service form's session fields and
 // live line, and the customer's "How long?" choice limited to what is free from the chosen start.
@@ -30,7 +34,7 @@ test("service form: per session shows length and session limits, a live line, an
   await sheet.getByLabel("Minimum sessions").fill("1");
   await sheet.getByLabel("Maximum sessions").fill("4");
   await sheet.getByLabel("Advance (%)").fill("30");
-  await expect(sheet.getByText("Customer can book 1 to 4 sessions of 1 hour. 3 sessions = 3 hours = ₹4,500.00. Advance ₹1,350.00.")).toBeVisible();
+  await expect(sheet.getByText("Customer can book 1 to 4 sessions of 1 hour. 3 sessions = 3 hours = ₹4,500. Advance ₹1,350.")).toBeVisible();
   await sheet.getByLabel("Maximum sessions").fill("13");
   await sheet.getByRole("button", { name: "Add service" }).click();
   await expect(sheet.getByText("At most 12 sessions.")).toBeVisible();
@@ -44,7 +48,8 @@ test("service form: per session shows length and session limits, a live line, an
 test("booking flow: How long? offers only what is free from the start, the summary shows the whole range, and the hold sends start and sessions only", async ({ page }) => {
   await studioVendor(page);
   let holdBody: Record<string, unknown> | undefined;
-  await page.route(`${MOCK_API_URL}/v1/auth/booking/otp/**`, route => route.fulfill({ status: 202, json: {} }));
+  // Same shapes as the API: the request answers 202, the verify returns the (customer) user.
+  await page.route(`${MOCK_API_URL}/v1/auth/booking/otp/**`, route => route.request().url().endsWith("/verify") ? route.fulfill({ json: { user: { id: "7f3c2a10-0000-4000-8000-0000000000c1", email: "asha@example.test", role: "CLIENT" } } }) : route.fulfill({ status: 202, json: { ok: true } }));
   await page.route(`${MOCK_API_URL}/v1/bookings`, route => { holdBody = route.request().postDataJSON(); return route.fulfill({ status: 409, json: { error: { code: "SLOT_TAKEN", message: "3 sessions in a row are not free from that time. Choose fewer sessions or another time.", details: {} } } }); });
   await page.goto(`/studio-sunday/book?service=${STUDIO.id}`);
   await expect(page.getByRole("heading", { name: "Choose a date and start time" })).toBeVisible();
@@ -56,8 +61,8 @@ test("booking flow: How long? offers only what is free from the start, the summa
   await page.getByRole("radio", { name: /3 sessions, 3 hours/ }).check();
   const summary = page.getByTestId("session-summary");
   await expect(summary).toContainText("10:00 am to 1:00 pm (3 hours)");
-  await expect(summary).toContainText("Total ₹4,500.00");
-  await expect(summary).toContainText("Advance ₹1,350.00 now");
+  await expect(summary).toContainText("Total ₹4,500");
+  await expect(summary).toContainText("Advance ₹1,350 now");
   // A start with only one session free drops the choice back to what fits.
   await page.getByRole("list", { name: "Open times" }).getByRole("button").nth(1).click();
   await expect(page.getByRole("radio", { name: /sessions?, / })).toHaveCount(1);

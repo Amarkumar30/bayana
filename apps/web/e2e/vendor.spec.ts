@@ -42,7 +42,7 @@ test("onboarding wizard: profile, first service, hours, publish", async ({ page,
   await page.getByRole("button", { name: "Save and continue" }).click();
   await expect(page.getByText("A percentage advance must be between 1 and 100.").first()).toBeVisible();
   await page.getByLabel("Advance (%)").fill("20");
-  await expect(page.getByText("Customers pay ₹500.00 now and ₹2,000.00 later.")).toBeVisible();
+  await expect(page.getByText("Customers pay ₹500 now and ₹2,000 later.")).toBeVisible();
   await page.getByRole("button", { name: "Save and continue" }).click();
 
   await expect(page.getByRole("heading", { name: "When do you take bookings?" })).toBeVisible();

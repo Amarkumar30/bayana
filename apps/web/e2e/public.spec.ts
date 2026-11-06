@@ -26,7 +26,7 @@ test("booking stepper: service preselected, date strip, time chips, inline detai
 test("customer booking page: contract, honest payment copy and a refund preview before cancelling", async ({ page }) => {
   await mockApi(page);
   await page.goto(`/b/${SAMPLE_BOOKING_ID}?t=sample-token`);
-  await expect(page.getByRole("heading", { level: 1, name: "Request received" })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Request sent, awaiting advance" })).toBeVisible();
   await expect(page.getByText("Studio Sunday has your request and will contact you to arrange the advance.", { exact: false })).toBeVisible();
   await page.getByText(/Terms you agreed to on/).click();
   await expect(page.getByTestId("contract-text")).toContainText("Advance confirms your date.");

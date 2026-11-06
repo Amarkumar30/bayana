@@ -1,5 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { MOCK_API_URL, mockApi } from "./mock-api";
+import { guardSideScroll } from "./side-scroll";
+
+// Every screen these tests visit must fit the width (no sideways scroll), not just the last one.
+guardSideScroll(test);
 
 // The online (test) pay step with Razorpay Checkout stubbed in the browser (no network, no keys), at 375 and 1280 px:
 // the test banner, Checkout opened with the order's key and the booking's prefill, a closed window and Try again, then the
@@ -41,9 +45,9 @@ test("pay step: the test banner, Checkout with the order's key and the booking's
   await page.goto(`/b/${id}?t=hold-token`);
   await expect(page.getByText("Test payment: no real money will be charged.")).toBeVisible();
   // Closing the window: back on the pay step, nothing charged, and the button offers to try again.
-  await page.getByRole("button", { name: "Pay ₹2,000.00" }).click();
+  await page.getByRole("button", { name: "Pay ₹2,000" }).click();
   await expect(page.getByText("Payment window closed. Nothing was charged.")).toBeVisible();
-  const again = page.getByRole("button", { name: "Try again: pay ₹2,000.00" });
+  const again = page.getByRole("button", { name: "Try again: pay ₹2,000" });
   await expect(again).toBeVisible();
   const options = await page.evaluate(() => (window as unknown as { __checkout: { options: Record<string, unknown> } }).__checkout.options);
   expect(options).toMatchObject({ key: "rzp_test_fromTheApi", order_id: "order_stub1", amount: 200000, currency: "INR", prefill: { name: "Asha Rao", email: "asha@example.in", contact: "9820000000" } });

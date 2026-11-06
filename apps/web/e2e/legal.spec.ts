@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { footerLinks } from "../components/layout/site-footer";
-import { businessDetails } from "../lib/business-details";
+import { businessDetails, filledDetail } from "../lib/business-details";
 import { mockApi } from "./mock-api";
 
 // The legal and company pages a payment partner and a lawyer will read. Each renders, names the operator, and is reachable
@@ -24,12 +24,16 @@ test("the lawyer-review banner shows while LEGAL_REVIEWED is not true", async ({
 
 // One page from each public layout: marketing (site), a vendor's booking flow (public) and sign-in (auth).
 for (const path of ["/terms", "/studio-sunday/book", "/login"]) {
-  test(`${path} has the full footer with the business name and address, and every footer link resolves`, async ({ page }) => {
+  test(`${path} has the full footer, never prints a placeholder, and every footer link resolves`, async ({ page }) => {
     await mockApi(page);
     await page.goto(path);
     const footer = page.getByTestId("site-footer");
-    await expect(footer).toContainText(businessDetails.legalName);
-    await expect(footer).toContainText(businessDetails.address);
+    // Filled details are shown; unfilled ones are left out, never printed as [PLACEHOLDERS].
+    for (const value of [businessDetails.legalName, businessDetails.address, businessDetails.grievanceOfficer.name]) {
+      if (filledDetail(value)) await expect(footer).toContainText(value); else await expect(footer).not.toContainText(value);
+    }
+    await expect(footer).not.toContainText(/\[[A-Z][A-Z0-9 ,.:%&/()-]*\]/);
+    await expect(footer).toContainText(businessDetails.supportEmail);
     await expect(footer).toContainText(businessDetails.grievanceOfficer.email);
     const hrefs = await footer.locator("nav a").evaluateAll(links => links.map(link => link.getAttribute("href")));
     expect(hrefs).toEqual([...footerLinks.product, ...footerLinks.legal].map(link => link.href));

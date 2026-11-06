@@ -10,7 +10,7 @@ test("bookings list opens a booking; cancelling needs a reason and refunds in fu
   await page.goto("/dashboard/bookings");
   await page.getByRole("link", { name: /Rohit Malhotra/ }).first().click();
   await expect(page.getByRole("heading", { level: 1, name: "Rohit Malhotra" })).toBeVisible();
-  await expect(page.getByText("Collect the ₹2,000.00 advance and record it below")).toBeVisible();
+  await expect(page.getByText("Collect the ₹2,000 advance and record it below")).toBeVisible();
   await page.getByRole("button", { name: "Cancel booking" }).click();
   const dialog = page.getByRole("dialog", { name: "Cancel this booking?" });
   await dialog.getByRole("button", { name: "Cancel and refund" }).click();
@@ -30,7 +30,7 @@ test("a manual booking validates inline, then opens the new booking", async ({ p
   await dialog.getByRole("button", { name: "Add booking" }).click();
   await expect(dialog.getByText("Choose a service.")).toBeVisible();
   await expect(dialog.getByText("Enter a valid email address.")).toBeVisible();
-  await dialog.getByLabel("Service").selectOption({ label: "Portrait session · ₹8,000.00 · 90 min" });
+  await dialog.getByLabel("Service").selectOption({ label: "Portrait session · ₹8,000 · 90 min" });
   await dialog.getByLabel("Date").fill("2026-11-06");
   await dialog.getByLabel("Start time").fill("11:00");
   await dialog.getByLabel("Customer name").fill("Walk-in Ravi");

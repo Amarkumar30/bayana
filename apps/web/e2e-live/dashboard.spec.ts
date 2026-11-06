@@ -31,7 +31,7 @@ test("a vendor adds a manual booking from the dashboard and cancels it; the cust
 
   await expect(page.getByRole("heading", { level: 1, name: "Walk-in Ravi" })).toBeVisible();
   await expect(page.getByText("Confirmed").first()).toBeVisible();
-  await expect(page.getByText("Created as pending")).toBeVisible();
+  await expect(page.getByText("Added by the business", { exact: true })).toBeVisible();
   expect(await mailArrived(customer, "Confirmed: Portrait session")).toBe(true);
 
   await page.getByRole("button", { name: "Cancel booking" }).click();
@@ -39,7 +39,7 @@ test("a vendor adds a manual booking from the dashboard and cancels it; the cust
   await cancel.getByLabel("Reason").fill("Studio closed that day");
   await cancel.getByRole("button", { name: "Cancel and refund" }).click();
   await expect(cancel).toBeHidden();
-  await expect(page.getByText("“Studio closed that day”")).toBeVisible();
+  await expect(page.getByText("Reason: Studio closed that day")).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel booking" })).toHaveCount(0);
   expect(await mailArrived(customer, "Cancelled: Portrait session")).toBe(true);
 });

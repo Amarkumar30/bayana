@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { DAILY_PUBLIC_SERVICE, mockApi, mockDayStatus } from "./mock-api";
+import { guardSideScroll } from "./side-scroll";
+
+// Every screen these tests visit must fit the width (no sideways scroll), not just the last one.
+guardSideScroll(test);
 
 // Per-day services in the browser (mocked API), at 375px and 1280px: the service form's mode switch and the day picker.
 
@@ -16,7 +20,7 @@ test("service form: choosing per day swaps duration for days and shows the live 
   await sheet.getByLabel("Price per day (₹)").fill("12000");
   await sheet.getByLabel("Minimum days").fill("1");
   await sheet.getByLabel("Maximum days").fill("3");
-  await expect(sheet.getByText("Customer pays ₹12,000.00 per day. 2 days = ₹24,000.00. Advance ₹6,000.00.")).toBeVisible();
+  await expect(sheet.getByText("Customer pays ₹12,000 per day. 2 days = ₹24,000. Advance ₹6,000.")).toBeVisible();
   // Inline validation with the shared schema: the maximum below the minimum is refused before anything is sent.
   await sheet.getByLabel("Minimum days").fill("4");
   await sheet.getByRole("button", { name: "Add service" }).click();
@@ -30,7 +34,7 @@ test("day picker: dates show why they are unavailable, days are limited to what 
   await mockApi(page);
   await page.goto(`/studio-sunday/book?service=${DAILY_PUBLIC_SERVICE.id}`);
   await expect(page.getByRole("heading", { name: "Choose your dates" })).toBeVisible();
-  await expect(page.getByText("Step 2 of 6: Dates · Days in Asia/Kolkata")).toBeVisible();
+  await expect(page.getByText("Step 2 of 6: Dates · Days in Indian Standard Time (IST)")).toBeVisible();
   for (const label of ["Booked", "Closed", "Past or too soon"]) await expect(page.getByRole("list", { name: "Why some dates cannot be chosen" }).getByText(label)).toBeVisible();
   // The first free date with three free days after it (offsets 1, 2: available; 3: closed; so offset 6 starts 6, 7, 8 = free).
   let offset = 1; while (!(mockDayStatus(offset) === "available" && mockDayStatus(offset + 1) === "available" && mockDayStatus(offset + 2) === "available")) offset++;
@@ -45,8 +49,8 @@ test("day picker: dates show why they are unavailable, days are limited to what 
   await page.getByRole("radio", { name: "2 days" }).click();
   const summary = page.getByTestId("day-summary");
   await expect(summary).toContainText("(2 days)");
-  await expect(summary).toContainText("Total ₹24,000.00");
-  await expect(summary).toContainText("Advance ₹6,000.00 now");
+  await expect(summary).toContainText("Total ₹24,000");
+  await expect(summary).toContainText("Advance ₹6,000 now");
   await expect(summary).not.toContainText(/\d:\d\d/);
   await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled();
   // Nothing on the step scrolls sideways on a phone.

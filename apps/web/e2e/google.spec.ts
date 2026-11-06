@@ -1,5 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { DAILY_PUBLIC_SERVICE, MOCK_API_URL, mockApi, mockDayStatus, publicVendor } from "./mock-api";
+import { guardSideScroll } from "./side-scroll";
+
+// Every screen these tests visit must fit the width (no sideways scroll), not just the last one.
+guardSideScroll(test);
 
 // "Continue with Google" for vendors and customers, against the mocked API, at 375px and 1280px. The API side (intent, state,
 // nonce, PKCE, the customer proof) is covered by apps/api/test/integration/google.test.ts.

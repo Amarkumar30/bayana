@@ -1,5 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { MOCK_API_URL, MOCK_CODE, mockApi } from "./mock-api";
+import { guardSideScroll } from "./side-scroll";
+
+// Every screen these tests visit must fit the width (no sideways scroll), not just the last one.
+guardSideScroll(test);
 
 // Customers: "My bookings" signs in as a customer (never the vendor flow), sign-in lands by role, a customer never sees
 // vendor onboarding, and an email's private link is view-only. At 375 and 1280 px, against the mocked API. Sessions that
