@@ -45,6 +45,19 @@ describe("hold, contract and acceptance", () => {
     expect(minutes).toBeGreaterThan(14); expect(minutes).toBeLessThanOrEqual(15);
   });
 
+  it("a business account cannot hold a time as a customer: 403 with a clear code, and no booking is created", async () => {
+    const v = await vendor();
+    const body = { slug: v.slug, date: day, service_id: v.serviceId, starts_at: nineIst, name: "Studio Owner" };
+    const refused = await call("POST", "/v1/bookings", { cookie: v.ownerCookie, key: randomUUID(), body });
+    expect(refused.status).toBe(403);
+    expect(refused.body.error).toMatchObject({ code: "BUSINESS_ACCOUNT_CANNOT_BOOK", message: "This email belongs to a business account on Bayana. To book as a customer, use a different email." });
+    // Without any session it is still "verify your email first".
+    const anonymous = await call("POST", "/v1/bookings", { key: randomUUID(), body });
+    expect(anonymous.status).toBe(401);
+    expect(anonymous.body.error.code).toBe("AUTHENTICATION_REQUIRED");
+    expect((await pool.query("SELECT count(*)::int AS n FROM bookings WHERE vendor_id=$1", [v.id])).rows[0].n).toBe(0);
+  });
+
   it("the preview is rendered with booking values and its hash is the SHA-256 of the exact text", async () => {
     const v = await vendor(); const h = await held(v);
     const view = await call("GET", `/v1/bookings/${h.id}`, { token: h.token });
