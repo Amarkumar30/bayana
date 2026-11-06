@@ -385,7 +385,10 @@ describe("Google for customers (intent=customer)", () => {
     expect(reply.location).toBe(`${web}${v.next}`);
     expect(await usersWith(vendorUser.email)).toBe(1);
     expect(await me(session(reply))).toMatchObject({ id: vendorUser.id, role: "VENDOR" });
-    expect((await hold(session(reply), v)).status).toBe(401);
+    // A business account cannot hold a time as a customer, and is told why (not "sign in").
+    const refused = await hold(session(reply), v);
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("BUSINESS_ACCOUNT_CANNOT_BOOK");
   });
   it("a customer from the email-code path is the same row; becoming a vendor happens only through the vendor sign-up", async () => {
     const v = await bookable(); const client = await createUser(pool, { role: "CLIENT" }); const who = { sub: `google-${randomUUID()}`, email: client.email };
