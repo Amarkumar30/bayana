@@ -382,3 +382,13 @@ Facts for the next session:
 - Top defects: vendor booking own page with the vendor email dead-ends (booking-routes.ts:52 401 + no role check after the code); every slot shown twice for Indian browsers (Asia/Calcutta vs Asia/Kolkata string compare); pay step overflows to ~460 px; live footer shows [LEGAL BUSINESS NAME] placeholders; publish refused first try (optional description required, empty policies).
 - Proposal: customer flow 8 screens -> 4 (choose; details+code with auto-hold; review+pay; confirmation), 20 prioritised items, blue/amber token set with checked contrast. API changes proposed are small and additive (P1 403 code, P15 overview fields, optional P16 note); no migration.
 - Next: wait for the approved list; measure bundle size and Lighthouse before the first Phase 2 commit.
+## UX redesign Batch 1, quick fixes - 2026-11-06 (branch ux-redesign, merged into hosting-ready)
+- P1: POST /v1/bookings with a non-CLIENT session is 403 BUSINESS_ACCOUNT_CANNOT_BOOK (was 401 'verify your email'); the booking flow checks user.role after the code and sends the person back to an empty email with that sentence. Integration test (no booking row) and a live e2e test.
+- P2: shared utcOffsetAt/sameClockAt compare zones by offset at the slot's instant (Asia/Calcutta = Asia/Kolkata); 'yours' time only when the clock really differs. Raw IANA ids on screen became timezoneLabel (IST).
+- P3: pay-step 'Pay later' link wraps (page was ~460 px at 375). e2e/side-scroll.ts guards every screen of every booking spec (mocked and live).
+- P8: shared formatAmount for on-screen money (₹8,000; paise only when present); the web uses it everywhere, describeRefund too. formatINR (contracts, receipts, emails) unchanged.
+- P9: shared status.ts: one status vocabulary (PENDING = 'Awaiting advance'), badge = icon + label, timeline sentences from system reasons; typed reasons shown as 'Reason: ...'.
+- P20: footer leaves out [PLACEHOLDER] details (filledDetail); the production build guard is unchanged. The details themselves still need filling in apps/web/lib/business-details.ts.
+- Pre-existing a11y failure fixed: sidebar 'My bookings as a customer' link now underlined (link-in-text-block, desktop dashboard pages).
+- Baselines updated (viewed first): booking-detail 375/1280, design 375/1280, design-dark 375/1280, home 375, login 375/1280. /design 1280 passed on unchanged code today (earlier failure intermittent; the Fraunces sample also shifted in dark mode; P10 drops Fraunces).
+- Before numbers for later batches: /[slug] 2.7 kB (118 kB first load), /[slug]/book 12.8 kB (172 kB); Lighthouse /[slug] perf 79-81, a11y 100, BP 96, SEO 66, LCP median 1.55 s.
