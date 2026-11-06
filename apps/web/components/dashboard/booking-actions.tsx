@@ -1,7 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { manualBookingSchema, rescheduleSchema, vendorCancelSchema, formatINR } from "@bayana/shared";
+import { manualBookingSchema, rescheduleSchema, vendorCancelSchema, formatAmount, timezoneLabel } from "@bayana/shared";
 import type { ZodError } from "zod";
 import { formatBookingWhen, formatDateTime, localDateKey } from "@/components/booking/time";
 import { serviceLength } from "@/lib/service-label";
@@ -49,7 +49,7 @@ export function NewBookingDialog({ defaultDate, trigger, onCreated }: { defaultD
       <DialogTrigger asChild>{trigger ?? <Button>New booking</Button>}</DialogTrigger>
       <DialogContent title="New booking" description="For a walk-in or a phone booking. It takes the time straight away, so customers can't book it online.">
         <form onSubmit={submit} noValidate className="grid max-h-[70dvh] gap-3 overflow-y-auto pr-1">
-          <Field label="Service" error={errors.service_id}>{p => <Select {...p} name="service_id" value={serviceId} onChange={event => setServiceId(event.target.value)} required><option value="" disabled>{services ? "Choose a service" : "Loading services…"}</option>{services?.map(service => <option key={service.id} value={service.id}>{service.name} · {formatINR(Number(service.price_paise))}{` · ${service.booking_mode === "daily" ? `per day, ${serviceLength(service)}` : serviceLength(service)}`}</option>)}</Select>}</Field>
+          <Field label="Service" error={errors.service_id}>{p => <Select {...p} name="service_id" value={serviceId} onChange={event => setServiceId(event.target.value)} required><option value="" disabled>{services ? "Choose a service" : "Loading services…"}</option>{services?.map(service => <option key={service.id} value={service.id}>{service.name} · {formatAmount(Number(service.price_paise))}{` · ${service.booking_mode === "daily" ? `per day, ${serviceLength(service)}` : serviceLength(service)}`}</option>)}</Select>}</Field>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Date" error={errors.date}>{p => <Input {...p} name="date" type="date" defaultValue={defaultDate} required />}</Field>
             {daily
@@ -84,7 +84,7 @@ export function CancelBookingDialog({ booking, onDone }: { booking: BookingDetai
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild><Button variant="danger">Cancel booking</Button></DialogTrigger>
       <DialogContent title="Cancel this booking?" description={`${booking.client_name}, ${booking.service_name ?? "booking"}, ${formatBookingWhen(booking, booking.timezone)}`}>
-        <Notice tone={booking.paid_paise > 0 ? "warning" : "info"}>{booking.paid_paise > 0 ? `${formatINR(booking.paid_paise)} goes back to the customer in full. Online payments are refunded automatically; money paid to you directly you return yourself.` : "Nothing has been paid, so there is nothing to refund."}</Notice>
+        <Notice tone={booking.paid_paise > 0 ? "warning" : "info"}>{booking.paid_paise > 0 ? `${formatAmount(booking.paid_paise)} goes back to the customer in full. Online payments are refunded automatically; money paid to you directly you return yourself.` : "Nothing has been paid, so there is nothing to refund."}</Notice>
         <Field label="Reason" hint="The customer sees this in their email." error={error && !busy ? error : undefined}>{p => <Textarea {...p} value={reason} maxLength={500} onChange={event => setReason(event.target.value)} />}</Field>
         {actionsRow(<><DialogClose asChild><Button variant="secondary">Keep booking</Button></DialogClose><Button variant="danger" loading={busy} loadingText="Cancelling…" onClick={() => void submit()}>Cancel and refund</Button></>)}
       </DialogContent>
@@ -109,7 +109,7 @@ export function RescheduleDialog({ booking, onDone }: { booking: BookingDetail; 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild><Button variant="secondary">{daily ? "Move to other dates" : "Move to another time"}</Button></DialogTrigger>
-      <DialogContent title="Move this booking" description={`Now ${formatBookingWhen(booking, booking.timezone)} (${booking.timezone}). ${daily ? " It keeps its number of days." : ""} The customer gets an email with the new ${daily ? "dates" : "time"}.`}>
+      <DialogContent title="Move this booking" description={`Now ${formatBookingWhen(booking, booking.timezone)} (${timezoneLabel(booking.timezone)}). ${daily ? " It keeps its number of days." : ""} The customer gets an email with the new ${daily ? "dates" : "time"}.`}>
         <form onSubmit={submit} noValidate className="grid gap-3">
           <div className="grid grid-cols-2 gap-3">
             <Field label={daily ? "New first day" : "New date"}>{p => <Input {...p} name="date" type="date" defaultValue={booking.first_date ?? localDateKey(new Date(booking.starts_at), booking.timezone)} required />}</Field>

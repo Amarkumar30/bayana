@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
-import { assertBusinessDetailsReady, businessDetails, businessDetailsPlaceholders } from "./business-details.ts";
+import { assertBusinessDetailsReady, businessDetails, businessDetailsPlaceholders, filledDetail } from "./business-details.ts";
 
 const filled = {
   ...businessDetails, legalName: "Example Bookings Private Limited", entityType: "private limited company", address: "1 Example Road, New Delhi, Delhi 110001",
@@ -24,6 +24,18 @@ describe("business details placeholders", () => {
   it("lets staging, local and development builds show placeholders", () => {
     for (const appEnv of ["staging", "local", undefined]) assert.doesNotThrow(() => assertBusinessDetailsReady({ nodeEnv: "production", appEnv }));
     assert.doesNotThrow(() => assertBusinessDetailsReady({ nodeEnv: "development", appEnv: "production" }));
+  });
+  it("the footer helper hides placeholders and keeps filled values", () => {
+    assert.equal(filledDetail(businessDetails.legalName), null);
+    assert.equal(filledDetail("[REGISTERED ADDRESS, CITY, STATE, PIN CODE]"), null);
+    assert.equal(filledDetail(""), null); assert.equal(filledDetail(null), null);
+    assert.equal(filledDetail(filled.legalName), "Example Bookings Private Limited");
+    assert.equal(filledDetail(businessDetails.supportEmail), "hello@bayana.in");
+  });
+  it("the footer prints placeholder-prone details only through filledDetail", async () => {
+    const footer = await readFile(new URL("../components/layout/site-footer.tsx", import.meta.url), "utf8");
+    for (const raw of ["{business.legalName}", "{business.address}", "{business.grievanceOfficer.name}"]) assert.ok(!footer.includes(raw), raw);
+    assert.match(footer, /filledDetail\(business\.legalName\)/);
   });
   it("passes a production build once every field is filled", () => {
     assert.doesNotThrow(() => assertBusinessDetailsReady({ nodeEnv: "production", appEnv: "production" }, filled));

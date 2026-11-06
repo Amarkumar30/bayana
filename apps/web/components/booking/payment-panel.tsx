@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Lock } from "lucide-react";
-import { TEST_PAYMENT_NOTICE, formatINR } from "@bayana/shared";
+import { TEST_PAYMENT_NOTICE, formatAmount } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/display";
 import { ApiError, api, humanMessage } from "@/lib/api";
@@ -79,7 +79,7 @@ export function PaymentPanel({ bookingId, token, amountPaise, businessName, emai
       {/* Online payments exist only in test mode in this build: say so before anyone pays. */}
       <Notice tone="warning"><strong className="font-semibold">{TEST_PAYMENT_NOTICE}</strong> Use Razorpay test cards or a test UPI id.</Notice>
       {message && <Notice tone={message.tone}>{message.text}</Notice>}
-      <Button size="lg" block loading={state !== "idle"} loadingText={state === "opening" ? "Opening secure payment…" : state === "verifying" ? "Verifying…" : "Waiting for confirmation…"} onClick={() => void pay()}>{retry ? `Try again: pay ${formatINR(amountPaise)}` : `Pay ${formatINR(amountPaise)}`}</Button>
+      <Button size="lg" block loading={state !== "idle"} loadingText={state === "opening" ? "Opening secure payment…" : state === "verifying" ? "Verifying…" : "Waiting for confirmation…"} onClick={() => void pay()}>{retry ? `Try again: pay ${formatAmount(amountPaise)}` : `Pay ${formatAmount(amountPaise)}`}</Button>
       <p className="inline-flex items-center justify-center gap-1.5 text-xs text-muted"><Lock className="size-3.5" aria-hidden />Secured by Razorpay. Bayana never sees your card details.</p>
     </div>
   );

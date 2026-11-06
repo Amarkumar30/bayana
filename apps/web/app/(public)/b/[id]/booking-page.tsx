@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { CalendarX2, ChevronDown, Download, FileText } from "lucide-react";
-import { describeRefund, formatINR, tiersInWords, ONLINE_PAYMENT_LABEL } from "@bayana/shared";
+import { bookingEventLabel, describeRefund, formatAmount, tiersInWords, timezoneLabel, ONLINE_PAYMENT_LABEL } from "@bayana/shared";
 import { env } from "@/env";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -17,10 +17,9 @@ import { tokenHeaders, type BookingView } from "@/components/booking/types";
 import { ApiError, api, humanMessage } from "@/lib/api";
 
 const headline: Record<string, string> = {
-  HELD: "Finish your booking", PENDING: "Request received", CONFIRMED: "Your booking is confirmed", COMPLETED: "Completed",
+  HELD: "Finish your booking", PENDING: "Request sent, awaiting advance", CONFIRMED: "Your booking is confirmed", COMPLETED: "Completed",
   CANCELLED: "Booking cancelled", EXPIRED: "This hold has expired", EXPIRED_PAID: "Payment arrived after the hold expired"
 };
-const stepLabel: Record<string, string> = { HELD: "Time held for 15 minutes", PENDING: "Terms agreed", CONFIRMED: "Booking confirmed", COMPLETED: "Completed", CANCELLED: "Cancelled", EXPIRED: "Hold expired", EXPIRED_PAID: "Paid after expiry" };
 const paymentLabel: Record<string, string> = { created: "Started, not paid", authorized: "Authorised, confirming", failed: "Did not go through", captured: "Paid", refunded: "Refunded", partially_refunded: "Partly refunded" };
 const refundLabel: Record<string, string> = { pending: "Refund on its way", processed: "Refunded", failed: "Refund failed; we're looking into it", manual: "To be returned by the business directly" };
 const methodLabel: Record<string, string> = { card: "card", upi: "UPI", netbanking: "net banking", wallet: "wallet", cash: "cash", bank_transfer: "bank transfer", other: "other" };
@@ -51,7 +50,7 @@ export function BookingPage() {
       <div className="grid gap-2">
         <StatusBadge status={view.status} className="w-fit" />
         <h1 className="text-2xl sm:text-4xl">{headline[view.status] ?? "Your booking"}</h1>
-        <p className="text-muted">{view.service_name} · {formatBookingWhen(view, view.timezone)} ({view.timezone})</p>
+        <p className="text-muted">{view.service_name} · {formatBookingWhen(view, view.timezone)} ({timezoneLabel(view.timezone)})</p>
       </div>
       {view.viewer === "customer" && <p className="-mt-3 text-sm"><Link href="/my-bookings" className="inline-flex min-h-11 items-center">See all my bookings</Link></p>}
       {/* An email's private link only shows the booking; paying, agreeing and cancelling need the customer signed in. */}
@@ -69,8 +68,8 @@ export function BookingPage() {
 
       <section aria-labelledby="timeline" className="grid gap-3"><h2 id="timeline" className="text-lg">Timeline</h2>
         <ol className="grid gap-3 border-l-2 border-border pl-4">
-          {view.timeline.map(event => <li key={`${event.to_status}-${event.created_at}`} className="relative grid text-sm"><span aria-hidden className="absolute -left-[1.4rem] top-1 size-3 rounded-full bg-success ring-2 ring-surface" /><span className="font-medium">{stepLabel[event.to_status] ?? event.to_status}</span><span className="text-muted">{formatDateTime(event.created_at, view.timezone)}</span></li>)}
-          {view.status === "EXPIRED" && view.timeline.at(-1)?.to_status !== "EXPIRED" && <li className="relative grid text-sm"><span aria-hidden className="absolute -left-[1.4rem] top-1 size-3 rounded-full bg-border ring-2 ring-surface" /><span className="font-medium">Hold expired</span>{view.hold_expires_at && <span className="text-muted">{formatDateTime(view.hold_expires_at, view.timezone)}</span>}</li>}
+          {view.timeline.map(event => <li key={`${event.to_status}-${event.created_at}`} className="relative grid text-sm"><span aria-hidden className="absolute -left-[1.4rem] top-1 size-3 rounded-full bg-success ring-2 ring-surface" /><span className="font-medium">{bookingEventLabel(event)}</span><span className="text-muted">{formatDateTime(event.created_at, view.timezone)}</span></li>)}
+          {view.status === "EXPIRED" && view.timeline.at(-1)?.to_status !== "EXPIRED" && <li className="relative grid text-sm"><span aria-hidden className="absolute -left-[1.4rem] top-1 size-3 rounded-full bg-border ring-2 ring-surface" /><span className="font-medium">{bookingEventLabel({ to_status: "EXPIRED" })}</span>{view.hold_expires_at && <span className="text-muted">{formatDateTime(view.hold_expires_at, view.timezone)}</span>}</li>}
         </ol>
       </section>
 
@@ -83,7 +82,7 @@ export function BookingPage() {
 
       <section aria-labelledby="payments" className="grid gap-3"><h2 id="payments" className="text-lg">Payment history</h2>
         {view.payments.length === 0 ? <Notice tone="info">{view.payments_enabled ? "No payments yet. Your advance will appear here once it's verified." : `No payments yet. Online payment isn't switched on for ${view.vendor.display_name}; they will arrange the advance with you directly.`}</Notice> :
-          <ul className="grid divide-y divide-border rounded-card bg-surface ring-1 ring-border/70">{view.payments.map(payment => <li key={payment.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"><span className="grid min-w-0"><span className="font-medium">{paymentTitle(payment)}</span><span className="text-muted">{paymentLabel[payment.status] ?? payment.status} · {formatDateTime(payment.verified_at ?? payment.created_at, view.timezone)}</span>{payment.note && <span className="text-muted">Note: {payment.note}</span>}</span><span className="flex items-center gap-1"><Money paise={payment.amount_paise} size="sm" />{payment.receipt && <Button asChild size="icon" variant="ghost"><a href={`${env.NEXT_PUBLIC_API_URL}/v1/bookings/${view.id}/receipts/${payment.id}${token ? `?t=${encodeURIComponent(token)}` : ""}`} aria-label={`Download receipt for ${formatINR(payment.amount_paise)}`} rel="noreferrer"><Download aria-hidden /></a></Button>}</span></li>)}</ul>}
+          <ul className="grid divide-y divide-border rounded-card bg-surface ring-1 ring-border/70">{view.payments.map(payment => <li key={payment.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"><span className="grid min-w-0"><span className="font-medium">{paymentTitle(payment)}</span><span className="text-muted">{paymentLabel[payment.status] ?? payment.status} · {formatDateTime(payment.verified_at ?? payment.created_at, view.timezone)}</span>{payment.note && <span className="text-muted">Note: {payment.note}</span>}</span><span className="flex items-center gap-1"><Money paise={payment.amount_paise} size="sm" />{payment.receipt && <Button asChild size="icon" variant="ghost"><a href={`${env.NEXT_PUBLIC_API_URL}/v1/bookings/${view.id}/receipts/${payment.id}${token ? `?t=${encodeURIComponent(token)}` : ""}`} aria-label={`Download receipt for ${formatAmount(payment.amount_paise)}`} rel="noreferrer"><Download aria-hidden /></a></Button>}</span></li>)}</ul>}
         {view.refunds.length > 0 && <ul className="grid gap-1 text-sm">{view.refunds.map(refund => <li key={refund.id} className="flex flex-wrap justify-between gap-2 rounded-input bg-surface-muted px-4 py-2"><span>{refundLabel[refund.status] ?? refund.status}</span><Money paise={refund.amount_paise} size="sm" /></li>)}</ul>}
       </section>
 
@@ -101,7 +100,7 @@ function StatusHelp({ view, token, finishHref, onExpire, onPaid }: { view: Booki
   if (view.status === "PENDING" && view.can_pay && view.viewer === "customer") return (
     <Card className="grid gap-3">
       {view.hold_expires_at && <HoldCountdown until={view.hold_expires_at} onExpire={onExpire} />}
-      <p className="text-sm text-muted">Pay the {formatINR(view.advance_paise - view.paid_paise)} advance to confirm. It is confirmed only once the payment is verified.</p>
+      <p className="text-sm text-muted">Pay the {formatAmount(view.advance_paise - view.paid_paise)} advance to confirm. It is confirmed only once the payment is verified.</p>
       <PaymentPanel bookingId={view.id} token={token} amountPaise={view.advance_paise - view.paid_paise} businessName={view.vendor.display_name} onSettled={onPaid} />
     </Card>
   );

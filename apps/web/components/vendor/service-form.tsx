@@ -1,7 +1,7 @@
 "use client";
 import { Plus, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { MAX_BLOCKS, MAX_BOOKING_DAYS, MAX_BUFFER_DAYS, TERMS_VARIABLES, advancePaise, advanceRuleProblem, formatINR, paiseFromRupees, rupeesFromPaise, serviceCreateSchema, type CancellationTier } from "@bayana/shared";
+import { MAX_BLOCKS, MAX_BOOKING_DAYS, MAX_BUFFER_DAYS, TERMS_VARIABLES, advancePaise, advanceRuleProblem, formatAmount, paiseFromRupees, rupeesFromPaise, serviceCreateSchema, type CancellationTier } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/display";
 import { Checkbox, Field, Input, RadioCards, Select, Textarea } from "@/components/ui/field";
@@ -52,7 +52,7 @@ export function ServiceForm({ service, onSaved, compact = false, submitLabel }: 
   const sessions = !daily && toNumber(draft.maxBlocks) > 1;
   const previewLine = daily ? dailyPreview(price, toNumber(draft.minDays), toNumber(draft.maxDays), draft.advanceType, advanceInput)
     : sessions ? sessionPreview(price, toNumber(draft.duration), toNumber(draft.minBlocks), toNumber(draft.maxBlocks), draft.advanceType, advanceInput)
-    : preview !== null ? `Customers pay ${formatINR(preview)} now and ${formatINR(price - preview)} later.` : null;
+    : preview !== null ? `Customers pay ${formatAmount(preview)} now and ${formatAmount(price - preview)} later.` : null;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setSubmitted(true); setServerFields({});

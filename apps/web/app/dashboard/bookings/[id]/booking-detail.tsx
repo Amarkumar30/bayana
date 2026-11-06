@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { ArrowLeft, ChevronDown, Download, FileText, Mail, Phone } from "lucide-react";
-import { formatINR, tiersInWords, ONLINE_PAYMENT_LABEL } from "@bayana/shared";
+import { bookingEventLabel, formatAmount, isSystemReason, tiersInWords, timezoneLabel, ONLINE_PAYMENT_LABEL } from "@bayana/shared";
 import { env } from "@/env";
 import { OfflinePaymentForm } from "@/components/booking/offline-payment-form";
 import { OnlineRefundForm } from "@/components/booking/online-refund-form";
@@ -12,7 +12,6 @@ import type { BookingDetail, BookingEvent } from "@/components/dashboard/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, LoadingState, Money, Notice, Skeleton, StatusBadge } from "@/components/ui/display";
 
-const statusWord: Record<string, string> = { HELD: "held", PENDING: "pending", CONFIRMED: "confirmed", COMPLETED: "completed", CANCELLED: "cancelled", EXPIRED: "expired", EXPIRED_PAID: "paid after expiry" };
 const actorWord: Record<string, string> = { client: "Customer", customer: "Customer", vendor: "You", system: "Bayana", razorpay: "Razorpay" };
 const paymentStatus: Record<string, string> = { created: "Checkout opened, not paid", authorized: "Authorised, confirming", failed: "Did not go through", captured: "Received", refunded: "Refunded", partially_refunded: "Partly refunded" };
 const refundStatus: Record<string, string> = { pending: "Refund on its way", processed: "Refunded", failed: "Refund failed", manual: "You return this directly" };
@@ -23,7 +22,7 @@ function eventText(event: BookingEvent, timezone: string, daily = false) {
     const to = typeof event.meta.to_starts_at === "string" ? (daily ? formatDate(event.meta.to_starts_at, timezone) : formatDateTime(event.meta.to_starts_at, timezone)) : "";
     return `Moved from ${from} to ${to}`;
   }
-  return event.from_status ? `${statusWord[event.from_status] ?? event.from_status} → ${statusWord[event.to_status] ?? event.to_status}` : `Created as ${statusWord[event.to_status] ?? event.to_status}`;
+  return bookingEventLabel(event);
 }
 
 /** SPEC 5.3 booking detail: timeline, payment ledger, contract, customer, and the vendor's actions. */
@@ -38,7 +37,7 @@ export function BookingDetailView({ id }: { id: string }) {
           <div className="grid gap-2">
             <StatusBadge status={booking.status} className="w-fit" />
             <h1 className="text-2xl sm:text-4xl">{booking.client_name}</h1>
-            <p className="text-muted">{booking.service_name ?? "Booking"} · {formatBookingWhen(booking, booking.timezone)} ({booking.timezone})</p>
+            <p className="text-muted">{booking.service_name ?? "Booking"} · {formatBookingWhen(booking, booking.timezone)} ({timezoneLabel(booking.timezone)})</p>
           </div>
 
           {(booking.actions.cancel || booking.actions.complete || booking.actions.reschedule) && <Card className="grid gap-3"><CardHeader title="Actions" className="mb-0" />
@@ -47,7 +46,7 @@ export function BookingDetailView({ id }: { id: string }) {
               {booking.actions.reschedule && <RescheduleDialog booking={booking} onDone={() => void reload()} />}
               {booking.actions.cancel && <CancelBookingDialog booking={booking} onDone={() => void reload()} />}
             </div>
-            {booking.status === "PENDING" && booking.paid_paise < booking.advance_paise && <Notice tone="info">{booking.payments_enabled ? `Waiting for the customer to pay the ${formatINR(booking.advance_paise - booking.paid_paise)} advance online.` : `Collect the ${formatINR(booking.advance_paise - booking.paid_paise)} advance and record it below to confirm this booking.`}{booking.hold_expires_at ? ` The time is held until ${formatDateTime(booking.hold_expires_at, booking.timezone)}.` : ""}</Notice>}
+            {booking.status === "PENDING" && booking.paid_paise < booking.advance_paise && <Notice tone="info">{booking.payments_enabled ? `Waiting for the customer to pay the ${formatAmount(booking.advance_paise - booking.paid_paise)} advance online.` : `Collect the ${formatAmount(booking.advance_paise - booking.paid_paise)} advance and record it below to confirm this booking.`}{booking.hold_expires_at ? ` The time is held until ${formatDateTime(booking.hold_expires_at, booking.timezone)}.` : ""}</Notice>}
           </Card>}
 
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
@@ -66,7 +65,7 @@ export function BookingDetailView({ id }: { id: string }) {
                   <ul className="grid divide-y divide-border rounded-card bg-surface ring-1 ring-border/70">
                     {booking.payments.map(payment => <li key={payment.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
                       <span className="grid min-w-0"><span className="font-medium">{payment.kind === "advance" ? "Advance" : "Balance"} · {payment.provider === "offline" ? `offline${payment.method ? ` (${payment.method.replace("_", " ")})` : ""}` : `${ONLINE_PAYMENT_LABEL}${payment.method ? ` (${payment.method})` : ""}`}</span><span className="text-muted">{paymentStatus[payment.status] ?? payment.status} · {formatDateTime(payment.verified_at ?? payment.created_at, booking.timezone)}</span>{payment.note && <span className="text-muted">Note: {payment.note}</span>}</span>
-                      <span className="flex items-center gap-1"><Money paise={payment.amount_paise} size="sm" />{payment.receipt && <Button asChild size="icon" variant="ghost"><a href={`${env.NEXT_PUBLIC_API_URL}/v1/bookings/${booking.id}/receipts/${payment.id}`} aria-label={`Download receipt for ${formatINR(payment.amount_paise)}`} rel="noreferrer"><Download aria-hidden /></a></Button>}</span>
+                      <span className="flex items-center gap-1"><Money paise={payment.amount_paise} size="sm" />{payment.receipt && <Button asChild size="icon" variant="ghost"><a href={`${env.NEXT_PUBLIC_API_URL}/v1/bookings/${booking.id}/receipts/${payment.id}`} aria-label={`Download receipt for ${formatAmount(payment.amount_paise)}`} rel="noreferrer"><Download aria-hidden /></a></Button>}</span>
                     </li>)}
                     {booking.refunds.map(refund => <li key={refund.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"><span className="grid"><span className="font-medium">{refundStatus[refund.status] ?? refund.status}</span><span className="text-muted">{refund.reason}</span></span><Money paise={-refund.amount_paise} size="sm" className="text-danger" /></li>)}
                   </ul>}
@@ -79,7 +78,7 @@ export function BookingDetailView({ id }: { id: string }) {
                   {booking.events.map(event => <li key={`${event.to_status}-${event.created_at}`} className="relative grid text-sm"><span aria-hidden className="absolute -left-[1.4rem] top-1 size-3 rounded-full bg-primary ring-2 ring-surface" />
                     <span className="font-medium">{eventText(event, booking.timezone, booking.booking_mode === "daily")}</span>
                     <span className="text-muted">{actorWord[event.actor] ?? event.actor} · {formatDateTime(event.created_at, booking.timezone)}</span>
-                    {event.reason && event.reason !== "rescheduled" && <span className="text-muted">“{event.reason}”</span>}</li>)}
+                    {event.reason !== "rescheduled" && !isSystemReason(event.reason) && <span className="text-muted">Reason: {event.reason}</span>}</li>)}
                 </ol>
               </section>
 

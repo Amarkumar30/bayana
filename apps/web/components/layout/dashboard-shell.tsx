@@ -29,7 +29,7 @@ function NavLink({ item, active, onNavigate }: { item: ShellItem; active: boolea
 }
 
 export function DashboardShell({ children }: { children: ReactNode }) {
-  return <AppShell items={items} mobilePrimary={mobilePrimary} label="Dashboard" footer={<><p className="font-medium">Need a hand?</p><p className="text-muted">Write to hello@bayana.in</p><Link href="/my-bookings" className="mt-2 inline-flex min-h-11 items-center text-sm">My bookings as a customer</Link></>}>{children}</AppShell>;
+  return <AppShell items={items} mobilePrimary={mobilePrimary} label="Dashboard" footer={<><p className="font-medium">Need a hand?</p><p className="text-muted">Write to hello@bayana.in</p><Link href="/my-bookings" className="mt-2 inline-flex min-h-11 items-center text-sm underline">My bookings as a customer</Link></>}>{children}</AppShell>;
 }
 
 /** Sidebar on desktop; top bar with a menu sheet plus a bottom tab bar on mobile. */

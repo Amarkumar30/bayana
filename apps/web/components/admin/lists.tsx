@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
-import { formatINR } from "@bayana/shared";
+import { formatAmount } from "@bayana/shared";
 import { PageHeader } from "@/components/layout/brand";
 import { Button } from "@/components/ui/button";
 import { Badge, Notice, StatusBadge } from "@/components/ui/display";
@@ -73,7 +73,7 @@ export function AdminPayments({ initial }: { initial: { q?: string; status?: str
   const { busy, result, run } = useAction(reload);
   const columns: Column<Pay>[] = [
     { label: "Booking", render: row => bookingLink(row.booking_id) }, { label: "Status", render: row => <Badge tone={tone(row.status)}>{row.status}</Badge> },
-    { label: "Amount", render: row => `${formatINR(row.amount_paise)} · ${row.kind}` }, { label: "Provider", render: row => <>{row.provider}{row.method ? ` · ${row.method}` : ""}<span className="block break-all font-mono text-xs text-muted">{row.provider_order_id ?? ""} {row.provider_payment_id ?? ""}</span></> },
+    { label: "Amount", render: row => `${formatAmount(row.amount_paise)} · ${row.kind}` }, { label: "Provider", render: row => <>{row.provider}{row.method ? ` · ${row.method}` : ""}<span className="block break-all font-mono text-xs text-muted">{row.provider_order_id ?? ""} {row.provider_payment_id ?? ""}</span></> },
     { label: "Customer", render: row => <>{row.client_email}<span className="block text-xs text-muted">{row.vendor_slug}</span></> }, { label: "Created", render: row => when(row.created_at) },
     { label: "Action", render: row => row.provider === "razorpay" ? <Button size="sm" variant="secondary" loading={busy === row.id} onClick={() => void run(row.id, `/v1/admin/payments/${row.id}/reverify`, "Re-verified with Razorpay. Open the booking to see the result.")}>Re-verify</Button> : <span className="text-muted">—</span> }
   ];

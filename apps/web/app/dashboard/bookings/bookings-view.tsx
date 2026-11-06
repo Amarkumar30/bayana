@@ -2,7 +2,7 @@
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { ListChecks } from "lucide-react";
-import { BOOKING_STATUSES } from "@bayana/shared";
+import { BOOKING_STATUSES, BOOKING_STATUS_LABEL } from "@bayana/shared";
 import { PageHeader } from "@/components/layout/brand";
 import { NewBookingDialog } from "@/components/dashboard/booking-actions";
 import { BookingList } from "@/components/dashboard/booking-list";
@@ -13,7 +13,7 @@ import { EmptyState, LoadingState, Skeleton } from "@/components/ui/display";
 import { Field, Input, Select } from "@/components/ui/field";
 
 type Filters = { q: string; status: string; from: string; to: string };
-const statusLabel: Record<string, string> = { HELD: "Held", PENDING: "Pending", CONFIRMED: "Confirmed", COMPLETED: "Completed", CANCELLED: "Cancelled", EXPIRED: "Expired", EXPIRED_PAID: "Expired, paid" };
+const statusLabel = BOOKING_STATUS_LABEL;
 const query = (filters: Filters, page: number) => { const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value)); if (page > 1) params.set("page", String(page)); return params.toString(); };
 
 /** SPEC 5.3 bookings list: search, status and date filters kept in the URL, then the list (cards on phones). */

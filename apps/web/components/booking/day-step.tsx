@@ -1,7 +1,7 @@
 "use client";
 import { ArrowLeft } from "lucide-react";
 import { useEffect, useState } from "react";
-import { advancePaise, dailyTotalPaise, dayRangeLabel, formatINR } from "@bayana/shared";
+import { advancePaise, dailyTotalPaise, dayRangeLabel, formatAmount, timezoneLabel } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/display";
 import { DatePicker, shiftMonth } from "@/components/ui/date-picker";
@@ -45,7 +45,7 @@ export function DayStep({ vendor, service, version, date, days, onDate, onDays, 
   return (
     <section aria-labelledby="choose-dates" className="grid gap-4">
       <h2 id="choose-dates" className="text-lg">Choose your dates</h2>
-      <p className="text-sm text-muted">Pick the first day, then how many days you need. {minDays > 1 ? `This service is booked for at least ${minDays} days. ` : ""}Days are whole days in {vendor.timezone}.</p>
+      <p className="text-sm text-muted">Pick the first day, then how many days you need. {minDays > 1 ? `This service is booked for at least ${minDays} days. ` : ""}Days are whole days in {timezoneLabel(vendor.timezone, "long")}.</p>
       <DatePicker month={month} onMonthChange={next => setMonth(next < thisMonth ? thisMonth : next)} value={date} onSelect={value => { onDate(value); onDays(dayChoices(byDate[value], minDays)[0] ?? 0); }}
         disabledReason={value => dayReason(byDate[value], minDays)} loading={loading} label="Choose the first day" />
       <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted" aria-label="Why some dates cannot be chosen">
@@ -66,7 +66,7 @@ export function DayStep({ vendor, service, version, date, days, onDate, onDays, 
           </div>
         </fieldset>
       )}
-      {quote && <p className="rounded-input bg-surface-muted px-4 py-3 text-sm" data-testid="day-summary"><strong>{dayRangeLabel(date, days)}</strong> · Total {formatINR(quote.total)}{quote.advance > 0 ? ` · Advance ${formatINR(quote.advance)} now` : ""}</p>}
+      {quote && <p className="rounded-input bg-surface-muted px-4 py-3 text-sm" data-testid="day-summary"><strong>{dayRangeLabel(date, days)}</strong> · Total {formatAmount(quote.total)}{quote.advance > 0 ? ` · Advance ${formatAmount(quote.advance)} now` : ""}</p>}
       <div className="flex flex-wrap gap-2"><Button variant="ghost" onClick={onBack}><ArrowLeft aria-hidden />Service</Button><Button className="flex-1" size="lg" disabled={!quote} title={!quote ? "Choose the dates to continue" : undefined} onClick={onNext}>Continue</Button></div>
     </section>
   );

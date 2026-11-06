@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { CalendarCheck, ChevronRight, Clock, Mail, MapPin, Phone, ShieldCheck } from "lucide-react";
-import { formatINR, tiersInWords } from "@bayana/shared";
+import { formatAmount, tiersInWords, timezoneLabel } from "@bayana/shared";
 import { env } from "@/env";
 import { fetchPublicVendor, type PublicVendor } from "@/lib/public-vendor";
 import { Avatar } from "@/components/ui/avatar";
@@ -34,7 +34,7 @@ function faq(vendor: PublicVendor) {
   const example = vendor.services[0];
   return [
     { q: "How does booking work?", a: "Choose a service and a time, confirm your email with a one-time code, then read and agree to the terms. Your time is held for 15 minutes while you finish." },
-    example && { q: "How much do I pay now?", a: example.advance_paise > 0 ? `Each service shows its advance. For example, ${example.name} needs ${formatINR(example.advance_paise)} now and ${formatINR(example.remaining_paise)} later.` : `${example.name} needs no advance; your booking is confirmed when you agree to the terms.` },
+    example && { q: "How much do I pay now?", a: example.advance_paise > 0 ? `Each service shows its advance. For example, ${example.name} needs ${formatAmount(example.advance_paise)} now and ${formatAmount(example.remaining_paise)} later.` : `${example.name} needs no advance; your booking is confirmed when you agree to the terms.` },
     { q: "What if I need to cancel?", a: vendor.cancellation_policy || (example ? tiersInWords(example.cancellation_tiers) : "") },
     vendor.rescheduling_policy && { q: "Can I change the time later?", a: vendor.rescheduling_policy },
     { q: "Is paying safe?", a: vendor.payments_enabled ? "Payments are handled by Razorpay. Bayana and the business never see your card details, and your booking is confirmed only after the payment is verified." : `Online payment is not switched on for ${vendor.display_name} yet. After you agree to the terms, they will contact you to arrange the advance, and your time stays reserved meanwhile.` }
@@ -53,7 +53,7 @@ export default async function VendorPage({ params }: { params: Promise<{ slug: s
     <div className="grid gap-8 pb-24 sm:pb-0">
       <section className="grid gap-4">
         <div className="flex items-center gap-4"><Avatar name={vendor.display_name} size="lg" /><div className="grid gap-1"><h1 className="text-2xl sm:text-4xl">{vendor.display_name}</h1><div className="flex flex-wrap gap-1.5">{(vendor.categories.length ? vendor.categories : ["Independent service"]).map(category => <Badge key={category} tone="primary">{category}</Badge>)}</div></div></div>
-        <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted"><span className="inline-flex items-center gap-1.5"><MapPin className="size-4" aria-hidden />{vendor.service_area || vendor.city}</span><span className="inline-flex items-center gap-1.5"><Clock className="size-4" aria-hidden />Times in {vendor.timezone}</span></p>
+        <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted"><span className="inline-flex items-center gap-1.5"><MapPin className="size-4" aria-hidden />{vendor.service_area || vendor.city}</span><span className="inline-flex items-center gap-1.5"><Clock className="size-4" aria-hidden />Times in {timezoneLabel(vendor.timezone, "long")}</span></p>
         {vendor.services.length > 0 && <div className="hidden flex-wrap items-center gap-4 sm:flex"><Button asChild size="lg"><Link prefetch={false} href={bookHref}><CalendarCheck aria-hidden />Book a time</Link></Button>{lowest !== null && <span className="text-sm text-muted">From <Money paise={lowest} size="sm" className="font-semibold text-ink" /></span>}</div>}
       </section>
 

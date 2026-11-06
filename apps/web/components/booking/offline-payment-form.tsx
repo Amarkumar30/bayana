@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { formatINR, paiseFromRupees } from "@bayana/shared";
+import { formatAmount, paiseFromRupees } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, Notice } from "@/components/ui/display";
 import { Field, Input, Select } from "@/components/ui/field";
@@ -17,7 +17,7 @@ export function OfflinePaymentForm({ view, onRecorded }: { view: Pick<BookingVie
     event.preventDefault(); setError(""); setDone("");
     let amount: number;
     try { amount = paiseFromRupees(rupees.trim()); } catch { setError("Enter the amount in rupees, for example 2000 or 2000.50."); return; }
-    if (amount <= 0 || amount > view.balance_due_paise) { setError(`Enter an amount up to the balance due (${formatINR(view.balance_due_paise)}).`); return; }
+    if (amount <= 0 || amount > view.balance_due_paise) { setError(`Enter an amount up to the balance due (${formatAmount(view.balance_due_paise)}).`); return; }
     if (note.trim().length < 3) { setError("Add a short note, for example who paid and how."); return; }
     setBusy(true);
     try { const result = await api<{ confirmed: boolean }>(`/v1/vendor/bookings/${view.id}/offline-payments`, { body: { kind, amount_paise: amount, method, note: note.trim() } }); setDone(result.confirmed ? "Recorded. The booking is now confirmed." : "Recorded."); setNote(""); onRecorded(); }

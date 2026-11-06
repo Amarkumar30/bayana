@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Brand } from "./brand";
-import { businessDetails as business } from "@/lib/business-details";
+import { businessDetails as business, filledDetail } from "@/lib/business-details";
 
 /** Every legal and product page, as one list: the footer, the sitemap and the link tests use it. */
 export const footerLinks = {
@@ -13,6 +13,8 @@ export const footerLinks = {
  * cached vendor page does not fetch every legal page as well.
  */
 export function SiteFooter({ narrow = false }: { narrow?: boolean }) {
+  // Details still in [PLACEHOLDER] form are left out, never printed; the production build refuses to finish while any remain.
+  const legalName = filledDetail(business.legalName), address = filledDetail(business.address), officer = filledDetail(business.grievanceOfficer.name);
   const width = narrow ? "max-w-3xl" : "max-w-6xl";
   const link = "inline-flex min-h-11 items-center text-muted no-underline hover:text-ink sm:min-h-0 sm:py-1.5";
   return (
@@ -24,8 +26,8 @@ export function SiteFooter({ narrow = false }: { narrow?: boolean }) {
       </div>
       <div className="border-t border-border">
         <div className={`mx-auto grid ${width} gap-1 px-4 py-4 text-xs text-muted sm:px-6`}>
-          <p>© {new Date().getFullYear()} {business.legalName}. {business.tradingName} is a technology platform; services are provided by the businesses you book.</p>
-          <p>{business.address}{business.gstin ? ` · GSTIN ${business.gstin}` : ""} · <a href={`mailto:${business.supportEmail}`} className="text-muted">{business.supportEmail}</a> · Grievance officer: {business.grievanceOfficer.name}, <a href={`mailto:${business.grievanceOfficer.email}`} className="text-muted">{business.grievanceOfficer.email}</a></p>
+          <p>© {new Date().getFullYear()} {legalName ? <>{legalName}. {business.tradingName} is</> : <>{business.tradingName},</>} a technology platform; services are provided by the businesses you book.</p>
+          <p>{address && <>{address} · </>}{business.gstin && <>GSTIN {business.gstin} · </>}<a href={`mailto:${business.supportEmail}`} className="text-muted">{business.supportEmail}</a> · {officer ? <>Grievance officer: {officer}, </> : "Grievances: "}<a href={`mailto:${business.grievanceOfficer.email}`} className="text-muted">{business.grievanceOfficer.email}</a></p>
         </div>
       </div>
     </footer>

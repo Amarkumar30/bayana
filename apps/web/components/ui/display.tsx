@@ -1,4 +1,5 @@
-import { formatINR } from "@bayana/shared";
+import { bookingStatusLabel, formatAmount } from "@bayana/shared";
+import { AlertTriangle, CheckCheck, CheckCircle2, Clock, Hourglass, Timer, XCircle, type LucideIcon } from "lucide-react";
 import type { HTMLAttributes, ReactNode, TdHTMLAttributes, ThHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 
@@ -8,29 +9,30 @@ export function CardHeader({ title, description, action, className }: { title: R
 }
 
 export type BookingStatus = "held" | "pending" | "confirmed" | "completed" | "cancelled" | "expired" | "expired_paid";
-const statusStyles: Record<BookingStatus, { label: string; className: string }> = {
-  held: { label: "Held", className: "bg-warning-soft text-warning" },
-  pending: { label: "Pending", className: "bg-primary-soft text-primary" },
-  confirmed: { label: "Confirmed", className: "bg-success-soft text-success" },
-  completed: { label: "Completed", className: "bg-surface-muted text-ink" },
-  cancelled: { label: "Cancelled", className: "bg-danger-soft text-danger" },
-  expired: { label: "Expired", className: "bg-surface-muted text-muted" },
-  expired_paid: { label: "Expired, paid", className: "bg-danger-soft text-danger" }
+// The words come from @bayana/shared (BOOKING_STATUS_LABEL), so the badge, headings and timelines say the same thing.
+const statusStyles: Record<BookingStatus, { icon: LucideIcon; className: string }> = {
+  held: { icon: Timer, className: "bg-warning-soft text-warning" },
+  pending: { icon: Hourglass, className: "bg-primary-soft text-primary" },
+  confirmed: { icon: CheckCircle2, className: "bg-success-soft text-success" },
+  completed: { icon: CheckCheck, className: "bg-surface-muted text-ink" },
+  cancelled: { icon: XCircle, className: "bg-danger-soft text-danger" },
+  expired: { icon: Clock, className: "bg-surface-muted text-muted" },
+  expired_paid: { icon: AlertTriangle, className: "bg-danger-soft text-danger" }
 };
 const tones = { neutral: "bg-surface-muted text-ink", primary: "bg-primary-soft text-primary", accent: "bg-accent-soft text-accent-ink", success: "bg-success-soft text-success", warning: "bg-warning-soft text-warning", danger: "bg-danger-soft text-danger" };
 export function Badge({ tone = "neutral", className, children }: { tone?: keyof typeof tones; className?: string; children: ReactNode }) {
   return <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold", tones[tone], className)}>{children}</span>;
 }
-/** Status is shown as a dot plus text, never colour alone. Unknown statuses fall back to the raw label. */
+/** Status is shown as an icon plus text, never colour alone. Unknown statuses fall back to the raw label. */
 export function StatusBadge({ status, className }: { status: string; className?: string }) {
-  const key = status.toLowerCase() as BookingStatus; const style = statusStyles[key];
-  return <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold", style?.className ?? tones.neutral, className)}><span aria-hidden className="size-1.5 rounded-full bg-current" />{style?.label ?? status}</span>;
+  const key = status.toLowerCase() as BookingStatus; const style = Object.hasOwn(statusStyles, key) ? statusStyles[key] : undefined; const Icon = style?.icon;
+  return <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold", style?.className ?? tones.neutral, className)}>{Icon ? <Icon aria-hidden className="size-3.5 shrink-0" /> : <span aria-hidden className="size-1.5 rounded-full bg-current" />}{bookingStatusLabel(status)}</span>;
 }
 
 /** Paise in, INR out. Integer paise only; the formatting itself lives in @bayana/shared. */
 export function Money({ paise, className, size = "base" }: { paise: number | string; className?: string; size?: "sm" | "base" | "lg" | "xl" }) {
   const sizes = { sm: "text-sm", base: "text-base", lg: "text-lg font-semibold", xl: "text-2xl font-semibold" };
-  return <span className={cn("tabular-nums", sizes[size], className)}>{formatINR(Number(paise))}</span>;
+  return <span className={cn("tabular-nums", sizes[size], className)}>{formatAmount(Number(paise))}</span>;
 }
 
 export function Skeleton({ className, ...props }: HTMLAttributes<HTMLDivElement>) { return <div aria-hidden className={cn("animate-pulse rounded-input bg-surface-muted", className)} {...props} />; }

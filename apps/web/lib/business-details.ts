@@ -37,6 +37,9 @@ export type BusinessDetails = typeof businessDetails;
 /** "[LEGAL BUSINESS NAME]"-style markers: an opening bracket, then capitals, digits and punctuation, then a closing bracket. */
 const placeholder = /\[[A-Z][A-Z0-9 ,.:%&/()-]*\]/;
 
+/** A detail ready to show people, or null while it is still a placeholder (the footer leaves unfilled ones out). */
+export const filledDetail = (value: string | null | undefined) => value && !placeholder.test(value) ? value : null;
+
 /** Every field path whose value still contains a placeholder, for example ["legalName", "grievanceOfficer.name"]. */
 export function businessDetailsPlaceholders(details: unknown, path = ""): string[] {
   if (typeof details === "string") return placeholder.test(details) ? [path] : [];

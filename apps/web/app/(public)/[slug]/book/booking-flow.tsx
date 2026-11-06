@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ArrowLeft, CalendarCheck, CheckCircle2, ChevronDown, Lock, Mail } from "lucide-react";
-import { bookingReturnPath, dayRangeLabel, formatINR, googleErrorCopy, parseBookingReturnPath, sessionRangeLabel, tiersInWords } from "@bayana/shared";
+import { bookingErrorCopy, bookingReturnPath, dayRangeLabel, formatAmount, googleErrorCopy, parseBookingReturnPath, sameClockAt, sessionRangeLabel, tiersInWords, timezoneLabel } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Card, EmptyState, LoadingState, Money, Notice, Skeleton, Stepper } from "@/components/ui/display";
 import { Checkbox, Field, Input, RadioCards, Textarea } from "@/components/ui/field";
@@ -100,6 +100,8 @@ export function BookingFlow() {
   const daily = service?.booking_mode === "daily";
   const markExpired = useCallback(() => setHoldExpired(true), []);
   const learnHoldExpiry = useCallback((until: string) => setHold(current => current && !current.holdExpiresAt ? { ...current, holdExpiresAt: until } : current), []);
+  /** The verified email belongs to a business account (a vendor booking their own page): ask for another email. */
+  const useAnotherEmail = useCallback(() => { setVerified(false); setDetails(current => ({ ...current, email: "" })); setStep(2); window.scrollTo({ top: 0 }); setMessage(bookingErrorCopy.BUSINESS_ACCOUNT_CANNOT_BOOK); }, []);
   const restartFromTime = useCallback((copy: string) => { setHold(undefined); setHoldExpired(false); setSlotStart(""); setDayCount(0); setBlockCount(0); setSlotsVersion(value => value + 1); setMessage(copy); setStep(1); }, []);
 
   const createHold = async () => {
@@ -109,6 +111,7 @@ export function BookingFlow() {
       setHold({ id: booking.id, token: booking.access_token ?? null, holdExpiresAt: booking.hold_expires_at }); setHoldExpired(false); go(4);
     } catch (error) {
       if (error instanceof ApiError && error.code === "SLOT_TAKEN") restartFromTime(humanMessage(error));
+      else if (error instanceof ApiError && error.code === "BUSINESS_ACCOUNT_CANNOT_BOOK") useAnotherEmail();
       else setMessage(humanMessage(error));
     }
   };
@@ -122,7 +125,7 @@ export function BookingFlow() {
       <div className="grid gap-1">
         <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-primary"><Lock className="size-3.5" aria-hidden />Secure booking</p>
         <h1 className="text-2xl sm:text-4xl">Book {vendor.display_name}</h1>
-        <p className="text-sm text-muted">Step {step + 1} of {steps.length}: {daily && step === 1 ? "Dates" : steps[step]} · {daily ? "Days" : "Times"} in {vendor.timezone}</p>
+        <p className="text-sm text-muted">Step {step + 1} of {steps.length}: {daily && step === 1 ? "Dates" : steps[step]} · {daily ? "Days" : "Times"} in {timezoneLabel(vendor.timezone, "long")}</p>
       </div>
       <Stepper steps={steps} current={step} />
       {service && step > 0 && step < 5 && <Summary service={service} timezone={vendor.timezone} startsAt={slotStart} date={slotDate} days={dayCount} blocks={blockCount} />}
@@ -133,7 +136,7 @@ export function BookingFlow() {
       {step === 1 && service && daily && <DayStep vendor={vendor} service={service} version={slotsVersion} date={slotDate} days={dayCount} onDate={setSlotDate} onDays={setDayCount} onBack={() => go(0)} onNext={() => go(2)} />}
       {step === 1 && service && !daily && <TimeStep vendor={vendor} service={service} version={slotsVersion} date={slotDate} start={slotStart} blocks={blockCount} onDate={setSlotDate} onStart={setSlotStart} onBlocks={setBlockCount} onBack={() => go(0)} onNext={() => go(2)} />}
       {step === 2 && <DetailsStep phoneRequired={vendor.phone_required} value={details} verified={verified} onChange={setDetails} onBack={() => go(1)} onNext={() => go(3)} />}
-      {step === 3 && service && <VerifyStep email={details.email} verified={verified} onVerified={() => setVerified(true)} onHold={createHold} onBack={() => go(2)}
+      {step === 3 && service && <VerifyStep email={details.email} verified={verified} onVerified={() => setVerified(true)} onBusinessAccount={useAnotherEmail} onHold={createHold} onBack={() => go(2)}
         googleNext={bookingReturnPath({ slug: vendor.slug, service: service.id, ...(slotDate ? { date: slotDate } : {}), ...(daily ? { days: dayCount || undefined } : { start: slotStart || undefined, blocks: blockCount > 1 ? blockCount : undefined }) })}
         onLeaveForGoogle={() => saveDetails(vendor.slug, { name: details.name.trim(), phone: details.phone.trim(), notes: details.notes.trim() })} />}
       {step === 4 && hold && (holdExpired
@@ -165,7 +168,7 @@ function ServiceStep({ services, selected, onSelect }: { services: PublicService
         <li key={service.id}><button type="button" aria-pressed={selected === service.id} onClick={() => onSelect(service.id)} className={cn("grid w-full gap-2 rounded-card bg-surface p-4 text-left ring-1 transition-shadow hover:ring-primary", selected === service.id ? "ring-2 ring-primary" : "ring-border")}>
           <span className="flex items-start justify-between gap-3"><strong>{service.name}</strong><span className="grid justify-items-end"><Money paise={service.price_paise} className="font-semibold" />{priceUnit(service) && <span className="text-xs text-muted">{priceUnit(service)}</span>}</span></span>
           {service.description && <span className="text-sm text-muted">{service.description}</span>}
-          <span className="text-sm text-muted">{serviceLength(service)} · {service.advance_paise > 0 ? `${formatINR(service.advance_paise)} now, ${formatINR(service.remaining_paise)} later` : "No advance"}</span>
+          <span className="text-sm text-muted">{serviceLength(service)} · {service.advance_paise > 0 ? `${formatAmount(service.advance_paise)} now, ${formatAmount(service.remaining_paise)} later` : "No advance"}</span>
         </button></li>
       ))}</ul>
     </section>
@@ -212,7 +215,7 @@ function TimeStep({ vendor, service, version, date, start, blocks, onDate, onSta
         {!slots ? <LoadingState label="Loading times…" className="grid grid-cols-3 gap-2 sm:grid-cols-4">{[0, 1, 2, 3, 4, 5].map(index => <Skeleton key={index} className="h-11" />)}</LoadingState>
           : slots.length ? <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4" aria-label="Open times">{slots.map(slot => (
               <li key={slot.startsAt}><button type="button" aria-pressed={start === slot.startsAt} onClick={() => pick(slot)} className={cn("grid min-h-11 w-full place-items-center rounded-input px-1 py-1.5 text-sm font-medium tabular-nums ring-1 transition-colors", start === slot.startsAt ? "bg-primary text-primary-foreground ring-primary" : "bg-surface text-ink ring-border hover:ring-primary")}>
-                {formatTime(slot.startsAt, vendor.timezone)}{viewerZone !== vendor.timezone && <span className="text-[11px] font-normal opacity-80">{formatTime(slot.startsAt, viewerZone)} yours</span>}
+                {formatTime(slot.startsAt, vendor.timezone)}{!sameClockAt(viewerZone, vendor.timezone, slot.startsAt) && <span className="text-[11px] font-normal opacity-80">{formatTime(slot.startsAt, viewerZone)} yours</span>}
               </button></li>
             ))}</ul>
           : <p className="text-sm text-muted">No times remain on this day. Choose another day above.</p>}
@@ -220,11 +223,11 @@ function TimeStep({ vendor, service, version, date, start, blocks, onDate, onSta
       {start && offersLength(service) && choices.length > 0 && (
         <div aria-live="polite" className="grid gap-2">
           <RadioCards legend={`How long, from ${formatTime(start, vendor.timezone)}?`} name="blocks" value={String(blocks)} onChange={value => onBlocks(Number(value))}
-            options={choices.map(choice => ({ value: String(choice.blocks), label: choice.label, description: `${formatTime(start, vendor.timezone)} to ${formatTime(rangeEnd(start, choice.blocks, service.duration_minutes ?? 0), vendor.timezone)} · ${formatINR(sessionQuote(service, choice.blocks).total)}` }))} />
+            options={choices.map(choice => ({ value: String(choice.blocks), label: choice.label, description: `${formatTime(start, vendor.timezone)} to ${formatTime(rangeEnd(start, choice.blocks, service.duration_minutes ?? 0), vendor.timezone)} · ${formatAmount(sessionQuote(service, choice.blocks).total)}` }))} />
           {choices.length < maxBlocks - minBlocks + 1 && <p className="text-xs text-muted">Longer is not free from this time. Pick an earlier start for more.</p>}
         </div>
       )}
-      {start && blocks > 1 && <p className="rounded-input bg-surface-muted px-4 py-3 text-sm" data-testid="session-summary"><strong>{sessionRangeLabel(start, rangeEnd(start, blocks, service.duration_minutes ?? 0), vendor.timezone)}</strong> · Total {formatINR(sessionQuote(service, blocks).total)}{sessionQuote(service, blocks).advance > 0 ? ` · Advance ${formatINR(sessionQuote(service, blocks).advance)} now` : ""}</p>}
+      {start && blocks > 1 && <p className="rounded-input bg-surface-muted px-4 py-3 text-sm" data-testid="session-summary"><strong>{sessionRangeLabel(start, rangeEnd(start, blocks, service.duration_minutes ?? 0), vendor.timezone)}</strong> · Total {formatAmount(sessionQuote(service, blocks).total)}{sessionQuote(service, blocks).advance > 0 ? ` · Advance ${formatAmount(sessionQuote(service, blocks).advance)} now` : ""}</p>}
       <div className="flex flex-wrap gap-2"><Button variant="ghost" onClick={onBack}><ArrowLeft aria-hidden />Service</Button><Button className="flex-1" size="lg" disabled={!ready} title={!ready ? "Choose a time to continue" : undefined} onClick={onNext}>Continue</Button></div>
     </section>
   );
@@ -250,7 +253,7 @@ function DetailsStep({ phoneRequired, value, verified, onChange, onBack, onNext 
   );
 }
 
-function VerifyStep({ email, verified, onVerified, onHold, onBack, googleNext, onLeaveForGoogle }: { email: string; verified: boolean; onVerified: () => void; onHold: () => Promise<void>; onBack: () => void; googleNext: string; onLeaveForGoogle: () => void }) {
+function VerifyStep({ email, verified, onVerified, onBusinessAccount, onHold, onBack, googleNext, onLeaveForGoogle }: { email: string; verified: boolean; onVerified: () => void; onBusinessAccount: () => void; onHold: () => Promise<void>; onBack: () => void; googleNext: string; onLeaveForGoogle: () => void }) {
   const google = useGoogleEnabled();
   const [sent, setSent] = useState(false); const [code, setCode] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [cooldown, setCooldown] = useState(0);
   useEffect(() => { if (!cooldown) return; const timer = setTimeout(() => setCooldown(cooldown - 1), 1000); return () => clearTimeout(timer); }, [cooldown]);
@@ -259,7 +262,12 @@ function VerifyStep({ email, verified, onVerified, onHold, onBack, googleNext, o
     event.preventDefault(); setError("");
     if (!/^\d{6}$/.test(code)) { setError("Enter the six digits from the email."); return; }
     setBusy(true);
-    try { await api("/v1/auth/booking/otp/verify", { body: { email: email.trim(), code } }); onVerified(); await onHold(); }
+    try {
+      const { user } = await api<{ user: { role: string } }>("/v1/auth/booking/otp/verify", { body: { email: email.trim(), code } });
+      // The code proves the email, but a business account cannot book as a customer (the API would refuse the hold too).
+      if (user.role !== "CLIENT") { onBusinessAccount(); return; }
+      onVerified(); await onHold();
+    }
     catch (failure) { setError(humanMessage(failure)); } finally { setBusy(false); }
   };
   const holdNow = async () => { setBusy(true); try { await onHold(); } finally { setBusy(false); } };
@@ -312,7 +320,7 @@ function ReviewStep({ hold, onHoldInfo, onExpired, onAccepted }: { hold: Hold; o
     <form onSubmit={submit} className="grid gap-4">
       <Card className="grid gap-4">
         <h2 className="text-lg">Key terms</h2>
-        <p className="text-sm">{view.service_name} with {view.vendor.display_name}, {formatBookingWhen(view, view.timezone)} ({view.timezone})</p>
+        <p className="text-sm">{view.service_name} with {view.vendor.display_name}, {formatBookingWhen(view, view.timezone)} ({timezoneLabel(view.timezone)})</p>
         <dl className="grid gap-2 text-sm">
           <div className="flex justify-between gap-4"><dt className="text-muted">Total price</dt><dd><Money paise={view.total_paise} size="sm" /></dd></div>
           <div className="flex justify-between gap-4 font-semibold"><dt>{view.advance_paise > 0 ? "Advance to confirm" : "Advance"}</dt><dd>{view.advance_paise > 0 ? <Money paise={view.advance_paise} size="sm" /> : "None"}</dd></div>
@@ -346,9 +354,9 @@ function PayStep({ vendor, email, accepted, bookingId, token, bookingHref }: { v
   );
   return (
     <Card className="grid gap-4">
-      <div className="grid gap-1"><h2 className="text-lg">Pay the advance</h2><p className="text-sm text-muted">Pay <strong className="text-ink">{formatINR(Number(booking.advance_paise))}</strong> now to confirm. The rest is due later, as agreed. Your booking is confirmed only once the payment is verified.</p></div>
+      <div className="grid gap-1"><h2 className="text-lg">Pay the advance</h2><p className="text-sm text-muted">Pay <strong className="text-ink">{formatAmount(Number(booking.advance_paise))}</strong> now to confirm. The rest is due later, as agreed. Your booking is confirmed only once the payment is verified.</p></div>
       <PaymentPanel bookingId={bookingId} token={token} amountPaise={Number(booking.advance_paise)} businessName={vendor.display_name} email={email.includes("@") ? email : undefined} onSettled={view => setBooking(current => ({ ...current, status: view.status, hold_expires_at: view.hold_expires_at }))} />
-      <Button asChild variant="ghost" size="sm" className="w-fit"><Link href={bookingHref}>Pay later from your booking page (while the time is held)</Link></Button>
+      <Button asChild variant="ghost" size="sm" className="w-full whitespace-normal py-2 text-center"><Link href={bookingHref}>Pay later from your booking page (while the time is held)</Link></Button>
     </Card>
   );
 }

@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
-import { localDateTimeToUtc } from "@bayana/shared";
+import { localDateTimeToUtc, timezoneLabel } from "@bayana/shared";
 import { PageHeader } from "@/components/layout/brand";
 import { dateLabel, formatBookingTime, formatTime, localDateKey } from "@/components/booking/time";
 import { NewBookingDialog } from "@/components/dashboard/booking-actions";
@@ -98,7 +98,7 @@ export function CalendarView() {
               ); })}
             </ol>}
             <Sheet open={Boolean(openDay)} onOpenChange={open => { if (!open) setOpenDay(undefined); }}>
-              {openDay && <SheetContent title={dateLabel(openDay, "full")} description={`Times in ${data.timezone}`}><DayPanel date={openDay} data={data} onChanged={() => void reload()} /></SheetContent>}
+              {openDay && <SheetContent title={dateLabel(openDay, "full")} description={`Times in ${timezoneLabel(data.timezone, "long")}`}><DayPanel date={openDay} data={data} onChanged={() => void reload()} /></SheetContent>}
             </Sheet>
           </>
         );

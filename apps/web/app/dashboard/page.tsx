@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { AlertTriangle, CalendarCheck2, CheckCircle2, Copy, ExternalLink, HandCoins, Undo2 } from "lucide-react";
-import { formatINR } from "@bayana/shared";
+import { formatAmount } from "@bayana/shared";
 import { PageHeader } from "@/components/layout/brand";
 import { BookingList } from "@/components/dashboard/booking-list";
 import { NewBookingDialog } from "@/components/dashboard/booking-actions";
@@ -20,10 +20,10 @@ import { env } from "@/env";
 
 type Home = { profile: Profile; checklist: Checklist; overview: Overview };
 const todoCopy: Record<TodoKind, { icon: typeof HandCoins; text: (name: string, amount: number | null) => string }> = {
-  record_advance: { icon: HandCoins, text: (name, amount) => `Collect and record the ${formatINR(amount ?? 0)} advance from ${name}` },
+  record_advance: { icon: HandCoins, text: (name, amount) => `Collect and record the ${formatAmount(amount ?? 0)} advance from ${name}` },
   mark_complete: { icon: CheckCircle2, text: name => `Mark ${name}'s booking as completed` },
-  return_money: { icon: Undo2, text: (name, amount) => `Return ${formatINR(amount ?? 0)} to ${name} directly (paid to you offline)` },
-  refund_failed: { icon: AlertTriangle, text: (name, amount) => `A ${formatINR(amount ?? 0)} refund to ${name} failed. We're looking into it.` }
+  return_money: { icon: Undo2, text: (name, amount) => `Return ${formatAmount(amount ?? 0)} to ${name} directly (paid to you offline)` },
+  refund_failed: { icon: AlertTriangle, text: (name, amount) => `A ${formatAmount(amount ?? 0)} refund to ${name} failed. We're looking into it.` }
 };
 
 /** SPEC 5.3 dashboard home: today and the next 7 days, money summary, to-do. */

@@ -1,6 +1,6 @@
 "use client";
 import { useState, type FormEvent } from "react";
-import { ONLINE_PAYMENT_LABEL, formatINR, onlineRefundSchema } from "@bayana/shared";
+import { ONLINE_PAYMENT_LABEL, formatAmount, onlineRefundSchema } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, Notice } from "@/components/ui/display";
 import { Field, Input } from "@/components/ui/field";
@@ -28,14 +28,14 @@ export function OnlineRefundForm({ path, payments, refunds, onDone }: { path: st
     const parsed = onlineRefundSchema.safeParse({ amount_paise: Number.isFinite(amount) ? amount : 0, reason: reason.trim() });
     const problems: Record<string, string> = {};
     if (!parsed.success) for (const issue of parsed.error.issues) problems[String(issue.path[0])] ??= issue.message;
-    if (parsed.success && parsed.data.amount_paise > refundable) problems.amount_paise = `At most ${formatINR(refundable)} can be refunded online.`;
+    if (parsed.success && parsed.data.amount_paise > refundable) problems.amount_paise = `At most ${formatAmount(refundable)} can be refunded online.`;
     setFields(problems); if (Object.keys(problems).length || !parsed.success) return;
     setBusy(true);
-    try { await api(path, { body: parsed.data }); setDone(`Refund of ${formatINR(parsed.data.amount_paise)} sent to Razorpay. Its status appears here when Razorpay confirms it.`); setRupees(""); setReason(""); onDone(); }
+    try { await api(path, { body: parsed.data }); setDone(`Refund of ${formatAmount(parsed.data.amount_paise)} sent to Razorpay. Its status appears here when Razorpay confirms it.`); setRupees(""); setReason(""); onDone(); }
     catch (failure) { setError(humanMessage(failure)); } finally { setBusy(false); }
   };
   return (
-    <Card><CardHeader title="Refund an online payment" description={`${ONLINE_PAYMENT_LABEL}: up to ${formatINR(refundable)} can go back to the customer's card or UPI. The booking stays as it is.`} />
+    <Card><CardHeader title="Refund an online payment" description={`${ONLINE_PAYMENT_LABEL}: up to ${formatAmount(refundable)} can go back to the customer's card or UPI. The booking stays as it is.`} />
       <form onSubmit={submit} noValidate className="grid gap-4">
         <Field label="Amount (₹)" error={fields.amount_paise}>{p => <Input {...p} inputMode="decimal" value={rupees} onChange={event => setRupees(event.target.value.replace(/[^\d.]/g, ""))} placeholder={String(refundable / 100)} />}</Field>
         <Field label="Reason" hint="The customer sees this on the refund email." error={fields.reason}>{p => <Input {...p} value={reason} maxLength={300} onChange={event => setReason(event.target.value)} />}</Field>
