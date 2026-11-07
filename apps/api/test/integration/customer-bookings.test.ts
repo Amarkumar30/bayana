@@ -94,6 +94,31 @@ describe("a customer stays signed in", () => {
   });
 });
 
+describe("the hold that starts on its own after the email code", () => {
+  it("a double submit after verifying (two holds at once with the page's one key) creates exactly one hold, and a refresh replay returns it", async () => {
+    const v = await vendor(); const email = `auto-${randomUUID().slice(0, 8)}@example.test`, from = ip(), since = capturedEmails().length;
+    expect((await call("POST", "/v1/auth/booking/otp/request", { from, body: { email } })).status).toBe(202);
+    const verified = await call("POST", "/v1/auth/booking/otp/verify", { from, body: { email, code: await codeFor(email, since) } });
+    expect(verified.status).toBe(200);
+    const cookie = sessionCookie(verified)!, key = randomUUID(), date = isoDay(11);
+    const body = { slug: v.slug, date, service_id: v.serviceId, starts_at: `${date}T04:30:00.000Z`, name: "Meera Shah" };
+    const send = async () => {
+      const response = await fetch(`${base}/v1/bookings`, { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": from, cookie, "idempotency-key": key }, body: JSON.stringify(body) });
+      return { status: response.status, body: await response.json() as { booking: { id: string; status: string } } };
+    };
+    const [first, second] = await Promise.all([send(), send()]);
+    expect([first.status, second.status]).toEqual([201, 201]);
+    expect(second.body.booking.id).toBe(first.body.booking.id);
+    // A refresh while the first answer was in flight sends the same key again: still the same hold.
+    const replay = await send();
+    expect(replay.body.booking).toMatchObject({ id: first.body.booking.id, status: "HELD" });
+    const rows = await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE v.slug=$1", [v.slug]);
+    expect(rows.rows[0].n).toBe(1);
+    const events = await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM booking_events WHERE booking_id=$1", [first.body.booking.id]);
+    expect(events.rows[0].n).toBe(1);
+  });
+});
+
 describe("My bookings: only your own, in time order", () => {
   it("lists the signed-in customer's bookings (upcoming in order, with terms and amounts) and never another customer's", async () => {
     const v = await vendor(); const me = await customer(), other = await customer();

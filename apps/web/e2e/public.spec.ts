@@ -3,24 +3,23 @@ import { MOCK_API_URL, SAMPLE_BOOKING_ID, mockApi } from "./mock-api";
 
 // Customer-facing screens against the mocked API contract. The real end-to-end flow runs in e2e-live against the API.
 
-test("booking stepper: service preselected, date strip, time chips, inline detail errors, then the code step", async ({ page }) => {
+test("booking stepper: service preselected, date strip, time chips, inline detail errors, then the code on the same screen", async ({ page }) => {
   await mockApi(page);
   await page.goto("/studio-sunday/book?service=11111111-1111-4111-8111-111111111111");
-  await expect(page.getByText("Step 2 of 6: Time")).toBeVisible();
+  await expect(page.getByText("Step 2 of 4: Time")).toBeVisible();
   const days = page.getByRole("list", { name: "Open days" }).getByRole("button");
   await expect(days.first()).toHaveAttribute("aria-pressed", "true");
   expect(await days.count()).toBeLessThanOrEqual(14);
   await expect(page.getByRole("button", { name: "Continue" })).toBeDisabled();
   await page.getByRole("list", { name: "Open times" }).getByRole("button").first().click();
   await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page.getByText("Step 3 of 6: Details")).toBeVisible();
-  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByText("Step 3 of 4: Details")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Confirm your email" })).toBeVisible();
+  await expect(page.getByText("Nothing is held or charged until your email is confirmed.", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Send my code" }).click();
   await expect(page.getByText("Enter your name (at least 2 characters).")).toBeVisible();
   await expect(page.getByText("This business needs a phone number (at least 8 digits).")).toBeVisible();
-  await page.getByLabel("Your name").fill("Asha Rao"); await page.getByLabel("Email").fill("asha@example.in"); await page.getByLabel("Phone").fill("+91 98000 00000");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page.getByRole("heading", { name: "Confirm your email" })).toBeVisible();
-  await expect(page.getByText("Nothing is held or charged until your email is confirmed.")).toBeVisible();
+  await expect(page.getByText("Enter an email address you can open now", { exact: false })).toBeVisible();
 });
 
 test("customer booking page: contract, honest payment copy and a refund preview before cancelling", async ({ page }) => {

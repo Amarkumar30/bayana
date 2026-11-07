@@ -21,7 +21,7 @@ async function bookAndComeBack(page: Page, browser: Browser) {
   await page.getByLabel("Six-digit code").fill(await codeFor(email, asked));
   await page.getByRole("button", { name: "Verify and hold my time" }).click();
   await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Agree and continue" }).click();
+  await page.getByRole("button", { name: "Agree and send request" }).click();
   await expect(page.getByRole("link", { name: "View your booking" }).first()).toBeVisible();
 
   // What the browser keeps on disk. A cookie without Max-Age/Expires is a session cookie (expires -1) and is gone after a restart.

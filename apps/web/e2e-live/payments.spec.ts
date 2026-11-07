@@ -36,16 +36,17 @@ async function reachPayStep(page: Page) {
   await page.getByRole("button", { name: "Send my code" }).click();
   await page.getByLabel("Six-digit code").fill(await codeFor(email, asked));
   await page.getByRole("button", { name: "Verify and hold my time" }).click();
-  await page.getByLabel(/I have read and agree/).check();
-  await page.getByRole("button", { name: "Agree and continue" }).click();
-  await expect(page.getByRole("heading", { name: "Pay the advance" })).toBeVisible();
+  await expect(page.getByText("Step 4 of 4: Review and pay")).toBeVisible();
   await expect(page.getByTestId("hold-countdown")).toBeVisible();
+  // The test banner shows before anyone pays; one button agrees and opens Checkout.
+  await expect(page.getByText("Test payment: no real money will be charged.")).toBeVisible();
+  await page.getByLabel(/I agree to the terms/).check();
   return vendor;
 }
 
 test("a customer pays the advance in Checkout and sees confirmation only after the server verifies it", async ({ page }) => {
   await reachPayStep(page);
-  await page.getByRole("button", { name: "Pay ₹2,000" }).click();
+  await page.getByRole("button", { name: "Agree and pay ₹2,000" }).click();
   await expect(page.getByRole("heading", { name: "You're booked" })).toBeVisible();
   await expect(page.getByText("Your advance is verified.", { exact: false })).toBeVisible();
   await page.getByRole("link", { name: "View your booking" }).click();
@@ -62,7 +63,7 @@ test("a customer pays the advance in Checkout and sees confirmation only after t
 test("closing Checkout charges nothing, says so, and paying again still works", async ({ page }) => {
   await page.addInitScript(() => { (window as unknown as { __checkout: string }).__checkout = "dismiss"; });
   await reachPayStep(page);
-  await page.getByRole("button", { name: "Pay ₹2,000" }).click();
+  await page.getByRole("button", { name: "Agree and pay ₹2,000" }).click();
   await expect(page.getByText("Payment window closed. Nothing was charged. You can try again while your time is held.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "You're booked" })).toHaveCount(0);
   await page.evaluate(() => { (window as unknown as { __checkout: string }).__checkout = "pay"; });

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { DAILY_PUBLIC_SERVICE, MOCK_API_URL, mockApi, mockDayStatus, publicVendor } from "./mock-api";
+import { DAILY_PUBLIC_SERVICE, MOCK_API_URL, mockApi, mockCustomerFlow, mockDayStatus, publicVendor } from "./mock-api";
 import { guardSideScroll } from "./side-scroll";
 
 // Every screen these tests visit must fit the width (no sideways scroll), not just the last one.
@@ -39,13 +39,12 @@ test("sign-up offers Google above the email code, with an or divider", async ({ 
   await expect(page.getByRole("button", { name: "Email me a code" })).toBeVisible();
 });
 
-test("booking: the verify step offers Google for customers, carrying the chosen time in an allow-listed return path", async ({ page }) => {
+test("booking: the details step offers Google for customers, carrying the chosen time in an allow-listed return path", async ({ page }) => {
   await mockApi(page);
   await page.goto(`/studio-sunday/book?service=${PORTRAIT}`);
   await page.getByRole("list", { name: "Open times" }).getByRole("button").first().click();
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel("Your name").fill("Ravi Iyer"); await page.getByLabel("Email").fill("ravi@example.test"); await page.getByLabel("Phone").fill("9876543210");
-  await page.getByRole("button", { name: "Continue" }).click();
   const google = page.getByRole("link", { name: "Continue with Google" });
   await expect(google).toBeVisible();
   await expect(page.getByRole("button", { name: "Send my code" })).toBeVisible();
@@ -65,19 +64,17 @@ test("booking: the verify step offers Google for customers, carrying the chosen 
   expect(await page.evaluate(() => sessionStorage.getItem("bayana:booking-details:studio-sunday"))).toBe(JSON.stringify({ name: "Ravi Iyer", phone: "9876543210", notes: "" }));
 });
 
-test("booking: back from Google, the selection and details are restored, the email is the verified one, and no code is asked", async ({ page }) => {
-  await mockApi(page);
+test("booking: back from Google, the selection and details are restored, the email is the verified one, no code is asked and the time is held", async ({ page }) => {
+  await mockApi(page); const calls = await mockCustomerFlow(page, { email: "ravi.g@gmail.test" });
   await page.addInitScript(() => sessionStorage.setItem("bayana:booking-details:studio-sunday", JSON.stringify({ name: "Ravi Iyer", phone: "9876543210", notes: "Window seat" })));
-  await page.route(`${MOCK_API_URL}/v1/auth/me`, route => route.fulfill({ json: { user: { id: "u-1", email: "ravi.g@gmail.test", role: "CLIENT" } } }));
   await page.goto(`/studio-sunday/book?service=${PORTRAIT}&date=${day}&start=${encodeURIComponent(start)}&google=1`);
-  await expect(page.getByRole("heading", { name: "Email confirmed" })).toBeVisible();
-  await expect(page.getByText("ravi.g@gmail.test is verified.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Hold this time" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Key terms" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Send my code" })).toHaveCount(0);
-  await expect(page.getByText("Portrait session")).toBeVisible();
-  // The address bar no longer carries the Google marker, so a reload does not repeat the return.
-  expect(new URL(page.url()).search).toBe(`?service=${PORTRAIT}`);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
+  expect(calls.verify).toBe(0); expect(calls.hold).toBe(1);
+  expect(calls.bodies[0]).toMatchObject({ service_id: PORTRAIT, starts_at: start, name: "Ravi Iyer", phone: "9876543210", notes: "Window seat" });
+  // The address bar no longer carries the Google marker, so a reload does not repeat the return; it reopens the hold.
+  const search = new URL(page.url()).searchParams;
+  expect(search.get("google")).toBeNull(); expect(search.get("resume")).toBeTruthy();
 });
 
 test("booking: a Google error comes back as a sentence on the verify step, with the email code still there", async ({ page }) => {
@@ -85,6 +82,7 @@ test("booking: a Google error comes back as a sentence on the verify step, with 
   await page.addInitScript(() => sessionStorage.setItem("bayana:booking-details:studio-sunday", JSON.stringify({ name: "Ravi Iyer", phone: "9876543210", notes: "" })));
   await page.goto(`/studio-sunday/book?service=${PORTRAIT}&date=${day}&start=${encodeURIComponent(start)}&google_error=google_unverified`);
   await expect(page.getByText("Google hasn't verified that email address yet. Sign in with an email code instead.")).toBeVisible();
+  await expect(page.getByLabel("Your name")).toHaveValue("Ravi Iyer");
   await expect(page.getByRole("heading", { name: "Confirm your email" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Continue with Google" })).toBeVisible();
 });
@@ -105,11 +103,10 @@ async function withStudio(page: Page) {
     return route.fulfill({ json: { timezone: "Asia/Kolkata", min_blocks: 1, max_blocks: 4, slots: [{ startsAt: `${date}T04:30:00.000Z`, endsAt: `${date}T05:30:00.000Z`, maxBlocks: 3 }] } });
   });
 }
-/** Fills the details step, reads the Google link at the verify step, and checks the return path carries no personal data. */
+/** Fills the details step, reads its Google link, and checks the return path carries no personal data. */
 async function googleNextAfterDetails(page: Page) {
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel("Your name").fill("Ravi Iyer"); await page.getByLabel("Email").fill("ravi@example.test"); await page.getByLabel("Phone").fill("9876543210");
-  await page.getByRole("button", { name: "Continue" }).click();
   const href = new URL((await page.getByRole("link", { name: "Continue with Google" }).getAttribute("href"))!);
   expect(href.searchParams.get("intent")).toBe("customer");
   const next = href.searchParams.get("next")!;
@@ -120,12 +117,13 @@ async function googleNextAfterDetails(page: Page) {
   await page.goBack();
   return next;
 }
-/** Back from Google the way the API redirects: the same return path, signed in as the customer. */
+/** Back from Google the way the API redirects: the same return path, signed in as the customer; the time is held on its own. */
 async function returnFromGoogle(page: Page, next: string) {
-  await page.route(`${MOCK_API_URL}/v1/auth/me`, route => route.fulfill({ json: { user: { id: "u-1", email: "ravi.g@gmail.test", role: "CLIENT" } } }));
+  const calls = await mockCustomerFlow(page, { email: "ravi.g@gmail.test" });
   await page.goto(next);
-  await expect(page.getByRole("heading", { name: "Email confirmed" })).toBeVisible();
-  await expect(page.getByText("ravi.g@gmail.test is verified.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Key terms" })).toBeVisible();
+  expect(calls.hold).toBe(1);
+  return calls.bodies[0];
 }
 
 test("Google for a 3-session booking: the sessions go to Google and come back intact", async ({ page }) => {
@@ -137,9 +135,7 @@ test("Google for a 3-session booking: the sessions go to Google and come back in
   const url = new URL(next, "https://x.invalid");
   expect(url.pathname).toBe("/studio-sunday/book");
   expect(Object.fromEntries(url.searchParams)).toMatchObject({ service: STUDIO.id, blocks: "3", google: "1" });
-  await returnFromGoogle(page, next);
-  await expect(page.getByText(/10:00 am to 1:00 pm/).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Hold this time" })).toBeVisible();
+  expect(await returnFromGoogle(page, next)).toMatchObject({ service_id: STUDIO.id, blocks: 3, starts_at: expect.stringMatching(/T04:30:00\.000Z$/) });
 });
 
 test("Google for a 3-day booking: the dates go to Google and come back intact", async ({ page }) => {
@@ -153,9 +149,7 @@ test("Google for a 3-day booking: the dates go to Google and come back intact", 
   await page.getByRole("radio", { name: "3 days" }).click();
   const next = await googleNextAfterDetails(page);
   expect(Object.fromEntries(new URL(next, "https://x.invalid").searchParams)).toMatchObject({ service: DAILY_PUBLIC_SERVICE.id, date: start, days: "3", google: "1" });
-  await returnFromGoogle(page, next);
-  await expect(page.getByText(/\(3 days\)/).first()).toBeVisible();
-  await expect(page.getByRole("button", { name: "Hold this time" })).toBeVisible();
+  expect(await returnFromGoogle(page, next)).toMatchObject({ service_id: DAILY_PUBLIC_SERVICE.id, date: start, days: 3 });
 });
 
 test("a refused Google start comes back to the booking page with a sentence, and the email code is still there", async ({ page }) => {

@@ -72,9 +72,9 @@ export async function enableOnlinePayments(slug: string) {
   finally { await client.end(); }
 }
 
-/** Walks the stepper from the time step up to the code step, picking the first open time. */
+/** Walks the stepper from the time step to the details step (name, phone, email), picking the first open time. */
 export async function chooseTimeAndDetails(page: Page, customer: { name: string; email: string }) {
-  await expect(page.getByText("Step 2 of 6: Time")).toBeVisible();
+  await expect(page.getByText("Step 2 of 4: Time")).toBeVisible();
   const firstTime = page.getByRole("list", { name: "Open times" }).getByRole("button").first();
   await firstTime.click();
   const chosen = await firstTime.textContent();
@@ -82,7 +82,6 @@ export async function chooseTimeAndDetails(page: Page, customer: { name: string;
   await page.getByLabel("Your name").fill(customer.name);
   await page.getByLabel("Email").fill(customer.email);
   await page.getByLabel("Phone").fill("+91 98000 00000");
-  await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByRole("heading", { name: "Confirm your email" })).toBeVisible();
   return chosen;
 }

@@ -209,3 +209,36 @@ export async function mockApi(page: Page, state: VendorState = establishedVendor
   });
   return state;
 }
+
+export const HOLD_ID = "7f3c2a10-0001-4000-8000-0000000000b1";
+/**
+ * The customer's side of a booking (code, hold, terms, agreement), shaped like the API, with counters so a test can check that
+ * a double submit or a refresh never asks for a second hold. Call after mockApi (later routes win). taken: every hold answers
+ * SLOT_TAKEN. role: the user the code (or Google, via /v1/auth/me) proves.
+ */
+export async function mockCustomerFlow(page: Page, options: { taken?: boolean; role?: string; email?: string; payments?: boolean } = {}) {
+  const calls = { verify: 0, hold: 0, keys: [] as string[], bodies: [] as Record<string, unknown>[], accept: 0, booking: 0 };
+  const user = { id: "7f3c2a10-0000-4000-8000-0000000000c1", email: options.email ?? "asha@example.test", role: options.role ?? "CLIENT" };
+  const holdUntil = new Date(Date.now() + 15 * 60_000).toISOString(), day = new Date(Date.now() + 9 * 86_400_000).toISOString().slice(0, 10);
+  let agreed = false;
+  await page.route(`${MOCK_API_URL}/v1/auth/booking/otp/**`, async route => {
+    if (!route.request().url().endsWith("/verify")) return route.fulfill({ status: 202, json: { ok: true } });
+    calls.verify++; await new Promise(resolve => setTimeout(resolve, 150));
+    return route.fulfill({ json: { user } });
+  });
+  await page.route(`${MOCK_API_URL}/v1/auth/me`, route => route.fulfill({ json: { user } }));
+  await page.route(`${MOCK_API_URL}/v1/bookings`, async route => {
+    calls.hold++; calls.keys.push(route.request().headers()["idempotency-key"] ?? ""); calls.bodies.push(route.request().postDataJSON());
+    if (options.taken) return route.fulfill(fail(409, "SLOT_TAKEN", "That time was just taken. Please choose another time."));
+    return route.fulfill({ status: 201, json: { booking: { id: HOLD_ID, status: "HELD", access_token: "hold-token-abc", hold_expires_at: holdUntil } } });
+  });
+  await page.route(`${MOCK_API_URL}/v1/bookings/${HOLD_ID}`, route => { calls.booking++; return route.fulfill({ json: {
+    id: HOLD_ID, status: agreed ? "PENDING" : "HELD", service_name: "Portrait session", duration_minutes: 90, starts_at: `${day}T04:30:00.000Z`, ends_at: `${day}T06:00:00.000Z`, hold_expires_at: holdUntil, timezone: "Asia/Kolkata",
+    vendor: { slug: "studio-sunday", display_name: "Studio Sunday" }, client_name: "Asha Rao", total_paise: 800000, advance_paise: 200000, paid_paise: 0, balance_due_paise: 800000, payments_enabled: options.payments ?? false, viewer: "customer",
+    timeline: [], payments: [], refunds: [], can_pay: agreed && (options.payments ?? false), contract: null, read_only: false,
+    contract_preview: agreed ? null : { body: "Booking terms\nAdvance confirms your date.", sha256: "b".repeat(64) },
+    cancellation_tiers: [{ min_hours_before: 48, refund_percent: 50 }], can_cancel: true, refund_preview: null
+  } }); });
+  await page.route(`${MOCK_API_URL}/v1/bookings/${HOLD_ID}/accept`, route => { calls.accept++; agreed = true; return route.fulfill({ json: { booking: { id: HOLD_ID, status: "PENDING", hold_expires_at: holdUntil, advance_paise: "200000" } } }); });
+  return calls;
+}

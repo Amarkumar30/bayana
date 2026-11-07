@@ -59,21 +59,19 @@ test("booking flow: How long? offers only what is free from the start, the summa
   await expect(lengths).toHaveCount(3);
   await expect(page.getByText("Longer is not free from this time. Pick an earlier start for more.")).toBeVisible();
   await page.getByRole("radio", { name: /3 sessions, 3 hours/ }).check();
-  const summary = page.getByTestId("session-summary");
+  const summary = page.getByTestId("booking-summary");
   await expect(summary).toContainText("10:00 am to 1:00 pm (3 hours)");
-  await expect(summary).toContainText("Total ₹4,500");
-  await expect(summary).toContainText("Advance ₹1,350 now");
+  await expect(summary).toContainText("Total ₹4,500 · Advance ₹1,350 now · ₹3,150 later");
   // A start with only one session free drops the choice back to what fits.
   await page.getByRole("list", { name: "Open times" }).getByRole("button").nth(1).click();
   await expect(page.getByRole("radio", { name: /sessions?, / })).toHaveCount(1);
   await expect(page.getByRole("radio", { name: /1 session, 1 hour/ })).toBeChecked();
-  await expect(page.getByTestId("session-summary")).toHaveCount(0);
+  await expect(summary).toContainText("Total ₹1,500 · Advance ₹450 now · ₹1,050 later");
   await page.getByRole("list", { name: "Open times" }).getByRole("button").first().click();
   await page.getByRole("radio", { name: /3 sessions, 3 hours/ }).check();
   expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel("Your name").fill("Ravi Iyer"); await page.getByLabel("Email").fill("ravi@example.test"); await page.getByLabel("Phone").fill("9876543210");
-  await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Send my code" }).click();
   await page.getByLabel("Six-digit code").fill("123456");
   await page.getByRole("button", { name: "Verify and hold my time" }).click();
@@ -81,7 +79,8 @@ test("booking flow: How long? offers only what is free from the start, the summa
   expect(holdBody).toMatchObject({ service_id: STUDIO.id, blocks: 3 });
   expect(String(holdBody?.starts_at)).toMatch(/T04:30:00\.000Z$/);
   for (const field of ["ends_at", "total_paise", "price_paise", "duration_minutes"]) expect(holdBody).not.toHaveProperty(field);
-  // A range that was just taken sends the customer back to pick a time again, with the plain customer sentence.
-  await expect(page.getByText("This time was just booked by someone else. Pick another time below.")).toBeVisible();
+  // A range that was just taken says so in a plain sentence, with one way on: pick another time.
+  await expect(page.getByText("Someone else booked this time a moment ago. Nothing was held or charged. Pick another time to continue.")).toBeVisible();
+  await page.getByRole("button", { name: "Pick another time" }).click();
   await expect(page.getByRole("heading", { name: "Choose a date and start time" })).toBeVisible();
 });

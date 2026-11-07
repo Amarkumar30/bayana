@@ -19,7 +19,7 @@ test("a stranger books from the public page to the private booking link, on a ph
   await expect(page.getByText("Online payment is not switched on", { exact: false })).toBeAttached();
   await page.getByRole("link", { name: `Book ${vendor.displayName}` }).click();
 
-  await expect(page.getByText("Step 1 of 6: Service")).toBeVisible();
+  await expect(page.getByText("Step 1 of 4: Service")).toBeVisible();
   await page.getByRole("button", { name: /Portrait session/ }).click();
   await chooseTimeAndDetails(page, { name: "Asha Rao", email });
 
@@ -35,12 +35,14 @@ test("a stranger books from the public page to the private booking link, on a ph
   await expect(page.getByText("₹2,000", { exact: true }).first()).toBeVisible();
   await page.getByText("Read the full terms").click();
   await expect(page.getByTestId("contract-text")).toContainText("Asha Rao pays ₹2,000.00 now and ₹6,000.00 on");
-  await page.getByRole("button", { name: "Agree and continue" }).click();
-  await expect(page.getByText("Tick the box to agree to the terms.")).toBeVisible();
-  await page.getByLabel(/I have read and agree/).check();
-  await page.getByRole("button", { name: "Agree and continue" }).click();
+  // The box starts unticked and the button stays off until it is ticked.
+  const agree = page.getByRole("button", { name: "Agree and send request" });
+  await expect(page.getByLabel(/I agree to the terms/)).not.toBeChecked();
+  await expect(agree).toBeDisabled();
+  await page.getByLabel(/I agree to the terms/).check();
+  await agree.click();
 
-  // Pay step with payments disabled: honest, nothing charged.
+  // Payments disabled: honest, nothing charged.
   await expect(page.getByRole("heading", { name: `Request sent to ${vendor.displayName}` })).toBeVisible();
   await expect(page.getByText("Online payment isn't switched on", { exact: false })).toBeVisible();
   await page.getByRole("link", { name: "View your booking" }).click();
@@ -63,7 +65,7 @@ test("a stranger books from the public page to the private booking link, on a ph
   await stranger.close();
 });
 
-test("two phones race for the same time: exactly one holds it, the other is told kindly and sent back to pick again", async ({ browser }) => {
+test("two phones race for the same time: exactly one holds it, the other is told kindly and offered Pick another time", async ({ browser }) => {
   const vendor = await publishedVendor("Race Studio");
   const contexts = await Promise.all([0, 1].map(() => browser.newContext({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true, timezoneId: "Asia/Kolkata", locale: "en-IN", extraHTTPHeaders: { "x-forwarded-for": freshIp() } })));
   const pages = await Promise.all(contexts.map(context => context.newPage()));
@@ -79,14 +81,16 @@ test("two phones race for the same time: exactly one holds it, the other is told
   await Promise.all(pages.map(page => page.getByRole("button", { name: "Verify and hold my time" }).click()));
 
   const outcome = async (index: number) => {
-    const won = pages[index].getByRole("heading", { name: "Key terms" }), lost = pages[index].getByText("This time was just booked by someone else. Pick another time below.");
+    const won = pages[index].getByRole("heading", { name: "Key terms" }), lost = pages[index].getByRole("heading", { name: "This time was just taken" });
     await expect(won.or(lost)).toBeVisible({ timeout: 20_000 });
     return await won.isVisible() ? "held" : "taken";
   };
   const results = [await outcome(0), await outcome(1)];
   expect([...results].sort()).toEqual(["held", "taken"]);
   const loser = pages[results.indexOf("taken")];
-  await expect(loser.getByText("Step 2 of 6: Time")).toBeVisible();
+  await expect(loser.getByText("Nothing was held or charged.", { exact: false })).toBeVisible();
+  await loser.getByRole("button", { name: "Pick another time" }).click();
+  await expect(loser.getByText("Step 2 of 4: Time")).toBeVisible();
   await Promise.all(contexts.map(context => context.close()));
 });
 
@@ -106,7 +110,6 @@ test("a vendor booking their own page with their business email is told to use a
   await expect(page.getByText("Please sign in to continue.")).toHaveCount(0);
   const email = `e2e-other-${randomUUID().slice(0, 8)}@example.test`;
   await page.getByLabel("Email").fill(email);
-  await page.getByRole("button", { name: "Continue" }).click();
   const again = Date.now() - 1000;
   await page.getByRole("button", { name: "Send my code" }).click();
   await page.getByLabel("Six-digit code").fill(await codeFor(email, again));

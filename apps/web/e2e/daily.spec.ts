@@ -34,7 +34,7 @@ test("day picker: dates show why they are unavailable, days are limited to what 
   await mockApi(page);
   await page.goto(`/studio-sunday/book?service=${DAILY_PUBLIC_SERVICE.id}`);
   await expect(page.getByRole("heading", { name: "Choose your dates" })).toBeVisible();
-  await expect(page.getByText("Step 2 of 6: Dates · Days in Indian Standard Time (IST)")).toBeVisible();
+  await expect(page.getByText("Step 2 of 4: Dates · Days in Indian Standard Time (IST)")).toBeVisible();
   for (const label of ["Booked", "Closed", "Past or too soon"]) await expect(page.getByRole("list", { name: "Why some dates cannot be chosen" }).getByText(label)).toBeVisible();
   // The first free date with three free days after it (offsets 1, 2: available; 3: closed; so offset 6 starts 6, 7, 8 = free).
   let offset = 1; while (!(mockDayStatus(offset) === "available" && mockDayStatus(offset + 1) === "available" && mockDayStatus(offset + 2) === "available")) offset++;
@@ -47,10 +47,9 @@ test("day picker: dates show why they are unavailable, days are limited to what 
   const choices = page.getByRole("radiogroup", { name: "Number of days" }).getByRole("radio");
   await expect(choices).toHaveText(["1 day", "2 days", "3 days"]);
   await page.getByRole("radio", { name: "2 days" }).click();
-  const summary = page.getByTestId("day-summary");
+  const summary = page.getByTestId("booking-summary");
   await expect(summary).toContainText("(2 days)");
-  await expect(summary).toContainText("Total ₹24,000");
-  await expect(summary).toContainText("Advance ₹6,000 now");
+  await expect(summary).toContainText("Total ₹24,000 · Advance ₹6,000 now · ₹18,000 later");
   await expect(summary).not.toContainText(/\d:\d\d/);
   await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled();
   // Nothing on the step scrolls sideways on a phone.
