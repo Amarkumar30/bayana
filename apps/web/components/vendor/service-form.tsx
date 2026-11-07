@@ -1,7 +1,7 @@
 "use client";
 import { Plus, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { MAX_BLOCKS, MAX_BOOKING_DAYS, MAX_BUFFER_DAYS, TERMS_VARIABLES, advancePaise, advanceRuleProblem, formatAmount, paiseFromRupees, rupeesFromPaise, serviceCreateSchema, type CancellationTier } from "@bayana/shared";
+import { MAX_BLOCKS, MAX_BOOKING_DAYS, MAX_BUFFER_DAYS, MODERATE_TIERS, TERMS_VARIABLES, advancePaise, advanceRuleProblem, formatAmount, paiseFromRupees, rupeesFromPaise, serviceCreateSchema, type CancellationTier, type ServiceTemplate } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/display";
 import { Checkbox, Field, Input, RadioCards, Select, Textarea } from "@/components/ui/field";
@@ -17,6 +17,11 @@ const fromService = (service?: Service): Draft => ({
   minBlocks: String(service?.min_blocks ?? 1), maxBlocks: String(service?.max_blocks ?? 1), minDays: String(service?.min_days ?? 1), maxDays: String(service?.max_days ?? 1), bufferDays: String(service?.buffer_days ?? 0),
   advanceType: service?.advance_type ?? "PERCENT", advanceValue: service ? (service.advance_type === "FIXED" ? rupeesFromPaise(service.advance_value) : String(service.advance_value)) : "25",
   tiers: (service?.cancellation_tiers ?? []).map(tier => ({ hours: String(tier.min_hours_before), percent: String(tier.refund_percent) })), terms: service?.terms_template ?? "", active: service?.active ?? true
+});
+/** A template fills the same form the vendor would have typed; nothing is saved until they save it. */
+const fromTemplate = (template: ServiceTemplate): Draft => ({
+  ...fromService(), name: template.name, description: template.description, price: template.pricePaise === null ? "" : rupeesFromPaise(template.pricePaise), mode: template.mode, duration: String(template.durationMinutes),
+  minDays: String(template.minDays), maxDays: String(template.maxDays), advanceType: "PERCENT", advanceValue: String(template.advancePercent), tiers: MODERATE_TIERS.map(tier => ({ hours: String(tier.min_hours_before), percent: String(tier.refund_percent) }))
 });
 const toNumber = (value: string) => value.trim() === "" ? NaN : Number(value);
 const rupeesToPaise = (value: string) => { try { return paiseFromRupees(value.trim()); } catch { return NaN; } };
@@ -34,8 +39,8 @@ function toBody(draft: Draft) {
   };
 }
 
-export function ServiceForm({ service, onSaved, compact = false, submitLabel }: { service?: Service; onSaved: (service: Service) => void; compact?: boolean; submitLabel?: string }) {
-  const [draft, setDraft] = useState<Draft>(() => fromService(service)); const [submitted, setSubmitted] = useState(false);
+export function ServiceForm({ service, template, onSaved, submitLabel }: { service?: Service; template?: ServiceTemplate; onSaved: (service: Service) => void; submitLabel?: string }) {
+  const [draft, setDraft] = useState<Draft>(() => template ? fromTemplate(template) : fromService(service)); const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [serverFields, setServerFields] = useState<Record<string, string>>({});
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft(current => ({ ...current, [key]: value }));
   const body = toBody(draft);
@@ -66,7 +71,7 @@ export function ServiceForm({ service, onSaved, compact = false, submitLabel }: 
   return (
     <form onSubmit={submit} noValidate className="grid gap-4 sm:grid-cols-2">
       <Field label="Service name" error={errors.name} className="sm:col-span-2">{p => <Input {...p} value={draft.name} onChange={event => set("name", event.target.value)} placeholder="Portrait session" />}</Field>
-      {!compact && <Field label="Description" optional className="sm:col-span-2">{p => <Textarea {...p} value={draft.description} onChange={event => set("description", event.target.value)} />}</Field>}
+      {<Field label="Description" optional className="sm:col-span-2">{p => <Textarea {...p} value={draft.description} onChange={event => set("description", event.target.value)} />}</Field>}
       <RadioCards legend="How do you charge?" name="booking_mode" value={draft.mode} onChange={mode => set("mode", mode)} className="sm:col-span-2" options={[
         { value: "hourly", label: "Per session", description: "Customers pick a start time and book one session, or several in a row. You set how long a session is." },
         { value: "daily", label: "Per day", description: "Customers pick dates, for one day or several. For shoots, events and decor." }
@@ -88,7 +93,7 @@ export function ServiceForm({ service, onSaved, compact = false, submitLabel }: 
       )}
       <Field label="Advance" error={errors.advance_type}>{p => <Select {...p} value={draft.advanceType} onChange={event => { set("advanceType", event.target.value as AdvanceType); set("advanceValue", event.target.value === "NONE" ? "0" : event.target.value === "PERCENT" ? "25" : ""); }}><option value="PERCENT">Percentage of price</option><option value="FIXED">Fixed amount</option><option value="NONE">No advance</option></Select>}</Field>
       {draft.advanceType !== "NONE" && <Field label={draft.advanceType === "PERCENT" ? "Advance (%)" : "Advance (₹)"} error={errors.advance_value ?? (submitted ? advanceProblem ?? undefined : undefined)} hint={previewLine ?? undefined}>{p => <Input {...p} inputMode="decimal" value={draft.advanceValue} onChange={event => set("advanceValue", event.target.value)} />}</Field>}
-      {!compact && <>
+      {<>
         {daily ? (
           <Field label="Buffer days" optional error={errors.buffer_days} hint="Days kept free before and after each booking, for travel or setup.">{p => <Input {...p} type="number" min={0} max={MAX_BUFFER_DAYS} value={draft.bufferDays} onChange={event => set("bufferDays", event.target.value)} />}</Field>
         ) : (

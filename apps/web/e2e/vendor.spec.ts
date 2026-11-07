@@ -34,6 +34,9 @@ test("onboarding wizard: profile, first service, hours, publish", async ({ page,
   await page.getByLabel("Your link").fill("studio-sunday");
   await page.getByLabel("City").fill("Mumbai");
   await page.getByRole("button", { name: "Save and continue" }).click();
+  await expect(page.getByText("Add a sentence about what you do.")).toBeVisible();
+  await page.getByLabel("Short description").fill("Portraits in Mumbai.");
+  await page.getByRole("button", { name: "Save and continue" }).click();
 
   await expect(page.getByRole("heading", { name: "Add your first service" })).toBeVisible();
   await page.getByLabel("Service name").fill("Portrait session");
@@ -51,11 +54,8 @@ test("onboarding wizard: profile, first service, hours, publish", async ({ page,
   expect(state.rules.map(rule => rule.weekday)).toEqual([1, 2, 3, 4, 5, 6]);
 
   await expect(page.getByRole("heading", { name: "Your terms, then publish" })).toBeVisible();
-  await page.getByRole("button", { name: "Publish my page" }).click();
-  await expect(page.getByText("Write your booking terms, cancellation and rescheduling policies")).toBeVisible();
-  await page.getByLabel("Short description").fill("Portraits in Mumbai.");
-  await page.getByLabel("Booking terms").fill("The advance confirms your date.");
-  await page.getByLabel("Cancellation policy").fill("Full refund 7 days before.");
+  // The policies are prefilled (the Moderate rule) and editable, so publishing works on the first try.
+  await expect(page.getByLabel("Cancellation policy")).toHaveValue(/Cancel 7 days or more before the start/);
   await page.getByLabel("Rescheduling policy").fill("One free reschedule.");
   await page.getByRole("button", { name: "Publish my page" }).click();
   await expect(page.getByRole("heading", { name: "Your page is live" })).toBeVisible();
@@ -109,4 +109,22 @@ test("availability page edits weekly windows and warns on overlap", async ({ pag
   await page.getByRole("button", { name: "Save weekly hours" }).click();
   await expect(page.getByText("Weekly hours saved").first()).toBeVisible();
   expect(state.rules.filter(rule => rule.weekday === 1).map(rule => [rule.start_time, rule.end_time])).toEqual([["10:00", "18:00"], ["18:30", "20:00"]]);
+});
+
+test("a template fills the whole form with the Moderate refunds, every field stays editable, and what is saved is what the form shows", async ({ page }) => {
+  const state = await mockApi(page, { ...establishedVendor(), services: [], rules: [] });
+  await page.goto("/onboarding");
+  await expect(page.getByRole("heading", { name: "Add your first service" })).toBeVisible();
+  await page.getByRole("button", { name: /Wedding photography/ }).click();
+  await expect(page.getByLabel("Service name")).toHaveValue("Wedding photography, full day");
+  await expect(page.getByLabel("Price per day (₹)")).toHaveValue(/^45,?000/);
+  await expect(page.getByLabel("Advance (%)")).toHaveValue("30");
+  await page.getByRole("button", { name: /Pre-wedding shoot/ }).click();
+  await expect(page.getByLabel("Session length (minutes)")).toHaveValue("120");
+  await page.getByRole("button", { name: /^Event/ }).click();
+  await page.getByLabel("Service name").fill("Sangeet coverage");
+  await page.getByLabel("Advance (%)").fill("20");
+  await page.getByRole("button", { name: "Save and continue" }).click();
+  await expect(page.getByRole("heading", { name: "Which days are you open?" })).toBeVisible();
+  expect(state.services[0]).toMatchObject({ name: "Sangeet coverage", booking_mode: "daily", advance_value: 20, cancellation_tiers: [{ min_hours_before: 168, refund_percent: 100 }, { min_hours_before: 48, refund_percent: 50 }] });
 });

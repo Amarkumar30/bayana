@@ -1,13 +1,15 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, ExternalLink } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
-import { slugProblem, suggestSlug, weeklyScheduleSchema } from "@bayana/shared";
+import { MODERATE_POLICIES, serviceTemplates, slugProblem, suggestSlug, weeklyScheduleSchema } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
+import { choiceVariants } from "@/components/ui/choice";
 import { LoadingState, Notice, Skeleton, Stepper } from "@/components/ui/display";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { ApiError, api, fieldErrors, humanMessage, requirementCopy } from "@/lib/api";
+import { ShareCard } from "@/components/dashboard/share-card";
 import { ServiceForm } from "./service-form";
 import { categories, timezones, weekdayNames, type Checklist, type Profile } from "./types";
 import { vendorLinkLabel } from "@/lib/site";
@@ -40,9 +42,22 @@ export function OnboardingWizard() {
       <Stepper steps={steps} current={step} />
       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-primary">Step {Math.min(step + 1, 4)} of 4</p>
       {step === 0 && <ProfileStep onDone={() => void next(1)} />}
-      {step === 1 && <div className="grid gap-4"><div className="grid gap-1"><h1 className="text-2xl">Add your first service</h1><p className="text-sm text-muted">What can clients book? You can add more and fine-tune refunds and terms later.</p></div><ServiceForm compact submitLabel="Save and continue" onSaved={() => void next(2)} /><Button variant="ghost" size="sm" className="w-fit" onClick={() => setStep(2)}>Skip for now</Button></div>}
+      {step === 1 && <FirstServiceStep onDone={() => void next(2)} />}
       {step === 2 && <HoursStep dailyOnly={Boolean(profile?.services.length) && profile!.services.every(service => service.booking_mode === "daily")} onDone={() => void next(3)} onSkip={() => setStep(3)} />}
       {step === 3 && profile && <PublishStep profile={profile} onBack={setStep} onPublished={() => void refresh()} />}
+    </div>
+  );
+}
+
+/** Templates fill the form; nothing is saved until the vendor saves it, and everything stays editable. */
+function FirstServiceStep({ onDone }: { onDone: () => void }) {
+  const [key, setKey] = useState("blank");
+  const template = serviceTemplates.find(item => item.key === key);
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-1"><h1 className="text-2xl">Add your first service</h1><p className="text-sm text-muted">Start from a template or from blank. Everything below is yours to change.</p></div>
+      <div role="group" aria-label="Start from a template" className="grid gap-2 sm:grid-cols-2">{serviceTemplates.map(item => <button key={item.key} type="button" aria-pressed={item.key === key} onClick={() => setKey(item.key)} className={choiceVariants({ kind: "card", selected: item.key === key })}><span className="grid text-left"><span className="font-semibold">{item.label}</span><span className="text-sm text-muted">{item.hint}</span></span></button>)}</div>
+      <ServiceForm key={key} template={template} submitLabel="Save and continue" onSaved={onDone} />
     </div>
   );
 }
@@ -51,11 +66,11 @@ function ProfileStep({ onDone }: { onDone: () => void }) {
   const [form, setForm] = useState({ business_name: "", slug: "", city: "", description: "", category: "other", timezone: "Asia/Kolkata" });
   const [slugEdited, setSlugEdited] = useState(false); const [submitted, setSubmitted] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [server, setServer] = useState<Record<string, string>>({});
   const slug = slugEdited ? form.slug : suggestSlug(form.business_name);
-  const errors: Record<string, string | undefined> = { business_name: form.business_name.trim().length < 2 ? "Use at least 2 characters." : undefined, slug: slugProblem(slug) ?? undefined, city: form.city.trim().length < 2 ? "Use at least 2 characters." : undefined, ...server };
+  const errors: Record<string, string | undefined> = { business_name: form.business_name.trim().length < 2 ? "Use at least 2 characters." : undefined, slug: slugProblem(slug) ?? undefined, city: form.city.trim().length < 2 ? "Use at least 2 characters." : undefined, description: form.description.trim().length < 10 ? "Add a sentence about what you do." : undefined, ...server };
   const shown = (name: string) => submitted || name === "slug" && slug ? errors[name] : server[name];
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setSubmitted(true); setServer({});
-    if (errors.business_name || errors.slug || errors.city) return;
+    if (errors.business_name || errors.slug || errors.city || errors.description) return;
     setBusy(true); setError("");
     try { await api("/v1/vendor/me", { body: { business_name: form.business_name, slug, city: form.city, description: form.description, categories: [form.category], timezone: form.timezone } }); onDone(); }
     catch (failure) { if (failure instanceof ApiError && failure.code === "SLUG_TAKEN") setServer({ slug: failure.message }); else { setServer(fieldErrors(failure)); setError(humanMessage(failure)); } }
@@ -69,7 +84,7 @@ function ProfileStep({ onDone }: { onDone: () => void }) {
       <Field label="Category">{p => <Select {...p} value={form.category} onChange={event => setForm({ ...form, category: event.target.value })}>{categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</Select>}</Field>
       <Field label="City" error={shown("city")}>{p => <Input {...p} value={form.city} onChange={event => setForm({ ...form, city: event.target.value })} placeholder="Mumbai" />}</Field>
       <Field label="Timezone" hint="Your hours and bookings use this timezone.">{p => <Select {...p} value={form.timezone} onChange={event => setForm({ ...form, timezone: event.target.value })}>{timezones.map(zone => <option key={zone}>{zone}</option>)}</Select>}</Field>
-      <Field label="Short description" optional>{p => <Textarea {...p} value={form.description} onChange={event => setForm({ ...form, description: event.target.value })} placeholder="What you do, in one or two sentences." />}</Field>
+      <Field label="Short description" error={shown("description")} hint="Customers read this first. You can change it later.">{p => <Textarea {...p} value={form.description} onChange={event => setForm({ ...form, description: event.target.value })} placeholder="What you do, in one or two sentences." />}</Field>
       {error && <Notice tone="danger">{error}</Notice>}
       <Button size="lg" block loading={busy} loadingText="Saving…">Save and continue</Button>
     </form>
@@ -103,14 +118,15 @@ function HoursStep({ dailyOnly = false, onDone, onSkip }: { dailyOnly?: boolean;
 }
 
 function PublishStep({ profile, onBack, onPublished }: { profile: Profile; onBack: (step: number) => void; onPublished: () => void }) {
-  const [policies, setPolicies] = useState({ terms: profile.terms, cancellation_policy: profile.cancellation_policy, rescheduling_policy: profile.rescheduling_policy, description: profile.description });
+  // New vendors start on the Moderate rule, in words that match the refund tiers on their service; every box is theirs to edit.
+  const [policies, setPolicies] = useState({ terms: profile.terms || MODERATE_POLICIES.terms, cancellation_policy: profile.cancellation_policy || MODERATE_POLICIES.cancellation_policy, rescheduling_policy: profile.rescheduling_policy || MODERATE_POLICIES.rescheduling_policy, description: profile.description });
   const [busy, setBusy] = useState(false); const [missing, setMissing] = useState<string[]>([]); const [error, setError] = useState("");
   if (profile.published) return (
     <div className="grid justify-items-center gap-4 py-4 text-center">
       <CheckCircle2 className="size-12 text-success" aria-hidden />
       <h1 className="text-2xl">Your page is live</h1>
-      <p className="break-all rounded-input bg-surface-muted px-3 py-2.5 font-mono text-sm">{vendorLinkLabel(env.NEXT_PUBLIC_SITE_URL, profile.slug)}</p>
-      <div className="flex flex-wrap justify-center gap-2"><Button asChild variant="secondary"><a href={`/${profile.slug}`} target="_blank" rel="noreferrer"><ExternalLink aria-hidden />View page</a></Button><Button asChild><Link href="/dashboard">Go to dashboard</Link></Button></div>
+      <div className="w-full text-left"><ShareCard slug={profile.slug} businessName={profile.business_name} published /></div>
+      <Button asChild><Link href="/dashboard">Go to dashboard</Link></Button>
     </div>
   );
   const publish = async (event: FormEvent) => {
@@ -122,7 +138,7 @@ function PublishStep({ profile, onBack, onPublished }: { profile: Profile; onBac
   const stepFor: Record<string, number> = { active_service: 1, valid_advance_rules: 1, availability: 2 };
   return (
     <form onSubmit={publish} className="grid gap-4">
-      <div className="grid gap-1"><h1 className="text-2xl">Your terms, then publish</h1><p className="text-sm text-muted">Clients read these before they pay. Plain language works best.</p></div>
+      <div className="grid gap-1"><h1 className="text-2xl">Your terms, then publish</h1><p className="text-sm text-muted">Clients read these before they pay. We've started you on a moderate cancellation rule, which matches your service's refunds. Change anything you like.</p></div>
       <Field label="Short description">{p => <Textarea {...p} value={policies.description} onChange={event => setPolicies({ ...policies, description: event.target.value })} />}</Field>
       <Field label="Booking terms">{p => <Textarea {...p} value={policies.terms} onChange={event => setPolicies({ ...policies, terms: event.target.value })} placeholder="The advance confirms your date. The balance is due on the day." />}</Field>
       <Field label="Cancellation policy">{p => <Textarea {...p} value={policies.cancellation_policy} onChange={event => setPolicies({ ...policies, cancellation_policy: event.target.value })} placeholder="Full refund of the advance up to 7 days before." />}</Field>

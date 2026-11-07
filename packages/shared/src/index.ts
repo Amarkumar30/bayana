@@ -10,3 +10,4 @@ export * from "./dashboard.js";
 export * from "./auth.js";
 export * from "./payments.js";
 export * from "./status.js";
+export * from "./templates.js";
