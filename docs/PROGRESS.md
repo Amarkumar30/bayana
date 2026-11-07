@@ -392,3 +392,14 @@ Facts for the next session:
 - Pre-existing a11y failure fixed: sidebar 'My bookings as a customer' link now underlined (link-in-text-block, desktop dashboard pages).
 - Baselines updated (viewed first): booking-detail 375/1280, design 375/1280, design-dark 375/1280, home 375, login 375/1280. /design 1280 passed on unchanged code today (earlier failure intermittent; the Fraunces sample also shifted in dark mode; P10 drops Fraunces).
 - Before numbers for later batches: /[slug] 2.7 kB (118 kB first load), /[slug]/book 12.8 kB (172 kB); Lighthouse /[slug] perf 79-81, a11y 100, BP 96, SEO 66, LCP median 1.55 s.
+## UX redesign Batch 2, customer flow - 2026-11-07 (branch ux-redesign, merged into hosting-ready)
+- Booking flow is 4 steps (Service, Time, Details, Review) plus the confirmation; apps/web/app/(public)/[slug]/book/booking-flow.tsx rewritten. No API or migration change; booking integrity code untouched.
+- P4: the email (Google or code) is on the details screen. Hold starts on its own only after the email is verified (holdWanted effect). Google return with complete details holds at once; without a name it asks first, then 'Hold my time'. A verified customer re-picking a time holds on Continue, no second code.
+- Exactly one hold: idempotency key per request fingerprint in sessionStorage (bayana:hold-key:<slug>), cleared on restart or when done; ref guards on verify and hold; after a hold the URL becomes ?resume=<id>&t=<token>, so refresh reopens it.
+- SLOT_TAKEN: card 'This time was just taken' with 'Pick another time'. Shared copy changed.
+- P5: terms and pay on one screen. Unticked box, button disabled until ticked; POST accept unchanged, then Checkout opens (PaymentPanel autoStart). Closed or failed payment retries without agreeing again; a refresh after agreeing shows the pay panel. Test-payment notice shows before the tap.
+- P6/P11: components/ui/sticky-summary.tsx (bottom on phones, in page from sm) on Time and Details; not on Review (key terms card and the button carry the amounts). components/ui/choice.ts used by day, time, days and service choices. Inline session and day summaries removed. Not added to /design, to avoid baseline churn.
+- P7: slim SiteFooter in the (public) layout (same links, one wrapping row); layout reassurance line removed; shorter checkbox label and hint. This also applies to /<slug> and /b/.
+- Tests: API integration (real code, two simultaneous holds, replay: one booking, one event); e2e/booking-flow.spec.ts (7 tests at 375 and 1280); mockCustomerFlow in e2e/mock-api.ts. No baselines changed.
+- Playwright: full mocked run 328 passed, 1 failed (/design console check, mobile), 1 not reported; the message was lost to output trimming, the run took 2.2 h. That test then passed 2/2 and 5/5 alone. Cause not established; /design was not changed.
+- Still to do: Lighthouse on the booking page. Batch 3 next, after the user's reply.
