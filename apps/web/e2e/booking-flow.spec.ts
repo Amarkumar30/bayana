@@ -115,7 +115,8 @@ test("online: one tap agrees and opens the payment; a closed window offers Try a
   await expect(page.getByText("You agreed to these terms.")).toBeVisible();
   await expect(page.getByRole("checkbox")).toHaveCount(0);
   await page.getByRole("button", { name: "Try again: pay ₹2,000" }).click();
-  expect(await page.evaluate(() => (window as unknown as { __opened: number }).__opened)).toBe(2);
+  // Opening Checkout waits for the order, so the second window comes a moment after the tap.
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __opened: number }).__opened)).toBe(2);
   expect(calls.accept).toBe(1);
 });
 
