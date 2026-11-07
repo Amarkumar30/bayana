@@ -137,7 +137,8 @@ describe("tick (SPEC 15.3)", () => {
   it("refuses a missing or wrong secret and records every job it runs", async () => {
     expect((await call("POST", "/internal/jobs/tick")).status).toBe(401);
     expect((await tick("wrong-secret-wrong-secret-wrong-secret")).status).toBe(401);
-    const started = new Date();
+    // job_runs.started_at is the database's clock, so the start of this test is read from the same clock.
+    const started = (await pool.query<{ now: Date }>("SELECT now() AS now")).rows[0].now;
     const reply = await tick();
     expect(reply.status).toBe(200);
     expect(reply.body.results.map((result: { job: string; status: string }) => `${result.job}:${result.status}`)).toEqual(["expire_holds:ok", "process_webhooks:ok", "send_reminders:ok", "send_outbox:ok"]);

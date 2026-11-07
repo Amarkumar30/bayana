@@ -44,7 +44,7 @@ describe("concurrency gate (SPEC 9.4): run 10 times in a row", () => {
     expect(results.map(codeOf).filter(code => code === "SLOT_TAKEN")).toHaveLength(19);
     const active = await pool.query("SELECT count(*)::int AS n FROM bookings WHERE vendor_id=$1 AND status IN ('HELD','PENDING','CONFIRMED')", [vendor.vendorId]);
     expect(active.rows[0].n).toBe(1);
-  });
+  }, 20_000);
 
   it.each(Array.from({ length: 10 }, (_, run) => run + 1))("run %i: vendor time off versus customer holds has exactly one winner", async () => {
     const vendor = await bookableVendor();

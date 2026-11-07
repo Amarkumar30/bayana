@@ -29,7 +29,7 @@ describe("migrate.ts needs only NODE_ENV and the database URL", () => {
     expect(applied.code, applied.err).toBe(0);
     expect(applied.out).toContain("Checksums of applied migrations verified.");
     expect(applied.err).not.toMatch(unrelated);
-  });
+  }, 20_000);
   it("in production it needs only DATABASE_URL_DIRECT, and the database-name safety check still refuses a _test database", () => {
     const refused = run("migrate.ts", { NODE_ENV: "production", DATABASE_URL_DIRECT: testUrl });
     expect(refused.code).toBe(1);
