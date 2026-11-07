@@ -1,12 +1,13 @@
 "use client";
 import Link from "next/link";
+import { useState } from "react";
 import { ArrowLeft, ChevronDown, Download, FileText, Mail, Phone } from "lucide-react";
 import { bookingEventLabel, formatAmount, isSystemReason, tiersInWords, timezoneLabel, ONLINE_PAYMENT_LABEL } from "@bayana/shared";
 import { env } from "@/env";
 import { OfflinePaymentForm } from "@/components/booking/offline-payment-form";
 import { OnlineRefundForm } from "@/components/booking/online-refund-form";
 import { formatBookingWhen, formatDate, formatDateTime } from "@/components/booking/time";
-import { CancelBookingDialog, CompleteButton, RescheduleDialog } from "@/components/dashboard/booking-actions";
+import { CancelBookingDialog, CompleteButton, ExtendDeadlineDialog, RescheduleDialog } from "@/components/dashboard/booking-actions";
 import { Gate, useVendorData } from "@/components/dashboard/load";
 import type { BookingDetail, BookingEvent } from "@/components/dashboard/types";
 import { Button } from "@/components/ui/button";
@@ -25,9 +26,13 @@ function eventText(event: BookingEvent, timezone: string, daily = false) {
   return bookingEventLabel(event);
 }
 
+/** The advance is what this booking waits for, so recording it is the first thing on the page. */
+const awaitsRecord = (booking: BookingDetail) => booking.actions.record_payment && booking.status === "PENDING" && !booking.payments_enabled && booking.paid_paise < booking.advance_paise;
+
 /** SPEC 5.3 booking detail: timeline, payment ledger, contract, customer, and the vendor's actions. */
 export function BookingDetailView({ id }: { id: string }) {
   const [state, reload] = useVendorData<BookingDetail>(`/v1/vendor/bookings/${id}`);
+  const [refused, setRefused] = useState("");
   const skeleton = <LoadingState label="Loading the booking…" className="grid gap-4"><Skeleton className="h-10 w-72" /><Skeleton className="h-40 rounded-card" /><Skeleton className="h-64 rounded-card" /></LoadingState>;
   return (
     <div className="grid gap-6">
@@ -40,14 +45,11 @@ export function BookingDetailView({ id }: { id: string }) {
             <p className="text-muted">{booking.service_name ?? "Booking"} · {formatBookingWhen(booking, booking.timezone)} ({timezoneLabel(booking.timezone)})</p>
           </div>
 
-          {(booking.actions.cancel || booking.actions.complete || booking.actions.reschedule) && <Card className="grid gap-3"><CardHeader title="Actions" className="mb-0" />
-            <div className="flex flex-wrap gap-2">
-              {booking.actions.complete && <CompleteButton booking={booking} onDone={() => void reload()} />}
-              {booking.actions.reschedule && <RescheduleDialog booking={booking} onDone={() => void reload()} />}
-              {booking.actions.cancel && <CancelBookingDialog booking={booking} onDone={() => void reload()} />}
-            </div>
-            {booking.status === "PENDING" && booking.paid_paise < booking.advance_paise && <Notice tone="info">{booking.payments_enabled ? `Waiting for the customer to pay the ${formatAmount(booking.advance_paise - booking.paid_paise)} advance online.` : `Collect the ${formatAmount(booking.advance_paise - booking.paid_paise)} advance and record it below to confirm this booking.`}{booking.hold_expires_at ? ` The time is held until ${formatDateTime(booking.hold_expires_at, booking.timezone)}.` : ""}</Notice>}
-          </Card>}
+          {refused && <Notice tone="danger">{refused}</Notice>}
+          {booking.status === "EXPIRED" && booking.actions.extend_deadline && <Card className="grid gap-3"><CardHeader title="The advance deadline passed" description={`The time was released${booking.hold_expires_at ? ` on ${formatDateTime(booking.hold_expires_at, booking.timezone)}` : ""}. If the money arrived, extend the deadline: the booking comes back if the time is still free, and then you can record the advance.`} className="mb-0" /><div><ExtendDeadlineDialog booking={booking} variant="primary" onDone={() => { setRefused(""); void reload(); }} /></div></Card>}
+          {booking.status === "PENDING" && booking.paid_paise < booking.advance_paise && <Notice tone="info">{booking.payments_enabled ? `Waiting for the customer to pay the ${formatAmount(booking.advance_paise - booking.paid_paise)} advance online.` : `Collect the ${formatAmount(booking.advance_paise - booking.paid_paise)} advance and record it below to confirm this booking.`}{booking.hold_expires_at ? ` The time is held until ${formatDateTime(booking.hold_expires_at, booking.timezone)}.` : ""}</Notice>}
+          {awaitsRecord(booking) && <OfflinePaymentForm view={booking} onRecorded={() => void reload()} onDeadlinePassed={message => { setRefused(message); void reload(); }} />}
+          {booking.actions.complete && <div><CompleteButton booking={booking} onDone={() => void reload()} /></div>}
 
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
             <div className="grid content-start gap-6">
@@ -70,7 +72,7 @@ export function BookingDetailView({ id }: { id: string }) {
                     {booking.refunds.map(refund => <li key={refund.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm"><span className="grid"><span className="font-medium">{refundStatus[refund.status] ?? refund.status}</span><span className="text-muted">{refund.reason}</span></span><Money paise={-refund.amount_paise} size="sm" className="text-danger" /></li>)}
                   </ul>}
               </section>
-              {booking.actions.record_payment && <OfflinePaymentForm view={booking} onRecorded={() => void reload()} />}
+              {booking.actions.record_payment && !awaitsRecord(booking) && <OfflinePaymentForm view={booking} onRecorded={() => void reload()} />}
             <OnlineRefundForm path={`/v1/vendor/bookings/${booking.id}/refund`} payments={booking.payments} refunds={booking.refunds} onDone={() => void reload()} />
 
               <section aria-labelledby="timeline" className="grid gap-3"><h2 id="timeline" className="text-lg">Timeline</h2>
@@ -92,6 +94,14 @@ export function BookingDetailView({ id }: { id: string }) {
             </div>
 
             <aside className="grid content-start gap-6">
+              {(booking.actions.cancel || booking.actions.reschedule || booking.status === "PENDING" && booking.actions.extend_deadline) && <details className="group rounded-card bg-surface ring-1 ring-border/70">
+                <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-5 py-3 font-medium">More actions<ChevronDown className="size-4 shrink-0 text-muted transition-transform group-open:rotate-180" aria-hidden /></summary>
+                <div className="grid gap-2 border-t border-border p-4">
+                  {booking.status === "PENDING" && booking.actions.extend_deadline && <ExtendDeadlineDialog booking={booking} onDone={() => void reload()} />}
+                  {booking.actions.reschedule && <RescheduleDialog booking={booking} onDone={() => void reload()} />}
+                  {booking.actions.cancel && <CancelBookingDialog booking={booking} onDone={() => void reload()} />}
+                </div>
+              </details>}
               <Card><CardHeader title="Customer" />
                 <dl className="grid gap-3 text-sm">
                   <div className="grid"><dt className="text-muted">Name</dt><dd className="font-medium">{booking.customer.name}</dd></div>

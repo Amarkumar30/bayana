@@ -64,7 +64,7 @@ function detailFor(b: MockBooking, state: VendorState) {
     contract: { body: ["Booking", "Business: Studio Sunday", `Service: ${b.service_name}`, "", "Booking terms", "Advance confirms your date."].join("\n"), sha256: "a".repeat(64), accepted_at: "2026-10-20T05:04:00.000Z" },
     customer: { name: b.client_name, email: b.client_email, phone: "9820000000", notes: "Two outfits, outdoor if the weather is good.", referral: "Instagram" }, created_at: "2026-10-20T05:00:00.000Z",
     events: [{ from_status: null, to_status: "HELD", actor: "client", reason: "slot held", meta: {}, created_at: "2026-10-20T05:00:00.000Z" }, { from_status: "HELD", to_status: b.status === "CANCELLED" ? "CANCELLED" : "PENDING", actor: b.status === "CANCELLED" ? "vendor" : "client", reason: b.status === "CANCELLED" ? "Studio closed for repairs" : "terms accepted", meta: {}, created_at: "2026-10-20T05:04:00.000Z" }],
-    ledger: [], actions: { cancel: active, complete: b.status === "CONFIRMED" && ended, reschedule: active && new Date(b.starts_at) > MOCK_NOW, record_payment: ["PENDING", "CONFIRMED", "COMPLETED"].includes(b.status) && b.total_paise > b.paid_paise }
+    ledger: [], actions: { cancel: active, complete: b.status === "CONFIRMED" && ended, reschedule: active && new Date(b.starts_at) > MOCK_NOW, extend_deadline: b.status === "EXPIRED" || b.status === "PENDING" && b.paid_paise < b.advance_paise, record_payment: ["PENDING", "CONFIRMED", "COMPLETED"].includes(b.status) && b.total_paise > b.paid_paise }
   };
 }
 const localDate = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
@@ -74,8 +74,8 @@ function dashboardRoute(route: Route, path: string, method: string, body: Record
   const row = (b: MockBooking) => ({ id: b.id, status: b.status, service_name: b.service_name, client_name: b.client_name, client_email: b.client_email, starts_at: b.starts_at, ends_at: b.ends_at, total_paise: b.total_paise, paid_paise: b.paid_paise });
   if (path === "/v1/vendor/overview") return route.fulfill({ json: { timezone: tz, payments_enabled: false, published: state.profile?.published ?? false, publish_missing: [],
     upcoming: rows.filter(b => ["PENDING", "CONFIRMED"].includes(b.status) && localDate(b.starts_at) >= localDate(MOCK_NOW.toISOString())).map(row),
-    money: { collected_30d_paise: rows.reduce((sum, b) => sum + b.paid_paise, 0), balance_due_paise: rows.filter(b => ["PENDING", "CONFIRMED"].includes(b.status)).reduce((sum, b) => sum + b.total_paise - b.paid_paise, 0) },
-    todo: rows.filter(b => b.status === "PENDING").map(b => ({ kind: "record_advance", id: b.id, client_name: b.client_name, starts_at: b.starts_at, amount_paise: b.advance_paise })) } });
+    money: { collected_30d_paise: rows.reduce((sum, b) => sum + b.paid_paise, 0), advance_month_paise: rows.reduce((sum, b) => sum + b.paid_paise, 0), balance_due_paise: rows.filter(b => ["PENDING", "CONFIRMED"].includes(b.status)).reduce((sum, b) => sum + b.total_paise - b.paid_paise, 0) },
+    todo: rows.filter(b => b.status === "PENDING").map(b => ({ kind: "record_advance", id: b.id, client_name: b.client_name, starts_at: b.starts_at, amount_paise: b.advance_paise, hold_expires_at: new Date(MOCK_NOW.getTime() + 20 * 3_600_000).toISOString() })) } });
   if (path === "/v1/vendor/bookings" && method === "GET") {
     const status = url.searchParams.get("status"), q = url.searchParams.get("q")?.toLowerCase();
     return route.fulfill({ json: { timezone: tz, page: 1, has_more: false, bookings: rows.filter(b => (!status || b.status === status) && (!q || `${b.client_name} ${b.client_email}`.toLowerCase().includes(q))).sort((a, b) => b.starts_at.localeCompare(a.starts_at)).map(row) } });
@@ -85,7 +85,7 @@ function dashboardRoute(route: Route, path: string, method: string, body: Record
     const created: MockBooking = { ...booking(9, body.name, String(service?.name ?? "Service"), "CONFIRMED", new Date(`${body.date}T${body.time}:00+05:30`).toISOString(), 90, Number(service?.price_paise ?? 0), 0, 0), client_email: body.email };
     rows.push(created); return route.fulfill({ status: 201, json: detailFor(created, state) });
   }
-  const match = /^\/v1\/vendor\/bookings\/([^/]+)(?:\/(cancel|complete|reschedule))?$/.exec(path);
+  const match = /^\/v1\/vendor\/bookings\/([^/]+)(?:\/(cancel|complete|reschedule|deadline))?$/.exec(path);
   if (match) {
     const found = rows.find(b => b.id === match[1]);
     if (!found) return route.fulfill(fail(404, "NOT_FOUND", "Booking not found"));

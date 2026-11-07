@@ -1,7 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { manualBookingSchema, rescheduleSchema, vendorCancelSchema, formatAmount, timezoneLabel } from "@bayana/shared";
+import { EXTEND_HOURS, localDateTimeToUtc, manualBookingSchema, rescheduleSchema, vendorCancelSchema, formatAmount, timezoneLabel } from "@bayana/shared";
 import type { ZodError } from "zod";
 import { formatBookingWhen, formatDateTime, localDateKey } from "@/components/booking/time";
 import { serviceLength } from "@/lib/service-label";
@@ -71,6 +71,37 @@ export function NewBookingDialog({ defaultDate, trigger, onCreated }: { defaultD
 }
 
 /** BK-11: the vendor cancels with a reason; everything paid goes back to the customer. */
+/** More time for an offline advance, from the booking and from the dashboard. The server caps it at the start and rechecks a released time. */
+export function ExtendDeadlineDialog({ booking, onDone, variant = "secondary" }: { booking: { id: string; client_name: string; starts_at: string; hold_expires_at: string | null; timezone: string }; onDone: () => void; variant?: "primary" | "secondary" | "ghost" }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false); const [custom, setCustom] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
+  const from = Math.max(Date.now(), booking.hold_expires_at ? new Date(booking.hold_expires_at).getTime() : 0), latest = new Date(booking.starts_at).getTime();
+  const send = async (body: { hours: number } | { until: string }) => {
+    setBusy(true); setError("");
+    try { await api(`/v1/vendor/bookings/${booking.id}/deadline`, { body }); toast({ title: "Deadline extended", description: "The customer has been told the new deadline.", tone: "success" }); setOpen(false); onDone(); }
+    catch (failure) { setError(vendorMessage(failure)); } finally { setBusy(false); }
+  };
+  const submitCustom = (event: FormEvent) => {
+    event.preventDefault();
+    const until = localDateTimeToUtc(`${custom}:00`, booking.timezone);
+    if (!custom || !until) { setError("Choose a date and time."); return; }
+    void send({ until: until.toISOString() });
+  };
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild><Button variant={variant}>Extend deadline</Button></DialogTrigger>
+      <DialogContent title="Extend the deadline" description={booking.hold_expires_at ? `${booking.client_name}'s deadline is ${formatDateTime(booking.hold_expires_at, booking.timezone)}. The customer is told the new one.` : "The customer is told the new deadline."}>
+        <div className="grid grid-cols-2 gap-2">{EXTEND_HOURS.map(hours => <Button key={hours} type="button" variant="secondary" loading={busy} disabled={from + hours * 3_600_000 > latest} onClick={() => void send({ hours })}>{hours} hours</Button>)}</div>
+        <form onSubmit={submitCustom} noValidate className="grid gap-3">
+          <Field label={`Or choose a time (${timezoneLabel(booking.timezone)})`} hint={`Up to the start: ${formatDateTime(booking.starts_at, booking.timezone)}.`}>{p => <Input {...p} type="datetime-local" value={custom} onChange={event => setCustom(event.target.value)} />}</Field>
+          {error && <Notice tone="danger">{error}</Notice>}
+          {actionsRow(<><DialogClose asChild><Button type="button" variant="secondary">Keep the deadline</Button></DialogClose><Button loading={busy} loadingText="Extending…">Use this time</Button></>)}
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function CancelBookingDialog({ booking, onDone }: { booking: BookingDetail; onDone: () => void }) {
   const [open, setOpen] = useState(false); const [reason, setReason] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   const submit = async () => {
@@ -82,7 +113,7 @@ export function CancelBookingDialog({ booking, onDone }: { booking: BookingDetai
   };
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild><Button variant="danger">Cancel booking</Button></DialogTrigger>
+      <DialogTrigger asChild><Button variant="secondary" className="text-danger">Cancel booking</Button></DialogTrigger>
       <DialogContent title="Cancel this booking?" description={`${booking.client_name}, ${booking.service_name ?? "booking"}, ${formatBookingWhen(booking, booking.timezone)}`}>
         <Notice tone={booking.paid_paise > 0 ? "warning" : "info"}>{booking.paid_paise > 0 ? `${formatAmount(booking.paid_paise)} goes back to the customer in full. Online payments are refunded automatically; money paid to you directly you return yourself.` : "Nothing has been paid, so there is nothing to refund."}</Notice>
         <Field label="Reason" hint="The customer sees this in their email." error={error && !busy ? error : undefined}>{p => <Textarea {...p} value={reason} maxLength={500} onChange={event => setReason(event.target.value)} />}</Field>

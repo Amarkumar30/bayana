@@ -4,18 +4,18 @@ import type { BookingView } from "@/components/booking/types";
 // Shapes of the vendor dashboard API (apps/api/src/dashboard-routes.ts).
 
 export type BookingRow = DailyFields & { id: string; status: string; service_name: string | null; client_name: string; client_email?: string; starts_at: string; ends_at: string; total_paise: number; paid_paise: number };
-export type TodoKind = "record_advance" | "mark_complete" | "return_money" | "refund_failed";
+export type TodoKind = "record_advance" | "deadline_passed" | "mark_complete" | "return_money" | "refund_failed";
 export type Overview = {
   timezone: string; upcoming: BookingRow[]; payments_enabled: boolean; published: boolean; publish_missing: string[];
-  money: { collected_30d_paise: number; balance_due_paise: number };
-  todo: (DailyFields & { kind: TodoKind; id: string; client_name: string; starts_at: string; amount_paise: number | null })[];
+  money: { collected_30d_paise: number; advance_month_paise: number; balance_due_paise: number };
+  todo: (DailyFields & { kind: TodoKind; id: string; client_name: string; starts_at: string; amount_paise: number | null; hold_expires_at: string | null })[];
 };
 export type BookingList = { timezone: string; bookings: BookingRow[]; page: number; has_more: boolean };
 export type BookingEvent = { from_status: string | null; to_status: string; actor: string; reason: string | null; meta: Record<string, unknown>; created_at: string };
 export type BookingDetail = BookingView & {
   customer: { name: string; email: string; phone: string; notes: string | null; referral: string | null }; created_at: string;
   events: BookingEvent[]; ledger: { kind: string; amount_paise: number; channel: string; actor: string; reason: string; created_at: string }[];
-  actions: { cancel: boolean; complete: boolean; reschedule: boolean; record_payment: boolean };
+  actions: { cancel: boolean; complete: boolean; reschedule: boolean; record_payment: boolean; extend_deadline: boolean };
 };
 export type CalendarData = { timezone: string; from: string; to: string; bookings: Omit<BookingRow, "total_paise" | "paid_paise">[]; blocked_periods: { id: string; starts_at: string; ends_at: string; reason: string }[] };
 export type PaymentsData = {

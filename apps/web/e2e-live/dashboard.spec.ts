@@ -34,6 +34,7 @@ test("a vendor adds a manual booking from the dashboard and cancels it; the cust
   await expect(page.getByText("Added by the business", { exact: true })).toBeVisible();
   expect(await mailArrived(customer, "Confirmed: Portrait session")).toBe(true);
 
+  await page.getByText("More actions").click();
   await page.getByRole("button", { name: "Cancel booking" }).click();
   const cancel = page.getByRole("dialog", { name: "Cancel this booking?" });
   await cancel.getByLabel("Reason").fill("Studio closed that day");

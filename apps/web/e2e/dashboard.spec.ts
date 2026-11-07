@@ -11,6 +11,7 @@ test("bookings list opens a booking; cancelling needs a reason and refunds in fu
   await page.getByRole("link", { name: /Rohit Malhotra/ }).first().click();
   await expect(page.getByRole("heading", { level: 1, name: "Rohit Malhotra" })).toBeVisible();
   await expect(page.getByText("Collect the ₹2,000 advance and record it below")).toBeVisible();
+  await page.getByText("More actions").click();
   await page.getByRole("button", { name: "Cancel booking" }).click();
   const dialog = page.getByRole("dialog", { name: "Cancel this booking?" });
   await dialog.getByRole("button", { name: "Cancel and refund" }).click();
@@ -94,4 +95,70 @@ test("gate: an admin finds a stuck booking, reads why, and fixes it without SQL"
   await page.getByRole("button", { name: "Re-verify with Razorpay" }).click();
   await expect(page.getByText("Done: confirmed.")).toBeVisible();
   await expect(page.getByText("Nothing looks stuck. Status CONFIRMED.")).toBeVisible();
+});
+
+test("home puts today's work first: action, then upcoming, then the month's money, then the share card", async ({ page, baseURL }) => {
+  await mockApi(page);
+  await page.goto("/dashboard");
+  await expect(page.getByRole("heading", { name: "Needs your action" })).toBeVisible();
+  const headings = await page.getByRole("heading", { level: 2 }).allTextContents();
+  const at = (text: string) => headings.findIndex(heading => heading.startsWith(text));
+  expect(at("Needs your action")).toBeLessThan(at("Today"));
+  expect(at("Today")).toBeLessThan(at("Next 7 days"));
+  expect(at("Next 7 days")).toBeLessThan(at("This month's money"));
+  expect(at("This month's money")).toBeLessThan(at("Share your page"));
+  await expect(page.getByText("Hold ends").first()).toBeVisible();
+  const whatsapp = page.getByRole("link", { name: "Share on WhatsApp" });
+  const message = new URL((await whatsapp.getAttribute("href"))!);
+  expect(message.origin).toBe("https://wa.me");
+  expect(message.searchParams.get("text")).toBe(`Book Studio Sunday here: ${baseURL}/studio-sunday`);
+  await expect(page.getByRole("img", { name: "QR code for Studio Sunday's booking page" })).toBeVisible();
+});
+
+test("an advance can be given more time from the dashboard home: presets past the start are off, and a chosen time is sent", async ({ page }) => {
+  await mockApi(page);
+  const sent: unknown[] = [];
+  await page.route(/\/v1\/vendor\/bookings\/[^/]+\/deadline$/, route => { sent.push(route.request().postDataJSON()); return route.fulfill({ json: {} }); });
+  await page.goto("/dashboard");
+  await page.getByRole("button", { name: "Extend deadline" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Extend the deadline" });
+  // The mock booking starts 30 hours from now and its deadline is 20 hours away.
+  await expect(dialog.getByRole("button", { name: "48 hours" })).toBeDisabled();
+  const until = new Date(MOCK_NOW.getTime() + 24 * 3_600_000);
+  await dialog.getByLabel(/Or choose a time/).fill(new Date(until.getTime() + 5.5 * 3_600_000).toISOString().slice(0, 16));
+  await dialog.getByRole("button", { name: "Use this time" }).click();
+  await expect(dialog).toBeHidden();
+  expect(sent).toEqual([{ until: until.toISOString() }]);
+});
+
+test("a booking awaiting its advance leads with the record form, the note is optional, and cancelling is under More actions", async ({ page }) => {
+  await mockApi(page);
+  const sent: Record<string, unknown>[] = [];
+  await page.route(`${MOCK_API_URL}/v1/vendor/bookings/${PENDING_ID}/offline-payments`, route => { sent.push(route.request().postDataJSON()); return route.fulfill({ status: 201, json: { confirmed: true } }); });
+  await page.goto(`/dashboard/bookings/${PENDING_ID}`);
+  const form = page.getByRole("heading", { name: "Record a payment received offline" });
+  await expect(form).toBeVisible();
+  expect((await form.boundingBox())!.y).toBeLessThan((await page.getByRole("heading", { name: "Money" }).boundingBox())!.y);
+  await expect(page.getByRole("button", { name: "Cancel booking" })).toBeHidden();
+  await page.getByLabel("Paid by").selectOption("other");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.getByText("Add a short note, for example who paid and how.")).toBeVisible();
+  await page.getByLabel("Paid by").selectOption("cash");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0]).toMatchObject({ method: "cash", note: "" });
+});
+
+test("recording after the deadline shows the sentence, and Extend deadline takes over from the form", async ({ page }) => {
+  const state = await mockApi(page);
+  await page.route(`${MOCK_API_URL}/v1/vendor/bookings/${PENDING_ID}/offline-payments`, route => {
+    state.bookings.find(booking => booking.id === PENDING_ID)!.status = "EXPIRED";
+    return route.fulfill({ status: 409, json: { error: { code: "ADVANCE_DEADLINE_PASSED", message: "The deadline for this advance has passed, so the time was released. Extend the deadline first, then record the advance.", details: { can_extend: true } } } });
+  });
+  await page.goto(`/dashboard/bookings/${PENDING_ID}`);
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.getByText("The deadline for this advance has passed")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "The advance deadline passed" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Extend deadline" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Record payment" })).toHaveCount(0);
 });
