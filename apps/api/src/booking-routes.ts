@@ -1,6 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { MAX_BLOCKS, MAX_BOOKING_DAYS, bookingErrorCopy, refundPreview } from "@bayana/shared";
+import { MAX_BLOCKS, MAX_BOOKING_DAYS, refundPreview } from "@bayana/shared";
 import { currentUser, type SessionUser } from "./auth.js";
 import { cookieToken, perIp } from "./auth-routes.js";
 import { tokenHash, tokenMatches } from "./booking-links.js";
@@ -50,8 +50,6 @@ export const bookingRouter = Router();
 bookingRouter.post("/", perIp(20), handle(async (req, res) => {
   const user = await currentUser(pool, cookieToken(req));
   if (!user) throw new AppError(401, "AUTHENTICATION_REQUIRED", "Verify your email to continue");
-  // A business account (a vendor who confirmed their own email) cannot book as a customer; say so rather than "sign in".
-  if (user.role !== "CLIENT") throw new AppError(403, "BUSINESS_ACCOUNT_CANNOT_BOOK", bookingErrorCopy.BUSINESS_ACCOUNT_CANNOT_BOOK);
   const body = holdSchema.parse(req.body);
   const key = req.header("idempotency-key");
   if (!key || !z.string().uuid().safeParse(key).success) throw new AppError(400, "VALID_IDEMPOTENCY_KEY_REQUIRED", "A valid idempotency key is required");

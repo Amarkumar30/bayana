@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { app } from "../../src/app.js";
 import { startSession } from "../../src/auth.js";
 import { tokenHash } from "../../src/booking-links.js";
+import { createHold } from "../../src/booking-service.js";
 import { pool, transaction } from "../../src/database.js";
 import { capturedEmails } from "../../src/email.js";
 import { createUser } from "../helpers.js";
@@ -40,7 +41,7 @@ async function vendor() {
   await pool.query("INSERT INTO vendors(id,owner_user_id,slug,display_name,city,bio,base_price_paise,advance_type,advance_value,published,bookings_enabled,timezone,min_notice_minutes,max_advance_days,terms,phone_required) VALUES($1,$2,$3,'Customer test','Pune','',100000,'PERCENT',20,true,true,'Asia/Kolkata',0,365,'Pay on the day.',false)", [vendorId, owner.id, slug]);
   await pool.query("INSERT INTO services(id,vendor_id,name,price_paise,duration_minutes,booking_mode,advance_type,advance_value,cancellation_tiers) VALUES($1,$2,'Portrait',150000,60,'hourly','NONE',0,'[{\"min_hours_before\":24,\"refund_percent\":100}]')", [serviceId, vendorId]);
   for (let weekday = 0; weekday < 7; weekday++) await pool.query("INSERT INTO availability_rules(id,vendor_id,weekday,start_time,end_time) VALUES($1,$2,$3,'09:00','18:00')", [randomUUID(), vendorId, weekday]);
-  return { slug, serviceId, ownerId: owner.id };
+  return { slug, serviceId, ownerId: owner.id, ownerEmail: owner.email };
 }
 type Vendor = Awaited<ReturnType<typeof vendor>>;
 /** A held, then agreed booking (no advance, so it is confirmed), for the customer signed in with `cookie`. */
@@ -116,6 +117,65 @@ describe("the hold that starts on its own after the email code", () => {
     expect(rows.rows[0].n).toBe(1);
     const events = await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM booking_events WHERE booking_id=$1", [first.body.booking.id]);
     expect(events.rows[0].n).toBe(1);
+  });
+});
+
+describe("a business account's attempt leaves nothing behind", () => {
+  /** The email code, for real: request, read it from the mail, verify. Returns the session the customer's browser would hold. */
+  async function verifyByCode(email: string) {
+    const from = ip(), since = capturedEmails().length;
+    expect((await call("POST", "/v1/auth/booking/otp/request", { from, body: { email } })).status).toBe(202);
+    const verified = await call("POST", "/v1/auth/booking/otp/verify", { from, body: { email, code: await codeFor(email, since) } });
+    expect(verified.status).toBe(200);
+    return { cookie: sessionCookie(verified)!, role: verified.body.user.role as string };
+  }
+  const slotOf = (v: Vendor, offset: number) => { const date = isoDay(offset); return { date, startsAt: `${date}T04:30:00.000Z`, body: { slug: v.slug, date, service_id: v.serviceId, starts_at: `${date}T04:30:00.000Z`, name: "Meera Shah" } }; };
+  const bookingsOf = async (v: Vendor) => (await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE v.slug=$1", [v.slug])).rows[0].n;
+  const offered = async (v: Vendor, date: string, startsAt: string) => ((await call("GET", `/v1/vendors/${v.slug}/availability/slots?service_id=${v.serviceId}&date=${date}`)).body.slots as { startsAt: string }[]).some(slot => new Date(slot.startsAt).getTime() === new Date(startsAt).getTime());
+
+  it("the email code: the owner of the page is refused, no booking exists, the time stays offered and a customer holds it at once", async () => {
+    const v = await vendor(), slot = slotOf(v, 12);
+    const owner = await verifyByCode(v.ownerEmail);
+    expect(owner.role).toBe("VENDOR");
+    const refused = await call("POST", "/v1/bookings", { cookie: owner.cookie, key: true, body: slot.body });
+    expect(refused.status).toBe(403);
+    expect(refused.body.error.code).toBe("BUSINESS_ACCOUNT_CANNOT_BOOK");
+    expect(await bookingsOf(v)).toBe(0);
+    expect(await offered(v, slot.date, slot.startsAt)).toBe(true);
+    const customer = await verifyByCode(`after-${randomUUID().slice(0, 8)}@example.test`);
+    const held = await call("POST", "/v1/bookings", { cookie: customer.cookie, key: true, body: slot.body });
+    expect(held.status, JSON.stringify(held.body)).toBe(201);
+    expect(await bookingsOf(v)).toBe(1);
+  });
+
+  it("a customer session left in the browser cannot carry a business email's attempt: the code replaces it and the old cookie holds nothing", async () => {
+    const v = await vendor(), slot = slotOf(v, 13);
+    const before = await verifyByCode(`earlier-${randomUUID().slice(0, 8)}@example.test`);
+    const from = ip(), since = capturedEmails().length;
+    await call("POST", "/v1/auth/booking/otp/request", { from, body: { email: v.ownerEmail } });
+    const verified = await call("POST", "/v1/auth/booking/otp/verify", { from, cookie: before.cookie, body: { email: v.ownerEmail, code: await codeFor(v.ownerEmail, since) } });
+    expect(verified.body.user.role).toBe("VENDOR");
+    expect((await call("POST", "/v1/bookings", { cookie: before.cookie, key: true, body: slot.body })).status).toBe(401);
+    expect((await call("POST", "/v1/bookings", { cookie: sessionCookie(verified)!, key: true, body: slot.body })).status).toBe(403);
+    expect(await bookingsOf(v)).toBe(0);
+  });
+
+  it("the check is in the hold's own transaction: a customer who became a vendor after the session was read creates no row", async () => {
+    const v = await vendor(), slot = slotOf(v, 14);
+    const person = await createUser(pool, { role: "CLIENT" });
+    await pool.query("UPDATE users SET role='VENDOR' WHERE id=$1", [person.id]);
+    const attempt = transaction(db => createHold(db, { slug: v.slug, date: slot.date, name: "Meera Shah", email: person.email, clientUserId: person.id, serviceId: v.serviceId, startsAt: slot.startsAt, key: randomUUID() }));
+    await expect(attempt).rejects.toMatchObject({ code: "BUSINESS_ACCOUNT_CANNOT_BOOK", status: 403 });
+    expect(await bookingsOf(v)).toBe(0);
+    expect(await offered(v, slot.date, slot.startsAt)).toBe(true);
+  });
+
+  it("owning a page counts, whatever the role column says", async () => {
+    const v = await vendor(), slot = slotOf(v, 15);
+    await pool.query("UPDATE users SET role='CLIENT' WHERE id=$1", [v.ownerId]);
+    const attempt = transaction(db => createHold(db, { slug: v.slug, date: slot.date, name: "Meera Shah", email: v.ownerEmail, clientUserId: v.ownerId, serviceId: v.serviceId, startsAt: slot.startsAt, key: randomUUID() }));
+    await expect(attempt).rejects.toMatchObject({ code: "BUSINESS_ACCOUNT_CANNOT_BOOK" });
+    expect(await bookingsOf(v)).toBe(0);
   });
 });
 

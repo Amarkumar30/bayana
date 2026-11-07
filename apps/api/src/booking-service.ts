@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
-import { advancePaise, dailyTotalPaise, sessionCount, sessionTotalPaise } from "@bayana/shared";
+import { advancePaise, bookingErrorCopy, dailyTotalPaise, sessionCount, sessionTotalPaise } from "@bayana/shared";
 import { config } from "./config.js";
 import { dailyRange, hourlyRange } from "./availability.js";
 import { expireOverdueHolds, lockVendorSchedule, recordCreated, transitionBooking } from "./booking-transition.js";
@@ -21,11 +21,21 @@ const slotTaken = (daily = false) => new AppError(409, "SLOT_TAKEN", daily ? "Th
 const rangeTaken = (blocks: number) => new AppError(409, "SLOT_TAKEN", `${sessionCount(blocks)} in a row are not free from that time: the range runs into closing time, a break or another booking. Choose fewer sessions or another time.`);
 
 /**
- * Creates a hold (SPEC 9.3): vendor lock, lazy expiry, idempotency, slot re-check with the engine, insert (the exclusion
+ * A business account (a vendor who confirmed their own email) cannot book as a customer. Read from the row in the hold's own
+ * transaction, before anything is written, so a refusal leaves nothing behind; FOR SHARE keeps the role as read until it ends.
+ */
+async function requireCustomerAccount(db: PoolClient, userId: string) {
+  const account = await db.query<{ customer: boolean }>("SELECT u.role='CLIENT' AND NOT EXISTS(SELECT 1 FROM vendors v WHERE v.owner_user_id=u.id) AS customer FROM users u WHERE u.id=$1 FOR SHARE OF u", [userId]);
+  if (!account.rows[0]?.customer) throw new AppError(403, "BUSINESS_ACCOUNT_CANNOT_BOOK", bookingErrorCopy.BUSINESS_ACCOUNT_CANNOT_BOOK);
+}
+
+/**
+ * Creates a hold (SPEC 9.3): customer account, vendor lock, lazy expiry, idempotency, slot re-check with the engine, insert (the exclusion
  * constraint is the last guard), events. Times, price and advance come from the server; the client only names a slot (hourly)
  * and a number of consecutive sessions (hourly), or a start date and a number of days (daily). Which of the two applies is the service's stored mode, never the client's say.
  */
 export async function createHold(db: PoolClient, input: HoldInput) {
+  await requireCustomerAccount(db, input.clientUserId);
   const fingerprint = createHash("sha256").update(JSON.stringify({ slug: input.slug, date: input.date, name: input.name, phone: input.phone ?? "", notes: input.notes ?? "", referral: input.referral ?? "", serviceId: input.serviceId, startsAt: input.startsAt, clientUserId: input.clientUserId, ...(input.days === undefined ? {} : { days: input.days }), ...(input.blocks === undefined ? {} : { blocks: input.blocks }) })).digest("hex");
   const vendor = await db.query<{ id: string; phone_required: boolean; payment_required: boolean; owner_email: string | null; terms: string; cancellation_policy: string; rescheduling_policy: string; online_payments: boolean }>("SELECT v.id,v.phone_required,v.payment_required,u.email::text AS owner_email,v.terms,v.cancellation_policy,v.rescheduling_policy,v.online_payments FROM vendors v LEFT JOIN users u ON u.id=v.owner_user_id WHERE v.slug=$1 AND v.bookings_enabled AND v.published", [input.slug]);
   if (!vendor.rowCount) throw new AppError(404, "NOT_FOUND", "Vendor is unavailable");

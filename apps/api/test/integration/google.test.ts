@@ -257,7 +257,7 @@ async function bookable() {
   for (let weekday = 0; weekday < 7; weekday++) await pool.query("INSERT INTO availability_rules(id,vendor_id,weekday,start_time,end_time) VALUES($1,$2,$3,'09:00','18:00')", [randomUUID(), vendorId, weekday]);
   // 20 days ahead (inside the 365-day window), 10:00 in India: never a date written into the test.
   const date = isoDay(20), startsAt = `${date}T04:30:00.000Z`;
-  return { slug, serviceId, multiId, dailyId, date, startsAt, next: bookingReturnPath({ slug, service: serviceId, date, start: startsAt, blocks: 1 }) };
+  return { slug, serviceId, multiId, dailyId, date, startsAt, owner, next: bookingReturnPath({ slug, service: serviceId, date, start: startsAt, blocks: 1 }) };
 }
 type Bookable = Awaited<ReturnType<typeof bookable>>;
 /** A UTC calendar date `offset` days after today (or after `from`, plus `extra` days). */
@@ -389,6 +389,20 @@ describe("Google for customers (intent=customer)", () => {
     const refused = await hold(session(reply), v);
     expect(refused.status).toBe(403);
     expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("BUSINESS_ACCOUNT_CANNOT_BOOK");
+  });
+  it("Google: the owner of the page is refused, no booking exists, the time stays offered and a customer holds it at once", async () => {
+    const v = await bookable();
+    const ownerReply = await callback(await start({ intent: "customer", next: v.next }), { sub: `google-${randomUUID()}`, email: v.owner.email });
+    const refused = await hold(session(ownerReply), v);
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as { error: { code: string } }).error.code).toBe("BUSINESS_ACCOUNT_CANNOT_BOOK");
+    const bookings = async () => (await pool.query<{ n: number }>("SELECT count(*)::int AS n FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE v.slug=$1", [v.slug])).rows[0].n;
+    expect(await bookings()).toBe(0);
+    const slots = (await (await fetch(`${base}/v1/vendors/${v.slug}/availability/slots?service_id=${v.serviceId}&date=${v.date}`)).json()) as { slots: { startsAt: string }[] };
+    expect(slots.slots.some(slot => new Date(slot.startsAt).getTime() === new Date(v.startsAt).getTime())).toBe(true);
+    const customerReply = await callback(await start({ intent: "customer", next: v.next }), person());
+    expect((await hold(session(customerReply), v)).status).toBe(201);
+    expect(await bookings()).toBe(1);
   });
   it("a customer from the email-code path is the same row; becoming a vendor happens only through the vendor sign-up", async () => {
     const v = await bookable(); const client = await createUser(pool, { role: "CLIENT" }); const who = { sub: `google-${randomUUID()}`, email: client.email };
