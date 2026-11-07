@@ -1,8 +1,9 @@
 "use client";
 import { ArrowLeft } from "lucide-react";
 import { useEffect, useState } from "react";
-import { advancePaise, dailyTotalPaise, dayRangeLabel, formatAmount, timezoneLabel } from "@bayana/shared";
+import { advancePaise, dailyTotalPaise, dayRangeLabel, timezoneLabel } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
+import { choiceVariants } from "@/components/ui/choice";
 import { Notice } from "@/components/ui/display";
 import { DatePicker, shiftMonth } from "@/components/ui/date-picker";
 import { localDateKey } from "@/components/booking/time";
@@ -39,7 +40,8 @@ export function DayStep({ vendor, service, version, date, days, onDate, onDays, 
   const choices = dayChoices(byDate[date], minDays);
   // A start date whose free run got shorter (or vanished) cannot keep a longer choice.
   useEffect(() => { if (date && days && !choices.includes(days)) onDays(choices[0] ?? 0); }, [date, days, choices.join(",")]);
-  const quote = date && days ? dailyQuote(service, days) : null;
+  // The price of the chosen range is in the booking summary under the step.
+  const ready = Boolean(date && days);
 
   if (error) return <Notice tone="danger">{error}</Notice>;
   return (
@@ -59,15 +61,14 @@ export function DayStep({ vendor, service, version, date, days, onDate, onDays, 
           <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Number of days">
             {choices.map(count => (
               <button key={count} type="button" role="radio" aria-checked={days === count} onClick={() => onDays(count)}
-                className={cn("min-h-11 min-w-14 rounded-input px-3 text-sm font-medium ring-1 transition-colors", days === count ? "bg-primary text-primary-foreground ring-primary" : "bg-surface text-ink ring-border hover:ring-primary")}>
+                className={cn(choiceVariants({ selected: days === count }), "min-h-11 min-w-14 px-3 text-sm font-medium")}>
                 {count} {count === 1 ? "day" : "days"}
               </button>
             ))}
           </div>
         </fieldset>
       )}
-      {quote && <p className="rounded-input bg-surface-muted px-4 py-3 text-sm" data-testid="day-summary"><strong>{dayRangeLabel(date, days)}</strong> · Total {formatAmount(quote.total)}{quote.advance > 0 ? ` · Advance ${formatAmount(quote.advance)} now` : ""}</p>}
-      <div className="flex flex-wrap gap-2"><Button variant="ghost" onClick={onBack}><ArrowLeft aria-hidden />Service</Button><Button className="flex-1" size="lg" disabled={!quote} title={!quote ? "Choose the dates to continue" : undefined} onClick={onNext}>Continue</Button></div>
+      <div className="flex flex-wrap gap-2"><Button variant="ghost" onClick={onBack}><ArrowLeft aria-hidden />Service</Button><Button className="flex-1" size="lg" disabled={!ready} title={!ready ? "Choose the dates to continue" : undefined} onClick={onNext}>Continue</Button></div>
     </section>
   );
 }

@@ -22,11 +22,17 @@ const loadCheckout = () => new Promise<void>((resolve, reject) => {
   if (!existing) document.body.append(script);
 });
 
+/** Online payments exist only in test mode in this build: said before anyone pays, and again next to the pay button. */
+export function TestPaymentNotice() {
+  return <Notice tone="warning"><strong className="font-semibold">{TEST_PAYMENT_NOTICE}</strong> Use Razorpay test cards or a test UPI id.</Notice>;
+}
+
 /**
  * Pays the advance with Razorpay Checkout (SPEC 11.2). Success is shown only when the server reports the booking CONFIRMED;
- * Checkout's own success callback only starts server-side verification.
+ * Checkout's own success callback only starts server-side verification. autoStart opens Checkout once on mount: the customer
+ * has just pressed "Agree and pay", so they are not asked to press a second button.
  */
-export function PaymentPanel({ bookingId, token, amountPaise, businessName, email, onSettled }: { bookingId: string; token: string | null; amountPaise: number; businessName: string; email?: string; onSettled: (booking: BookingView) => void }) {
+export function PaymentPanel({ bookingId, token, amountPaise, businessName, email, onSettled, autoStart = false }: { bookingId: string; token: string | null; amountPaise: number; businessName: string; email?: string; onSettled: (booking: BookingView) => void; autoStart?: boolean }) {
   const [state, setState] = useState<"idle" | "opening" | "verifying" | "waiting">("idle");
   // After the payment window was closed (or a payment failed) the same button offers to try again.
   const [retry, setRetry] = useState(false);
@@ -74,10 +80,13 @@ export function PaymentPanel({ bookingId, token, amountPaise, businessName, emai
     checkout.open();
   };
 
+  // Once per mount, even when React runs effects twice in development: one tap, one payment window.
+  const started = useRef(false);
+  useEffect(() => { if (autoStart && !started.current) { started.current = true; void pay(); } }, [autoStart]);
+
   return (
     <div className="grid gap-3">
-      {/* Online payments exist only in test mode in this build: say so before anyone pays. */}
-      <Notice tone="warning"><strong className="font-semibold">{TEST_PAYMENT_NOTICE}</strong> Use Razorpay test cards or a test UPI id.</Notice>
+      <TestPaymentNotice />
       {message && <Notice tone={message.tone}>{message.text}</Notice>}
       <Button size="lg" block loading={state !== "idle"} loadingText={state === "opening" ? "Opening secure payment…" : state === "verifying" ? "Verifying…" : "Waiting for confirmation…"} onClick={() => void pay()}>{retry ? `Try again: pay ${formatAmount(amountPaise)}` : `Pay ${formatAmount(amountPaise)}`}</Button>
       <p className="inline-flex items-center justify-center gap-1.5 text-xs text-muted"><Lock className="size-3.5" aria-hidden />Secured by Razorpay. Bayana never sees your card details.</p>
