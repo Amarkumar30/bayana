@@ -236,7 +236,8 @@ describe("extending the deadline", () => {
     await setDeadline(h.id, 4 * HOUR);
     await settleDeadlines(v.id);
     expect(await emails(h.id, "advance_deadline_reminder")).toHaveLength(4);
-    await setDeadline(h.id, -60_000);
+    // Two minutes, not one: a deadline is named to the second, and this one must differ from the deadline above.
+    await setDeadline(h.id, -120_000);
     await settleDeadlines(v.id);
     await expect.poll(async () => (await emails(h.id, "advance_deadline_expired")).length).toBe(4);
   });
