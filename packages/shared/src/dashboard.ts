@@ -25,6 +25,13 @@ export const manualBookingSchema = z.object({
 export const notifyPrefsSchema = z.object({ booking_confirmed: z.boolean(), booking_cancelled: z.boolean(), reminder_24h: z.boolean() }).strict();
 export type NotifyPrefs = z.infer<typeof notifyPrefsSchema>;
 
+/** A note is optional unless the method says nothing by itself ("other"). */
+export const offlinePaymentSchema = z.object({ kind: z.enum(["advance", "balance"]), amount_paise: z.number().int().positive().max(100_000_000), method: z.enum(["cash", "upi", "bank_transfer", "other"]), note: z.string().trim().max(500).default("") }).strict()
+  .superRefine((value, ctx) => { if (value.note.length < 3 && (value.method === "other" || value.note.length > 0)) ctx.addIssue({ code: "custom", path: ["note"], message: "Add a short note, for example who paid and how." }); });
+/** More time for an offline advance: 24 or 48 hours, or a chosen moment (the server caps it at the booking's start). */
+export const EXTEND_HOURS = [24, 48] as const;
+export const extendDeadlineSchema = z.union([z.object({ hours: z.union([z.literal(24), z.literal(48)]) }).strict(), z.object({ until: z.string().datetime() }).strict()]);
+
 export const BOOKING_STATUSES = ["HELD", "PENDING", "CONFIRMED", "COMPLETED", "CANCELLED", "EXPIRED", "EXPIRED_PAID"] as const;
 export const bookingListQuerySchema = z.object({
   status: z.enum(BOOKING_STATUSES).optional(), q: text(120).optional(), from: localDateSchema.optional(), to: localDateSchema.optional(),

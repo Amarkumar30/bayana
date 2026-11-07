@@ -12,6 +12,9 @@ type Layout = { preheader: string; heading: string; paragraphs: string[]; rows?:
 const escape = (value: string) => value.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[char]!);
 export const when = (iso: Date | string, timezone: string) => `${new Intl.DateTimeFormat("en-IN", { timeZone: timezone, weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(iso))} (${timezone})`;
 
+/** The advance deadline, always in IST: "Friday, 12 November 2026, 2:00 pm IST". */
+export const whenIst = (iso: Date | string) => `${new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(iso))} IST`;
+
 /** A multi-session booking's full range: "Friday, 12 November 2026, 2:00 pm to 5:00 pm, 3 hours (Asia/Kolkata)". */
 export const whenRange = (start: Date | string, end: Date | string, timezone: string) => {
   const from = new Date(start), to = new Date(end);
@@ -51,7 +54,11 @@ type BookingFacts = { /** A verified online payment exists: in this build always
 export type TemplateData = {
   otp: { code: string; action: string; minutes: number };
   hold_started: BookingFacts & { holdUntil: Date | string; online: boolean };
-  booking_request_vendor: BookingFacts & { customerEmail: string };
+  booking_request_vendor: BookingFacts & { customerEmail: string; deadline: Date | string };
+  booking_request_customer: BookingFacts & { deadline: Date | string };
+  advance_deadline_reminder: BookingFacts & { audience: "customer" | "vendor"; deadline: Date | string };
+  advance_deadline_expired: BookingFacts & { audience: "customer" | "vendor"; deadline: Date | string };
+  advance_deadline_extended: BookingFacts & { deadline: Date | string };
   booking_confirmed_customer: BookingFacts & { cancellation: string };
   booking_confirmed_vendor: BookingFacts & { customerEmail: string };
   booking_cancelled: BookingFacts & { audience: "customer" | "vendor"; cancelledBy: "customer" | "vendor"; reason: string; refundPaise: number; refundManual: boolean };
@@ -79,8 +86,36 @@ export const templates: { [K in TemplateName]: (data: TemplateData[K]) => Render
   }),
   booking_request_vendor: data => render(`New booking request: ${data.customerName}, ${data.service}`, {
     preheader: `${whenOf(data)}`, heading: "New booking request",
-    paragraphs: [`${data.customerName} (${data.customerEmail}) agreed to your terms for ${data.service}. Online payment is off, so please collect the ${money(data.advancePaise)} advance and record it to confirm the booking.`],
+    paragraphs: [`${data.customerName} (${data.customerEmail}) agreed to your terms for ${data.service}. Online payment is off, so please collect the ${money(data.advancePaise)} advance and record it to confirm the booking.`, `Record it by ${whenIst(data.deadline)}. After that the time is released, unless you extend the deadline.`],
     rows: bookingRows(data), action: { label: "Open the booking", url: data.link }
+  }),
+  booking_request_customer: data => render(`Your request to ${data.businessName}: advance due by ${whenIst(data.deadline)}`, {
+    preheader: `${data.service}, ${whenOf(data)}`, heading: "Your time is reserved",
+    paragraphs: [`Hi ${data.customerName}, ${data.businessName} has your request for ${data.service}. Arrange the ${money(data.advancePaise)} advance with them directly.`, `Your time is reserved until ${whenIst(data.deadline)}. Your booking is confirmed once ${data.businessName} records the advance. If it isn't recorded by then, the time is released.`],
+    rows: bookingRows(data), action: { label: "View your booking", url: data.link }
+  }),
+  advance_deadline_reminder: data => data.audience === "vendor" ? render(`Advance due soon: ${data.customerName}, ${data.service}`, {
+    preheader: `Record it by ${whenIst(data.deadline)}`, heading: "An advance is due soon",
+    paragraphs: [`The ${money(data.advancePaise)} advance from ${data.customerName} isn't recorded yet. Record it by ${whenIst(data.deadline)}, or extend the deadline from the booking, or the time is released.`],
+    rows: bookingRows(data), action: { label: "Open the booking", url: data.link }
+  }) : render(`Advance due soon: ${data.service} with ${data.businessName}`, {
+    preheader: `Due by ${whenIst(data.deadline)}`, heading: "Your advance is due soon",
+    paragraphs: [`Hi ${data.customerName}, ${data.businessName} hasn't recorded your ${money(data.advancePaise)} advance yet. Your time is reserved until ${whenIst(data.deadline)}. If you have already paid, ask them to record it.`],
+    rows: bookingRows(data), action: { label: "View your booking", url: data.link }
+  }),
+  advance_deadline_expired: data => data.audience === "vendor" ? render(`Time released: ${data.customerName}, ${data.service}`, {
+    preheader: `The deadline was ${whenIst(data.deadline)}`, heading: "The advance deadline passed",
+    paragraphs: [`The ${money(data.advancePaise)} advance from ${data.customerName} wasn't recorded by ${whenIst(data.deadline)}, so the time is free again.`, "If the money did arrive, open the booking and extend the deadline, then record it."],
+    rows: bookingRows(data), action: { label: "Open the booking", url: data.link }
+  }) : render(`Time released: ${data.service} with ${data.businessName}`, {
+    preheader: `The deadline was ${whenIst(data.deadline)}`, heading: "Your reserved time was released",
+    paragraphs: [`Hi ${data.customerName}, the ${money(data.advancePaise)} advance wasn't recorded by ${whenIst(data.deadline)}, so ${data.businessName} can no longer hold this time for you.`, `If you have paid, contact ${data.businessName}: they can extend the deadline if the time is still free.`],
+    rows: bookingRows(data), action: { label: "View your booking", url: data.link }
+  }),
+  advance_deadline_extended: data => render(`More time for your advance: ${data.service} with ${data.businessName}`, {
+    preheader: `Now due by ${whenIst(data.deadline)}`, heading: "You have more time",
+    paragraphs: [`Hi ${data.customerName}, ${data.businessName} extended your deadline. Your time is reserved until ${whenIst(data.deadline)}. Your booking is confirmed once they record the ${money(data.advancePaise)} advance.`],
+    rows: bookingRows(data), action: { label: "View your booking", url: data.link }
   }),
   booking_confirmed_customer: data => render(`Confirmed: ${data.service} with ${data.businessName}`, { banner: data.testPayment ? TEST_PAYMENT_DONE : undefined, 
     preheader: whenOf(data), heading: "Your booking is confirmed",

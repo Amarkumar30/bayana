@@ -1,6 +1,7 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { MAX_BLOCKS, MAX_BOOKING_DAYS, refundPreview } from "@bayana/shared";
+import { settleForRead } from "./advance-deadlines.js";
 import { currentUser, type SessionUser } from "./auth.js";
 import { cookieToken, perIp } from "./auth-routes.js";
 import { tokenHash, tokenMatches } from "./booking-links.js";
@@ -33,13 +34,13 @@ async function bookingAccess(req: Request) {
   const token = req.header("x-booking-token") ?? (typeof req.query.t === "string" ? req.query.t : undefined);
   // full: the vendor, the customer, or the hold's own link (which finishes the booking). A later email's link only reads.
   const customer = "(b.client_user_id=$2 OR (b.client_email=$4 AND EXISTS(SELECT 1 FROM users u WHERE u.id=$2 AND u.email_verified_at IS NOT NULL)))";
-  const found = await pool.query<{ id: string; is_vendor: boolean; full: boolean }>(`SELECT b.id,v.owner_user_id IS NOT DISTINCT FROM $2 AS is_vendor,
+  const found = await pool.query<{ id: string; vendor_id: string; is_vendor: boolean; full: boolean }>(`SELECT b.id,b.vendor_id,v.owner_user_id IS NOT DISTINCT FROM $2 AS is_vendor,
       COALESCE(v.owner_user_id=$2 OR ${customer} OR ($3::text IS NOT NULL AND b.access_token_hash=$3),false) AS full
     FROM bookings b JOIN vendors v ON v.id=b.vendor_id
     WHERE b.id=$1 AND (v.owner_user_id=$2 OR ${customer} OR ($3::text IS NOT NULL AND ${tokenMatches("b", "$3")}))`,
     [id.data, user?.id ?? null, token ? tokenHash(token) : null, user?.email ?? null]);
   if (!found.rowCount) throw notFound();
-  return { id: found.rows[0].id, user, isVendor: found.rows[0].is_vendor, readOnly: !found.rows[0].full };
+  return { id: found.rows[0].id, vendorId: found.rows[0].vendor_id, user, isVendor: found.rows[0].is_vendor, readOnly: !found.rows[0].full };
 }
 /** Changing a booking (agreeing, paying, cancelling) needs more than an email link: the customer signed in, or the hold's link. */
 function requireChange(access: Awaited<ReturnType<typeof bookingAccess>>) {
@@ -60,6 +61,7 @@ bookingRouter.post("/", perIp(20), handle(async (req, res) => {
 
 bookingRouter.get("/:id", perIp(120), handle(async (req, res) => {
   const access = await bookingAccess(req);
+  await settleForRead(access.vendorId);
   res.json(await bookingView(access.id, access.isVendor, access.readOnly));
 }));
 

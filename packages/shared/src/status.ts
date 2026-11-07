@@ -39,6 +39,7 @@ const REASON_LABEL: Record<string, string> = {
   "late payment, slot re-claimed": "Confirmed, payment arrived late but the time was still free",
   "late payment, slot no longer free": "Paid after the hold expired; the time was taken, so the payment is refunded",
   "hold expired": "Hold expired, time released",
+  "deadline extended": "Advance deadline extended",
   "marked completed": "Completed"
 };
 /** Whether an event reason is one the system writes (so it is already said by bookingEventLabel). */

@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
+import { sweepDeadlinesSoon } from "./advance-deadlines.js";
 import { config } from "./config.js";
 import { pool, readWithOneRetry } from "./database.js";
 import { currentUser, type SessionUser } from "./auth.js";
@@ -45,6 +46,8 @@ app.use(rateLimit({ windowMs: 15 * 60_000, limit: 300, standardHeaders: "draft-8
 app.get("/health", (_req, res) => res.json({ ok: true }));
 app.get("/ready", async (_req, res) => { try { await readWithOneRetry(() => pool.query("SELECT 1")); res.json({ ok: true }); } catch (errorValue) { log("error", "ready.database_unreachable", { requestId: res.locals.requestId, err: errorValue instanceof Error ? errorValue.message : String(errorValue) }); res.status(503).json(errorBody("NOT_READY", "Database is not reachable")); } });
 
+// Any API use moves overdue deadlines on (advance-deadlines.ts), so they do not wait for the tick.
+app.use("/v1", (_req, res, next) => { res.on("finish", sweepDeadlinesSoon); next(); });
 app.use("/v1/auth", authRouter);
 app.use("/v1/auth", googleRouter);
 app.use("/v1/vendors", publicRouter);

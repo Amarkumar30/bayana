@@ -36,10 +36,39 @@ export async function notifyConfirmed(db: Db, bookingId: string, customerToken?:
   if (vendorEmail) await enqueue(db, "booking_confirmed_vendor", vendorEmail, { ...booking.facts, customerEmail: booking.customerEmail }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `confirmed:${bookingId}:vendor` });
 }
 
-/** The customer agreed but pays offline: tell the vendor to collect and record the advance. */
+const deadlineOf = async (db: Db, bookingId: string) => (await db.query<{ hold_expires_at: Date }>("SELECT hold_expires_at FROM bookings WHERE id=$1", [bookingId])).rows[0].hold_expires_at;
+
+/** The customer agreed but pays offline: they are told what happens next and by when. */
+export async function notifyRequestToCustomer(db: Db, bookingId: string) {
+  const booking = await bookingFacts(db, bookingId), deadline = await deadlineOf(db, bookingId);
+  await withCustomerLink(db, bookingId, "request", link => enqueue(db, "booking_request_customer", booking.customerEmail, { ...booking.facts, deadline, link }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `request:${bookingId}:customer`, senderName: booking.facts.businessName }));
+}
+
+/** About 6 hours before the deadline, to both sides, once per deadline (deadlineKey names it). */
+export async function notifyAdvanceReminder(db: Db, bookingId: string, deadlineKey: string) {
+  const booking = await bookingFacts(db, bookingId), deadline = await deadlineOf(db, bookingId);
+  await withCustomerLink(db, bookingId, "deadline_reminder", link => enqueue(db, "advance_deadline_reminder", booking.customerEmail, { ...booking.facts, audience: "customer", deadline, link }, { bookingId, dedupeKey: `advance-reminder:${bookingId}:${deadlineKey}:customer`, senderName: booking.facts.businessName }));
+  const vendorEmail = booking.vendorEmailFor("reminder_24h");
+  if (vendorEmail) await enqueue(db, "advance_deadline_reminder", vendorEmail, { ...booking.facts, audience: "vendor", deadline }, { bookingId, dedupeKey: `advance-reminder:${bookingId}:${deadlineKey}:vendor` });
+}
+
+/** The deadline passed with the advance unrecorded: one email to each side, once per deadline. Queued in the expiry's transaction. */
+export async function notifyAdvanceExpired(db: Db, bookingId: string, deadlineKey: string) {
+  const booking = await bookingFacts(db, bookingId), deadline = await deadlineOf(db, bookingId);
+  await withCustomerLink(db, bookingId, "deadline_expired", link => enqueue(db, "advance_deadline_expired", booking.customerEmail, { ...booking.facts, audience: "customer", deadline, link }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `advance-expired:${bookingId}:${deadlineKey}:customer`, senderName: booking.facts.businessName }));
+  if (booking.vendorEmail) await enqueue(db, "advance_deadline_expired", booking.vendorEmail, { ...booking.facts, audience: "vendor", deadline }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `advance-expired:${bookingId}:${deadlineKey}:vendor` });
+}
+
+/** The vendor gave more time: the customer hears the new deadline. */
+export async function notifyDeadlineExtended(db: Db, bookingId: string, deadlineKey: string) {
+  const booking = await bookingFacts(db, bookingId), deadline = await deadlineOf(db, bookingId);
+  await withCustomerLink(db, bookingId, "deadline_extended", link => enqueue(db, "advance_deadline_extended", booking.customerEmail, { ...booking.facts, deadline, link }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `advance-extended:${bookingId}:${deadlineKey}`, senderName: booking.facts.businessName }));
+}
+
+/** The customer agreed but pays offline: tell the vendor to collect and record the advance, and by when. */
 export async function notifyRequestToVendor(db: Db, bookingId: string) {
-  const booking = await bookingFacts(db, bookingId);
-  if (booking.vendorEmail) await enqueue(db, "booking_request_vendor", booking.vendorEmail, { ...booking.facts, customerEmail: booking.customerEmail }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `request:${bookingId}:vendor` });
+  const booking = await bookingFacts(db, bookingId), deadline = await deadlineOf(db, bookingId);
+  if (booking.vendorEmail) await enqueue(db, "booking_request_vendor", booking.vendorEmail, { ...booking.facts, customerEmail: booking.customerEmail, deadline }, { bookingId, priority: PRIORITY.urgent, dedupeKey: `request:${bookingId}:vendor` });
 }
 
 export async function notifyCancelled(db: Db, bookingId: string, details: { cancelledBy: "customer" | "vendor"; reason: string; refundPaise: number; refundManual: boolean }) {

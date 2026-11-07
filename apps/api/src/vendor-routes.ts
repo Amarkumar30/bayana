@@ -5,7 +5,9 @@ import { z } from "zod";
 import {
   blockedPeriodSchema, bookingWindowSchema, missingPublishRequirements, onboardingSteps, overrideSchema, serviceCreateSchema, serviceReorderSchema, serviceUpdateSchema,
   vendorCreateSchema, vendorProfileSchema, weeklyScheduleSchema, weeklyWindowSchema, type ChecklistInput, type ServiceInput
+, offlinePaymentSchema
 } from "@bayana/shared";
+import { settleDeadlines } from "./advance-deadlines.js";
 import { currentUser, type SessionUser } from "./auth.js";
 import { cookieToken } from "./auth-routes.js";
 import { pool, transaction } from "./database.js";
@@ -220,11 +222,12 @@ vendorRouter.delete("/availability/blocked-periods/:id", requireVendor, handle(a
 }));
 
 // ---- Offline payments (PY-10) -------------------------------------------------------------------------------
-const offlinePaymentSchema = z.object({ kind: z.enum(["advance", "balance"]), amount_paise: z.number().int().positive().max(100_000_000), method: z.enum(["cash", "upi", "bank_transfer", "other"]), note: z.string().trim().min(3, "Add a short note, for example who paid and how.").max(500) }).strict();
 /** The vendor records money received outside Bayana (cash, UPI to their own account). Audited, tagged offline in the ledger. */
 vendorRouter.post("/bookings/:id/offline-payments", requireVendor, handle(async (req, res) => {
   const body = offlinePaymentSchema.parse(req.body);
-  const result = await recordOfflinePayment({ vendorId: vendorOf(res).id, userId: userOf(res).id, bookingId: uuidParam(req.params.id, "Booking"), kind: body.kind, amountPaise: body.amount_paise, method: body.method, note: body.note });
+  // A late record finds the booking already expired (and both sides told) rather than slipping past the deadline.
+  await settleDeadlines(vendorOf(res).id);
+  const result = await recordOfflinePayment({ vendorId: vendorOf(res).id, userId: userOf(res).id, bookingId: uuidParam(req.params.id, "Booking"), kind: body.kind, amountPaise: body.amount_paise, method: body.method, note: body.note || "Recorded by the business" });
   res.status(201).json(result);
   kickOutbox();
 }));

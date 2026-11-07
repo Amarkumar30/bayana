@@ -1,11 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { addLocalDays, bookingListQuerySchema, calendarQuerySchema, localDateOf, manualBookingSchema, missingPublishRequirements, notifyPrefsSchema, onlineRefundSchema, rescheduleSchema, vendorCancelSchema } from "@bayana/shared";
+import { addLocalDays, bookingListQuerySchema, extendDeadlineSchema, calendarQuerySchema, localDateOf, manualBookingSchema, missingPublishRequirements, notifyPrefsSchema, onlineRefundSchema, rescheduleSchema, vendorCancelSchema } from "@bayana/shared";
 import type { SessionUser } from "./auth.js";
 import { closeLogin } from "./privacy.js";
+import { settleForRead } from "./advance-deadlines.js";
 import { writeAudit } from "./audit.js";
 import { perIp } from "./auth-routes.js";
+import { awaitsOfflineSql } from "./booking-transition.js";
 import { bookingView } from "./booking-routes.js";
 import { config } from "./config.js";
 import { pool, transaction } from "./database.js";
@@ -14,7 +16,7 @@ import { kickOutbox } from "./notifications/outbox.js";
 import { paidSql, refundOnlinePayment } from "./payments/service.js";
 import { onlinePaymentsFor } from "./payments/runtime.js";
 import { checklistInput, requireVendor, type VendorRow } from "./vendor-routes.js";
-import { vendorCancel, vendorComplete, vendorManualBooking, vendorReschedule } from "./vendor-bookings.js";
+import { vendorCancel, vendorComplete, vendorExtendDeadline, vendorManualBooking, vendorReschedule } from "./vendor-bookings.js";
 
 // Vendor dashboard (SPEC 5.3): home, calendar, bookings, payments, customers, settings, iCal feed. Every query is scoped to
 // res.locals.vendor.id from the session (requireVendor), so another vendor's ids match nothing and answer 404.
@@ -37,26 +39,29 @@ export const dashboardRouter = Router();
 // ---- Home ---------------------------------------------------------------------------------------------------------
 dashboardRouter.get("/overview", requireVendor, handle(async (_req, res) => {
   const { id, timezone } = vendorOf(res);
+  await settleForRead(id);
   const today = `(date_trunc('day', now() AT TIME ZONE $2) AT TIME ZONE $2)`;
   const [upcoming, money, todo, checklist] = await Promise.all([
     pool.query(`SELECT b.id,${displayStatus} AS status,b.service_name,b.client_name,b.starts_at,b.ends_at,b.booking_mode,b.days_count,b.blocks_count,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.total_paise::int AS total_paise,${paidSql("b.id")}::int AS paid_paise FROM bookings b
       WHERE b.vendor_id=$1 AND b.starts_at >= ${today} AND b.starts_at < ${today} + interval '8 days' AND ${displayStatus} IN ('HELD','PENDING','CONFIRMED','COMPLETED') ORDER BY b.starts_at LIMIT 100`, [id, timezone]),
-    pool.query<{ collected_30d: string; refunded_30d: string; balance_due: string }>(`SELECT
+    pool.query<{ collected_30d: string; refunded_30d: string; balance_due: string; advance_month: string }>(`SELECT
+      COALESCE((SELECT SUM(p.amount_paise) FROM payments p JOIN bookings b ON b.id=p.booking_id WHERE b.vendor_id=$1 AND p.kind='advance' AND p.verified_at >= (date_trunc('month', now() AT TIME ZONE $2) AT TIME ZONE $2) AND p.status IN ('captured','refunded','partially_refunded')),0) AS advance_month,
       COALESCE((SELECT SUM(p.amount_paise) FROM payments p JOIN bookings b ON b.id=p.booking_id WHERE b.vendor_id=$1 AND p.verified_at > now() - interval '30 days' AND p.status IN ('captured','refunded','partially_refunded')),0) AS collected_30d,
       COALESCE((SELECT SUM(r.amount_paise) FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.vendor_id=$1 AND r.status='processed' AND r.processed_at > now() - interval '30 days'),0) AS refunded_30d,
-      COALESCE((SELECT SUM(b.total_paise - ${paidSql("b.id")}) FROM bookings b WHERE b.vendor_id=$1 AND b.status IN ('PENDING','CONFIRMED') AND b.ends_at > now() AND (b.status='CONFIRMED' OR b.hold_expires_at IS NULL OR b.hold_expires_at > now())),0) AS balance_due`, [id]),
-    pool.query<{ kind: string; id: string; client_name: string; starts_at: Date; amount_paise: string | null }>(`
-      SELECT 'record_advance' AS kind,b.id,b.client_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.advance_paise AS amount_paise FROM bookings b WHERE b.vendor_id=$1 AND b.status='PENDING' AND b.hold_expires_at > now() AND b.advance_paise > ${paidSql("b.id")}
-      UNION ALL SELECT 'mark_complete',b.id,b.client_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,NULL FROM bookings b WHERE b.vendor_id=$1 AND b.status='CONFIRMED' AND b.ends_at < now()
-      UNION ALL SELECT 'return_money',b.id,b.client_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,r.amount_paise FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.vendor_id=$1 AND r.status='manual' AND r.created_at > now() - interval '60 days'
-      UNION ALL SELECT 'refund_failed',b.id,b.client_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,r.amount_paise FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.vendor_id=$1 AND r.status='failed'
-      ORDER BY starts_at LIMIT 50`, [id]),
+      COALESCE((SELECT SUM(b.total_paise - ${paidSql("b.id")}) FROM bookings b WHERE b.vendor_id=$1 AND b.status IN ('PENDING','CONFIRMED') AND b.ends_at > now() AND (b.status='CONFIRMED' OR b.hold_expires_at IS NULL OR b.hold_expires_at > now())),0) AS balance_due`, [id, timezone]),
+    pool.query<{ kind: string; id: string; client_name: string; starts_at: Date; amount_paise: string | null; hold_expires_at: Date | null }>(`
+      SELECT * FROM (SELECT 'record_advance' AS kind,b.id,b.client_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.advance_paise AS amount_paise,b.hold_expires_at FROM bookings b WHERE b.vendor_id=$1 AND b.status='PENDING' AND b.hold_expires_at > now() AND b.advance_paise > ${paidSql("b.id")}
+      UNION ALL SELECT 'mark_complete',b.id,b.client_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,NULL,NULL::timestamptz FROM bookings b WHERE b.vendor_id=$1 AND b.status='CONFIRMED' AND b.ends_at < now()
+      UNION ALL SELECT 'return_money',b.id,b.client_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,r.amount_paise,NULL::timestamptz FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.vendor_id=$1 AND r.status='manual' AND r.created_at > now() - interval '60 days'
+      UNION ALL SELECT 'refund_failed',b.id,b.client_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,r.amount_paise,NULL::timestamptz FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.vendor_id=$1 AND r.status='failed'
+      UNION ALL SELECT 'deadline_passed',b.id,b.client_name,b.starts_at,b.booking_mode,b.days_count,b.blocks_count,b.ends_at,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.advance_paise,b.hold_expires_at FROM bookings b WHERE b.vendor_id=$1 AND b.status='EXPIRED' AND b.starts_at > now() AND b.hold_expires_at > now() - interval '7 days' AND b.advance_paise > ${paidSql("b.id")} AND ${awaitsOfflineSql("b")}
+      ) todo ORDER BY COALESCE(hold_expires_at, starts_at) LIMIT 50`, [id]),
     checklistInput(pool, id)
   ]);
   const m = money.rows[0];
   res.json({
     timezone, upcoming: upcoming.rows, payments_enabled: onlinePaymentsFor(vendorOf(res).online_payments),
-    money: { collected_30d_paise: Number(m.collected_30d) - Number(m.refunded_30d), balance_due_paise: Number(m.balance_due) },
+    money: { collected_30d_paise: Number(m.collected_30d) - Number(m.refunded_30d), advance_month_paise: Number(m.advance_month), balance_due_paise: Number(m.balance_due) },
     todo: todo.rows.map(row => ({ ...row, amount_paise: row.amount_paise === null ? null : Number(row.amount_paise) })),
     publish_missing: missingPublishRequirements(checklist), published: checklist.published
   });
@@ -65,6 +70,7 @@ dashboardRouter.get("/overview", requireVendor, handle(async (_req, res) => {
 // ---- Bookings -----------------------------------------------------------------------------------------------------
 dashboardRouter.get("/bookings", requireVendor, handle(async (req, res) => {
   const query = bookingListQuerySchema.parse(req.query); const { id, timezone } = vendorOf(res);
+  await settleForRead(id);
   const params: unknown[] = [id]; const where = ["b.vendor_id=$1"];
   // The timezone is a parameter only when a date filter uses it (an unused parameter has no type and is rejected).
   let tz = ""; const tzRef = () => { if (!tz) { params.push(timezone); tz = `$${params.length}`; } return tz; };
@@ -80,18 +86,20 @@ dashboardRouter.get("/bookings", requireVendor, handle(async (req, res) => {
 
 dashboardRouter.get("/bookings/:id", requireVendor, handle(async (req, res) => {
   const id = bookingId(req);
+  await settleForRead(vendorOf(res).id);
   const owned = await pool.query<{ client_email: string; client_phone: string; customer_notes: string | null; referral: string | null; created_at: Date }>("SELECT client_email::text AS client_email,client_phone,customer_notes,referral,created_at FROM bookings WHERE id=$1 AND vendor_id=$2", [id, vendorOf(res).id]);
   if (!owned.rowCount) throw new AppError(404, "NOT_FOUND", "Booking not found");
-  const [view, events, ledger] = await Promise.all([
+  const [view, events, ledger, waited] = await Promise.all([
     bookingView(id, true),
     pool.query("SELECT from_status,to_status,actor,reason,meta,created_at FROM booking_events WHERE booking_id=$1 ORDER BY created_at", [id]),
-    pool.query("SELECT kind,amount_paise::int AS amount_paise,channel,actor,reason,created_at FROM ledger_entries WHERE booking_id=$1 ORDER BY created_at", [id])
+    pool.query("SELECT kind,amount_paise::int AS amount_paise,channel,actor,reason,created_at FROM ledger_entries WHERE booking_id=$1 ORDER BY created_at", [id]),
+    pool.query(`SELECT 1 FROM bookings b WHERE b.id=$1 AND ${awaitsOfflineSql("b")}`, [id])
   ]);
   const ended = new Date(view.ends_at) < new Date(), started = new Date(view.starts_at) <= new Date();
   res.json({
     ...view, customer: { name: view.client_name, email: owned.rows[0].client_email, phone: owned.rows[0].client_phone, notes: owned.rows[0].customer_notes, referral: owned.rows[0].referral }, created_at: owned.rows[0].created_at,
     events: events.rows, ledger: ledger.rows,
-    actions: { cancel: ["PENDING", "CONFIRMED"].includes(view.status), complete: view.status === "CONFIRMED" && ended, reschedule: ["PENDING", "CONFIRMED"].includes(view.status) && !started, record_payment: ["PENDING", "CONFIRMED", "COMPLETED"].includes(view.status) && view.balance_due_paise > 0 }
+    actions: { cancel: ["PENDING", "CONFIRMED"].includes(view.status), complete: view.status === "CONFIRMED" && ended, reschedule: ["PENDING", "CONFIRMED"].includes(view.status) && !started, record_payment: ["PENDING", "CONFIRMED", "COMPLETED"].includes(view.status) && view.balance_due_paise > 0, extend_deadline: ["PENDING", "EXPIRED"].includes(view.status) && Boolean(waited.rowCount) && view.paid_paise < view.advance_paise && !started }
   });
 }));
 dashboardRouter.post("/bookings/:id/cancel", requireVendor, handle(async (req, res) => {
@@ -103,6 +111,13 @@ dashboardRouter.post("/bookings/:id/cancel", requireVendor, handle(async (req, r
 dashboardRouter.post("/bookings/:id/refund", requireVendor, handle(async (req, res) => {
   const body = onlineRefundSchema.parse(req.body); const id = bookingId(req);
   await refundOnlinePayment({ bookingId: id, amountPaise: body.amount_paise, reason: body.reason, actorUserId: actorOf(res).userId, vendorId: actorOf(res).vendorId });
+  res.json(await bookingView(id, true)); kickOutbox();
+}));
+// More time for an offline advance (and the way back for one whose deadline passed); audited, and the customer is told.
+dashboardRouter.post("/bookings/:id/deadline", requireVendor, handle(async (req, res) => {
+  const body = extendDeadlineSchema.parse(req.body); const id = bookingId(req);
+  await settleForRead(vendorOf(res).id);
+  await vendorExtendDeadline(actorOf(res), id, body);
   res.json(await bookingView(id, true)); kickOutbox();
 }));
 dashboardRouter.post("/bookings/:id/complete", requireVendor, handle(async (req, res) => {

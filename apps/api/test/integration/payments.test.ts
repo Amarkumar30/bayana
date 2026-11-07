@@ -373,7 +373,7 @@ describe("offline payments, balance and receipts (PY-07, PY-10, PY-11)", () => {
     useTestPayments({ mode: "disabled", provider: null });
     const booking = await pending();
     const path = `/v1/vendor/bookings/${booking.id}/offline-payments`;
-    expect((await call("POST", path, { cookie: booking.vendor.ownerCookie, body: { kind: "advance", amount_paise: 20000, method: "cash", note: "" } })).status).toBe(400);
+    expect((await call("POST", path, { cookie: booking.vendor.ownerCookie, body: { kind: "advance", amount_paise: 20000, method: "other", note: "" } })).status).toBe(400);
     expect((await call("POST", path, { cookie: booking.vendor.ownerCookie, body: { kind: "advance", amount_paise: 200000, method: "cash", note: "Too much" } })).body.error.code).toBe("AMOUNT_EXCEEDS_BALANCE");
     const advance = await call("POST", path, { cookie: booking.vendor.ownerCookie, body: { kind: "advance", amount_paise: 20000, method: "upi", note: "UPI to the studio account, ref 4411" } });
     expect(advance).toMatchObject({ status: 201, body: { confirmed: true } });

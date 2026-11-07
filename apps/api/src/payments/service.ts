@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { formatINR } from "@bayana/shared";
 import { writeAudit } from "../audit.js";
-import { lockVendorSchedule, transitionBooking } from "../booking-transition.js";
+import { awaitsOfflineSql, lockVendorSchedule, transitionBooking } from "../booking-transition.js";
 import { pool, transaction } from "../database.js";
 import { bookingFacts, notifyConfirmed, notifyRefundIssued, notifyReview } from "../notifications/booking-mail.js";
 import { enqueue, PRIORITY } from "../notifications/outbox.js";
@@ -148,10 +148,13 @@ const knownMethod = (method: string | null) => method && ["card", "upi", "netban
 
 export async function recordOfflinePayment(input: { vendorId: string; userId: string; bookingId: string; kind: "advance" | "balance"; amountPaise: number; method: "cash" | "upi" | "bank_transfer" | "other"; note: string }) {
   return transaction(async db => {
-    const found = await db.query<{ status: string; advance_paise: string; total_paise: string; client_email: string; service_name: string }>("SELECT status,advance_paise,total_paise,client_email::text AS client_email,service_name FROM bookings WHERE id=$1 AND vendor_id=$2 FOR UPDATE", [input.bookingId, input.vendorId]);
+    const found = await db.query<{ status: string; advance_paise: string; total_paise: string; client_email: string; service_name: string; hold_expires_at: Date | null }>("SELECT status,advance_paise,total_paise,client_email::text AS client_email,service_name,hold_expires_at FROM bookings WHERE id=$1 AND vendor_id=$2 FOR UPDATE", [input.bookingId, input.vendorId]);
     if (!found.rowCount) throw new AppError(404, "NOT_FOUND", "Booking not found");
     const booking = found.rows[0];
     if (booking.status === "HELD") throw new AppError(409, "TERMS_REQUIRED", "The customer has not agreed to the terms yet");
+    // After the deadline the time may belong to someone else: the vendor extends first, which brings the booking back only if it is free.
+    const late = booking.status === "EXPIRED" || booking.status === "PENDING" && booking.hold_expires_at !== null && booking.hold_expires_at <= new Date();
+    if (late && (await db.query(`SELECT 1 FROM bookings b WHERE b.id=$1 AND ${awaitsOfflineSql("b")}`, [input.bookingId])).rowCount && await paidPaise(db, input.bookingId) === 0) throw new AppError(409, "ADVANCE_DEADLINE_PASSED", "The deadline for this advance has passed, so the time was released. Extend the deadline first, then record the advance.", { can_extend: true });
     if (!["PENDING", "CONFIRMED", "COMPLETED"].includes(booking.status)) throw new AppError(409, "BOOKING_NOT_PAYABLE", "Payments can be recorded only for pending or confirmed bookings");
     const balance = Number(booking.total_paise) - await paidPaise(db, input.bookingId);
     if (input.amountPaise > balance) throw new AppError(400, "AMOUNT_EXCEEDS_BALANCE", `That is more than the balance due (${formatINR(balance)})`, { balance_due_paise: balance });

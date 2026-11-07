@@ -1,4 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { queueDeadlineReminders } from "./advance-deadlines.js";
 import { withCustomerLink } from "./booking-links.js";
 import { expireOverdueHolds } from "./booking-transition.js";
 import { config } from "./config.js";
@@ -76,7 +77,7 @@ async function sendReminders() {
     });
     if (claimed) queued++;
   }
-  return { reminders: queued };
+  return { reminders: queued, advance_reminders: await transaction(db => queueDeadlineReminders(db, null)) };
 }
 
 const processWebhooks = async () => {

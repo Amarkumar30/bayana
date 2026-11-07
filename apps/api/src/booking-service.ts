@@ -3,11 +3,11 @@ import type { PoolClient } from "pg";
 import { advancePaise, bookingErrorCopy, dailyTotalPaise, sessionCount, sessionTotalPaise } from "@bayana/shared";
 import { config } from "./config.js";
 import { dailyRange, hourlyRange } from "./availability.js";
-import { expireOverdueHolds, lockVendorSchedule, recordCreated, transitionBooking } from "./booking-transition.js";
+import { OFFLINE_WAIT_REASON, expireOverdueHolds, lockVendorSchedule, recordCreated, transitionBooking } from "./booking-transition.js";
 import { recordConsent } from "./consent.js";
 import { loadContract } from "./contract.js";
 import { onlinePaymentsFor } from "./payments/runtime.js";
-import { bookingFacts, bookingUrl, notifyConfirmed, notifyRequestToVendor } from "./notifications/booking-mail.js";
+import { bookingFacts, bookingUrl, notifyConfirmed, notifyRequestToCustomer, notifyRequestToVendor } from "./notifications/booking-mail.js";
 import { enqueue, PRIORITY } from "./notifications/outbox.js";
 import { AppError } from "./errors.js";
 import { loadSlotEngineInput } from "./slot-data.js";
@@ -111,11 +111,11 @@ export async function acceptTerms(db: PoolClient, input: Acceptance) {
   // (PENDING) for the vendor to record an offline advance, so the hold lengthens.
   const awaitsOffline = advance > 0 && !onlinePaymentsFor(booking.online_payments);
   await db.query(`UPDATE bookings SET terms_accepted_at=now()${awaitsOffline ? ", hold_expires_at=now()+make_interval(hours => $2)" : ""} WHERE id=$1`, awaitsOffline ? [input.bookingId, config.REQUEST_HOLD_HOURS] : [input.bookingId]);
-  await transitionBooking(db, input.bookingId, "PENDING", "client", advance === 0 ? "terms accepted, nothing to pay" : awaitsOffline ? "terms accepted, advance to be arranged offline" : "terms accepted, advance to be paid online", { terms_sha256: contract.sha256 });
+  await transitionBooking(db, input.bookingId, "PENDING", "client", advance === 0 ? "terms accepted, nothing to pay" : awaitsOffline ? OFFLINE_WAIT_REASON : "terms accepted, advance to be paid online", { terms_sha256: contract.sha256 });
   if (advance === 0) await transitionBooking(db, input.bookingId, "CONFIRMED", "system", "no advance required");
   const status = (await bookingRow(db, input.bookingId)).status as string;
   if (status === "CONFIRMED") await notifyConfirmed(db, input.bookingId);
-  else if (awaitsOffline) await notifyRequestToVendor(db, input.bookingId);
+  else if (awaitsOffline) { await notifyRequestToVendor(db, input.bookingId); await notifyRequestToCustomer(db, input.bookingId); }
   return { booking: await bookingRow(db, input.bookingId) };
 }
 const bookingRow = async (db: PoolClient, id: string) => (await db.query(`SELECT ${bookingView} FROM bookings WHERE id=$1`, [id])).rows[0] as Record<string, unknown> & { id: string; status: string };

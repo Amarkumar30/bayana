@@ -177,6 +177,7 @@ describe("IDOR suite (SPEC 12.4)", () => {
       "DELETE /v1/vendor/availability/overrides/:id": async () => [await call("DELETE", `/v1/vendor/availability/overrides/${override}`, asB)],
       "DELETE /v1/vendor/availability/blocked-periods/:id": async () => [await call("DELETE", `/v1/vendor/availability/blocked-periods/${blocked}`, asB)],
       "POST /v1/vendor/bookings/:id/offline-payments": async () => [await call("POST", `/v1/vendor/bookings/${booking.id}/offline-payments`, { ...asB, body: { kind: "balance", amount_paise: 100, method: "cash", note: "not mine" } })],
+      "POST /v1/vendor/bookings/:id/deadline": async () => [await call("POST", `/v1/vendor/bookings/${booking.id}/deadline`, { ...asB, body: { hours: 24 } })],
       "GET /v1/vendor/bookings/:id": async () => [await call("GET", `/v1/vendor/bookings/${booking.id}`, asB)],
       "POST /v1/vendor/bookings/:id/cancel": async () => [await call("POST", `/v1/vendor/bookings/${booking.id}/cancel`, { ...asB, body: { reason: "not mine" } })],
       "POST /v1/vendor/bookings/:id/refund": async () => [await call("POST", `/v1/vendor/bookings/${booking.id}/refund`, { ...asB, body: { amount_paise: 100, reason: "not mine" } })],

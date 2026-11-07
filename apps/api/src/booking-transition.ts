@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { AppError } from "./errors.js";
+import { notifyAdvanceExpired } from "./notifications/booking-mail.js";
 
 // The only file allowed to write bookings.status (SPEC 10.1, BK-07); test/unit/status-writes.test.ts enforces it.
 
@@ -8,6 +9,13 @@ export type BookingStatus = "HELD" | "PENDING" | "CONFIRMED" | "COMPLETED" | "CA
 type Locked = { id: string; vendor_id: string; status: BookingStatus; hold_expires_at: Date | null; ends_at: Date; advance_paise: string; terms_accepted_at: Date | null };
 type Meta = Record<string, unknown>;
 type Guard = (booking: Locked, meta: Meta, db: PoolClient) => Promise<string | null> | string | null;
+
+/** The reason acceptTerms writes when the advance is arranged offline: a booking with this event has a deadline of hours, not minutes. */
+export const OFFLINE_WAIT_REASON = "terms accepted, advance to be arranged offline";
+/** SQL: did the booking aliased `alias` wait for an offline advance? The event is permanent, so it answers after expiry too. */
+export const awaitsOfflineSql = (alias: string) => `EXISTS(SELECT 1 FROM booking_events e WHERE e.booking_id=${alias}.id AND e.to_status='PENDING' AND e.reason='${OFFLINE_WAIT_REASON}')`;
+/** SQL: names one deadline of a booking in dedupe keys, so an extended deadline gets its own reminder and expiry email. */
+export const deadlineKeySql = (alias: string) => `floor(extract(epoch from ${alias}.hold_expires_at))::bigint::text`;
 
 const holdLive = (booking: Locked) => booking.hold_expires_at && booking.hold_expires_at > new Date() ? null : "The hold has expired";
 const holdOver = (booking: Locked) => booking.hold_expires_at && booking.hold_expires_at < new Date() ? null : "The hold has not expired yet";
@@ -33,7 +41,8 @@ const transitions: Record<BookingStatus, Partial<Record<BookingStatus, Guard>>> 
   },
   EXPIRED_PAID: { CANCELLED: hasReason },
   // A payment that lands after the hold expired (SPEC 11.4): re-claim the slot (the exclusion constraint is the guard), or park it for a refund.
-  EXPIRED: { CONFIRMED: paidBy, EXPIRED_PAID: paidBy },
+  // Or the vendor extends the deadline of an offline advance (vendorExtendDeadline): the exclusion constraint is the guard again.
+  EXPIRED: { CONFIRMED: paidBy, EXPIRED_PAID: paidBy, PENDING: booking => holdLive(booking) ?? (booking.terms_accepted_at ? null : "Terms have not been accepted") },
   COMPLETED: {}, CANCELLED: {}
 };
 
@@ -72,13 +81,14 @@ export async function lockVendorSchedule(db: PoolClient, vendorId: string) {
 
 /** Lazy expiry (SPEC 10.2): moves overdue holds to EXPIRED through transitionBooking. One vendor, or all when vendorId is null. */
 export async function expireOverdueHolds(db: PoolClient, vendorId: string | null) {
-  const due = await db.query<{ id: string }>(`SELECT id FROM bookings WHERE status IN ('HELD','PENDING') AND hold_expires_at < now() ${vendorId ? "AND vendor_id=$1" : ""} ORDER BY id FOR UPDATE SKIP LOCKED`, vendorId ? [vendorId] : []);
+  const due = await db.query<{ id: string; waiting: boolean; deadline_key: string }>(`SELECT b.id,b.status='PENDING' AND ${awaitsOfflineSql("b")} AS waiting,${deadlineKeySql("b")} AS deadline_key FROM bookings b WHERE b.status IN ('HELD','PENDING') AND b.hold_expires_at < now() ${vendorId ? "AND b.vendor_id=$1" : ""} ORDER BY b.id FOR UPDATE OF b SKIP LOCKED`, vendorId ? [vendorId] : []);
   let expired = 0;
-  for (const { id } of due.rows) {
+  for (const { id, waiting, deadline_key: deadlineKey } of due.rows) {
     // A pending booking with a verified payment is left for payment reconciliation instead of being expired.
     const paid = await db.query("SELECT 1 FROM payments WHERE booking_id=$1 AND status='captured'", [id]);
     if (paid.rowCount) continue;
     await transitionBooking(db, id, "EXPIRED", "system", "hold expired");
+    if (waiting) await notifyAdvanceExpired(db, id, deadlineKey);
     expired++;
   }
   return expired;

@@ -3,11 +3,11 @@ import type { PoolClient } from "pg";
 import { addLocalDays, dailyTotalPaise, localDateOf, localDateTimeToUtc, localDayRange, localDaysBetween, sessionCount, sessionTotalPaise, startOfLocalDay, withinOneLocalDay } from "@bayana/shared";
 import { writeAudit } from "./audit.js";
 import { tokenHash } from "./booking-routes.js";
-import { expireOverdueHolds, lockVendorSchedule, recordChange, recordCreated, transitionBooking } from "./booking-transition.js";
+import { awaitsOfflineSql, deadlineKeySql, expireOverdueHolds, lockVendorSchedule, recordChange, recordCreated, transitionBooking } from "./booking-transition.js";
 import { transaction } from "./database.js";
 import { AppError } from "./errors.js";
-import { notifyCancelled, notifyConfirmed, notifyRescheduled } from "./notifications/booking-mail.js";
-import { createRefundRows, issueRefund, paidPaise } from "./payments/service.js";
+import { notifyCancelled, notifyConfirmed, notifyDeadlineExtended, notifyRescheduled } from "./notifications/booking-mail.js";
+import { createRefundRows, issueRefund, paidPaise, paidSql } from "./payments/service.js";
 
 // Vendor actions on their own bookings (SPEC 4.4 BK-09, BK-11, BK-12, BK-13). Every status change goes through
 // transitionBooking; every change of time takes the vendor schedule lock, and the exclusion constraint is the last guard.
@@ -62,6 +62,36 @@ export async function vendorCancel(actor: Actor, bookingId: string, reason: stri
     return online;
   });
   for (const refundId of pending) await issueRefund(refundId);
+}
+
+/**
+ * More time for an offline advance: 24 or 48 hours from the current deadline (from now once it has passed), or a chosen moment,
+ * never past the booking's start. An expired booking comes back only if its time is still free (the exclusion constraint decides).
+ */
+export async function vendorExtendDeadline(actor: Actor, bookingId: string, input: { hours: number } | { until: string }) {
+  return transaction(async db => {
+    await lockVendorSchedule(db, actor.vendorId);
+    const booking = await ownBooking(db, actor, bookingId);
+    const found = await db.query<{ hold_expires_at: Date; extendable: boolean }>(`SELECT b.hold_expires_at,b.status IN ('PENDING','EXPIRED') AND b.advance_paise > ${paidSql("b.id")} AND ${awaitsOfflineSql("b")} AS extendable FROM bookings b WHERE b.id=$1`, [bookingId]);
+    const from = found.rows[0].hold_expires_at, now = new Date();
+    if (!found.rows[0].extendable) throw new AppError(409, "DEADLINE_NOT_EXTENDABLE", "Only a booking waiting for an offline advance has a deadline to extend.");
+    if (booking.starts_at <= now) throw new AppError(409, "DEADLINE_NOT_EXTENDABLE", "This booking has already started, so its deadline cannot be extended.");
+    const base = from > now ? from : now;
+    const until = "until" in input ? new Date(input.until) : new Date(base.getTime() + input.hours * 3_600_000);
+    if (until <= base) throw new AppError(400, "INVALID_DEADLINE", "Choose a time later than the current deadline.");
+    if (until > booking.starts_at) throw new AppError(400, "INVALID_DEADLINE", "The deadline can't be later than the start of the booking. Choose an earlier time.", { latest: booking.starts_at });
+    await db.query("UPDATE bookings SET hold_expires_at=$2 WHERE id=$1", [bookingId, until]);
+    if (booking.status === "EXPIRED") {
+      const off = await db.query("SELECT 1 FROM blocked_periods WHERE vendor_id=$1 AND tstzrange(starts_at,ends_at,'[)') && tstzrange($2::timestamptz,$3::timestamptz,'[)') LIMIT 1", [actor.vendorId, booking.block_start, booking.block_end]);
+      if (off.rowCount) throw new AppError(409, "BOOKING_CONFLICT", "That time is in a period you blocked off. Remove the time off first.");
+      try { await transitionBooking(db, bookingId, "PENDING", "vendor", "deadline extended", { by_user: actor.userId, from_deadline: from.toISOString(), to_deadline: until.toISOString() }); }
+      catch (error) { if ((error as { code?: string }).code === "23P01") throw new AppError(409, "SLOT_TAKEN", "That time has been taken since the deadline passed, so this booking can't come back."); throw error; }
+    } else await recordChange(db, bookingId, "vendor", "deadline extended", { by_user: actor.userId, from_deadline: from.toISOString(), to_deadline: until.toISOString() });
+    await writeAudit(db, actor.userId, "booking.deadline_extended", "booking", bookingId, { from_deadline: from.toISOString(), to_deadline: until.toISOString() });
+    const key = (await db.query<{ key: string }>(`SELECT ${deadlineKeySql("b")} AS key FROM bookings b WHERE b.id=$1`, [bookingId])).rows[0].key;
+    await notifyDeadlineExtended(db, bookingId, key);
+    return { hold_expires_at: until };
+  });
 }
 
 /** BK-12: only a confirmed booking that has ended (the transition guard checks both). */
