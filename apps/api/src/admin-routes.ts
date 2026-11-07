@@ -87,7 +87,8 @@ adminRouter.post("/2fa/verify", handle(async (req, res) => {
 adminRouter.use(requireSecondFactor);
 
 // ---- Health (AD-03) -----------------------------------------------------------------------------------------------
-export const STALE_TICK_MINUTES = 30;
+/** The tick runs every 3 hours and GitHub's scheduler can run late, so a tick counts as stale after 3 hours and 20 minutes. */
+export const STALE_TICK_MINUTES = 200;
 adminRouter.get("/health", handle(async (_req, res) => {
   const row = (await pool.query(`SELECT
     (SELECT max(started_at) FROM job_runs WHERE job='expire_holds') AS last_tick,

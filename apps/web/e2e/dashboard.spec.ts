@@ -112,7 +112,13 @@ test("home puts today's work first: action, then upcoming, then the month's mone
   const message = new URL((await whatsapp.getAttribute("href"))!);
   expect(message.origin).toBe("https://wa.me");
   expect(message.searchParams.get("text")).toBe(`Book Studio Sunday here: ${baseURL}/studio-sunday`);
-  await expect(page.getByRole("img", { name: "QR code for Studio Sunday's booking page" })).toBeVisible();
+  const qr = page.getByRole("img", { name: "QR code for Studio Sunday's booking page" });
+  await expect(qr).toBeVisible();
+  // Drawn on the server, for the public page's address only.
+  const svg = await page.request.get((await qr.getAttribute("src"))!);
+  expect(svg.headers()["content-type"]).toBe("image/svg+xml");
+  expect(await svg.text()).toContain("<svg");
+  expect((await page.request.get("/api/qr/login")).status()).toBe(404);
 });
 
 test("an advance can be given more time from the dashboard home: presets past the start are off, and a chosen time is sent", async ({ page }) => {

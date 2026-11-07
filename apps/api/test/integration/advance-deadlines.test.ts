@@ -207,15 +207,52 @@ describe("extending the deadline", () => {
     expect((await record(v, h.id)).body).toMatchObject({ confirmed: true });
     expect(await status(h.id)).toBe("CONFIRMED");
   });
-  it("after the deadline, if someone else took the time, it stays expired and says so", async () => {
+  it.each([
+    ["holds it", async (_v: Vendor, _other: Awaited<ReturnType<typeof held>>) => undefined],
+    ["has booked it", async (v: Vendor, other: Awaited<ReturnType<typeof held>>) => {
+      const view = await call("GET", `/v1/bookings/${other.id}`, { token: other.token });
+      await call("POST", `/v1/bookings/${other.id}/accept`, { cookie: other.cookie, body: { terms_hash: view.body.contract_preview.sha256, accepted: true } });
+      expect((await record(v, other.id)).status).toBe(201);
+      expect(await status(other.id)).toBe("CONFIRMED");
+    }]
+  ])("after the deadline, if someone else %s, it says 'This time was taken after the deadline passed' and changes nothing", async (_case, finish) => {
     const v = await vendor(); const h = await waiting(v);
     await setDeadline(h.id, -60_000);
-    await held(v);
+    const other = await held(v);
+    await finish(v, other);
+    const before = { deadline: await deadlineOf(h.id), events: (await pool.query("SELECT 1 FROM booking_events WHERE booking_id=$1", [h.id])).rowCount };
     const reply = await extend(v, h.id, { hours: 24 });
     expect(reply.status).toBe(409);
-    expect(reply.body.error.code).toBe("SLOT_TAKEN");
-    await expect.poll(() => status(h.id)).toBe("EXPIRED");
+    expect(reply.body.error).toMatchObject({ code: "SLOT_TAKEN", message: "This time was taken after the deadline passed." });
+    expect(await status(h.id)).toBe("EXPIRED");
+    expect(await deadlineOf(h.id)).toBe(before.deadline);
+    expect((await pool.query("SELECT 1 FROM booking_events WHERE booking_id=$1", [h.id])).rowCount).toBe(before.events);
     expect((await pool.query("SELECT 1 FROM audit_logs WHERE action='booking.deadline_extended' AND resource_id=$1", [h.id])).rowCount).toBe(0);
+    expect(await emails(h.id, "advance_deadline_extended")).toHaveLength(0);
+    expect((await record(v, h.id)).body.error.code).toBe("ADVANCE_DEADLINE_PASSED");
+  });
+  it("after the deadline, a hold that has itself lapsed does not stand in the way", async () => {
+    const v = await vendor(); const h = await waiting(v);
+    await setDeadline(h.id, -60_000);
+    const other = await held(v);
+    await setDeadline(other.id, -30_000);
+    expect((await extend(v, h.id, { hours: 24 })).status).toBe(200);
+    expect(await status(h.id)).toBe("PENDING");
+  });
+  it("only the vendor can extend: a customer, even the booking's own, is refused and nothing changes", async () => {
+    const v = await vendor(); const h = await waiting(v); const before = await deadlineOf(h.id);
+    const refused = await call("POST", `/v1/vendor/bookings/${h.id}/deadline`, { cookie: h.cookie, body: { hours: 24 } });
+    expect(refused.status).toBe(401);
+    expect(await deadlineOf(h.id)).toBe(before);
+  });
+  it("once the event has started it can no longer be extended", async () => {
+    const v = await vendor(); const h = await waiting(v);
+    await setDeadline(h.id, -60_000);
+    await settleDeadlines(v.id);
+    await expect.poll(() => status(h.id)).toBe("EXPIRED");
+    await pool.query("UPDATE bookings SET block_start=now()-interval '2 hours',starts_at=now()-interval '2 hours',ends_at=now()-interval '1 hour',block_end=now()-interval '1 hour' WHERE id=$1", [h.id]);
+    expect((await extend(v, h.id, { hours: 24 })).body.error.code).toBe("DEADLINE_NOT_EXTENDABLE");
+    expect(await status(h.id)).toBe("EXPIRED");
   });
   it("after the deadline, time off put over the slot also keeps it expired", async () => {
     const v = await vendor(); const h = await waiting(v);

@@ -1,7 +1,7 @@
 "use client";
 import { Plus, Trash2 } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { MAX_BLOCKS, MAX_BOOKING_DAYS, MAX_BUFFER_DAYS, MODERATE_TIERS, TERMS_VARIABLES, advancePaise, advanceRuleProblem, formatAmount, paiseFromRupees, rupeesFromPaise, serviceCreateSchema, type CancellationTier, type ServiceTemplate } from "@bayana/shared";
+import { MAX_BLOCKS, MAX_BOOKING_DAYS, MAX_BUFFER_DAYS, TERMS_VARIABLES, advancePaise, advanceRuleProblem, cancellationPresets, defaultPreset, formatAmount, paiseFromRupees, presetForTiers, rupeesFromPaise, serviceCreateSchema, type CancellationTier, type ServiceTemplate } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/display";
 import { Checkbox, Field, Input, RadioCards, Select, Textarea } from "@/components/ui/field";
@@ -18,10 +18,11 @@ const fromService = (service?: Service): Draft => ({
   advanceType: service?.advance_type ?? "PERCENT", advanceValue: service ? (service.advance_type === "FIXED" ? rupeesFromPaise(service.advance_value) : String(service.advance_value)) : "25",
   tiers: (service?.cancellation_tiers ?? []).map(tier => ({ hours: String(tier.min_hours_before), percent: String(tier.refund_percent) })), terms: service?.terms_template ?? "", active: service?.active ?? true
 });
+const tierDrafts = (tiers: CancellationTier[]) => tiers.map(tier => ({ hours: String(tier.min_hours_before), percent: String(tier.refund_percent) }));
 /** A template fills the same form the vendor would have typed; nothing is saved until they save it. */
 const fromTemplate = (template: ServiceTemplate): Draft => ({
   ...fromService(), name: template.name, description: template.description, price: template.pricePaise === null ? "" : rupeesFromPaise(template.pricePaise), mode: template.mode, duration: String(template.durationMinutes),
-  minDays: String(template.minDays), maxDays: String(template.maxDays), advanceType: "PERCENT", advanceValue: String(template.advancePercent), tiers: MODERATE_TIERS.map(tier => ({ hours: String(tier.min_hours_before), percent: String(tier.refund_percent) }))
+  minDays: String(template.minDays), maxDays: String(template.maxDays), advanceType: "PERCENT", advanceValue: String(template.advancePercent), tiers: tierDrafts(defaultPreset.tiers)
 });
 const toNumber = (value: string) => value.trim() === "" ? NaN : Number(value);
 const rupeesToPaise = (value: string) => { try { return paiseFromRupees(value.trim()); } catch { return NaN; } };
@@ -102,6 +103,7 @@ export function ServiceForm({ service, template, onSaved, submitLabel }: { servi
             <Field label="Buffer after (min)" error={errors.buffer_after_minutes}>{p => <Input {...p} type="number" min={0} value={draft.bufferAfter} onChange={event => set("bufferAfter", event.target.value)} />}</Field>
           </div>
         )}
+        <RadioCards legend="Cancellation rule" name="cancellation_preset" value={presetForTiers(body.cancellation_tiers)?.key ?? "custom"} onChange={key => set("tiers", tierDrafts(cancellationPresets.find(preset => preset.key === key)!.tiers))} className="sm:col-span-2" options={cancellationPresets.map(preset => ({ value: preset.key, label: preset.label, description: preset.summary }))} />
         <fieldset className="grid gap-2 sm:col-span-2">
           <legend className="mb-1 text-sm font-medium">Cancellation refunds</legend>
           <p className="text-xs text-muted">From the earliest cancellation to the latest. For example: 168 hours before → 100%, 48 hours → 50%, 0 → 0%.</p>

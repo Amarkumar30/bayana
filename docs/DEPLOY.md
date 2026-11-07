@@ -282,6 +282,14 @@ Every `NEXT_PUBLIC_*` value is public. Never put a secret there.
 | `API_URL` | secret | tick.yml, nightly.yml | `https://api.staging.bayana.in` (no trailing slash) |
 | `TICK_SECRET` | secret | tick.yml, nightly.yml | same as the API's `TICK_SECRET` |
 | `JOBS_ENABLED` | variable | tick.yml, nightly.yml | `true` to switch the schedulers on |
+
+### Scheduled jobs and Render hours
+
+`tick.yml` runs every 3 hours: it calls `GET /health`, retrying for up to 2 minutes while the API wakes, then `POST /internal/jobs/tick`. It is off until `JOBS_ENABLED=true`. Check first that the `API_URL` secret is `https://api.bayana.in` with no trailing slash.
+
+Expected Render free hours from the schedulers alone, if nobody else uses the API: 8 ticks and 1 nightly job a day, each keeping the instance up for about 15 minutes after its last request, so about 2.5 hours a day, or about 75 hours in a 30-day month. Real traffic adds to that, and overlapping wakes share hours. Render allows 750 free instance hours a month per workspace and suspends free services when they run out, which is why the tick is no longer every 10 minutes (that would keep the instance awake almost all month).
+
+With the tick off, deadlines still work: any API use moves them on. Without any request or tick, nothing runs, so a reminder or an expiry email waits for the next one. The date itself is freed on time, because availability reads the deadline.
 | `BACKUP_DATABASE_URL`, `BACKUP_AGE_RECIPIENT`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | secrets | backup.yml | see `docs/RESTORE.md` |
 | `BACKUPS_ENABLED` | variable | backup.yml | `true` only when you decide to start backups |
 
@@ -307,7 +315,7 @@ Run each check and record PASS or FAIL with the date.
 | 7 | Late payment | let the hold expire, then pay | re-claim or refund path works |
 | 8 | Cold start | wait 20 minutes idle, then open a page | `/waking` shows, then recovers |
 | 9 | Webhook replay | suspend the Render service, pay, resume it so Razorpay's retries deliver the events (some more than once); then run `SELECT event_id, count(*) FROM webhook_events GROUP BY 1 HAVING count(*) > 1` and check the booking's ledger | no duplicate rows; one capture in the ledger |
-| 10 | Scheduler | GitHub Actions > Jobs tick | ran in the last 30 minutes; admin health green |
+| 10 | Scheduler | GitHub Actions > Jobs tick | ran in the last 3 hours; admin health green |
 | 11 | Email auth | mail-tester.com | SPF, DKIM, DMARC pass |
 | 12 | No secrets | GitHub secret scanning, browser bundle search for `rzp_` secrets and `SESSION_SECRET`, Render log review | clean |
 

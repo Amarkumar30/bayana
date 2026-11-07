@@ -1,18 +1,10 @@
 "use client";
 import { Copy, ExternalLink, MessageCircle } from "lucide-react";
-import { encode } from "uqr";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/display";
 import { useToast } from "@/components/ui/toast";
 import { vendorLinkLabel, vendorUrl } from "@/lib/site";
 import { env } from "@/env";
-
-/** Black on white in every theme, with its quiet zone: phone cameras read a QR code reliably only this way. */
-function QrCode({ value, label }: { value: string; label: string }) {
-  const { data, size } = encode(value, { ecc: "M", border: 2 });
-  const modules = data.flatMap((row, y) => row.flatMap((dark, x) => dark ? [`M${x} ${y}h1v1h-1z`] : []));
-  return <svg viewBox={`0 0 ${size} ${size}`} role="img" aria-label={label} shapeRendering="crispEdges" className="size-44 rounded-input bg-white"><path d={modules.join("")} fill="black" /></svg>;
-}
 
 /** The vendor's first share: the link to copy, a WhatsApp message and a QR code for a counter or a business card. */
 export function ShareCard({ slug, businessName, published }: { slug: string; businessName: string; published: boolean }) {
@@ -28,7 +20,7 @@ export function ShareCard({ slug, businessName, published }: { slug: string; bus
           <Button asChild variant="secondary"><a href={whatsapp} target="_blank" rel="noreferrer"><MessageCircle aria-hidden />Share on WhatsApp</a></Button>
           <Button asChild variant="ghost"><a href={`/${slug}`} target="_blank" rel="noreferrer"><ExternalLink aria-hidden />Preview</a></Button>
         </div>
-        <div className="justify-self-center"><QrCode value={url} label={`QR code for ${businessName}'s booking page`} /></div>
+        <img src={`/api/qr/${encodeURIComponent(slug)}`} alt={`QR code for ${businessName}'s booking page`} width={176} height={176} className="size-44 justify-self-center rounded-input" />
       </div>
     </Card>
   );

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCircle2 } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
-import { MODERATE_POLICIES, serviceTemplates, slugProblem, suggestSlug, weeklyScheduleSchema } from "@bayana/shared";
+import { defaultPreset, presetForTiers, serviceTemplates, slugProblem, suggestSlug, weeklyScheduleSchema } from "@bayana/shared";
 import { Button } from "@/components/ui/button";
 import { choiceVariants } from "@/components/ui/choice";
 import { LoadingState, Notice, Skeleton, Stepper } from "@/components/ui/display";
@@ -57,6 +57,7 @@ function FirstServiceStep({ onDone }: { onDone: () => void }) {
     <div className="grid gap-4">
       <div className="grid gap-1"><h1 className="text-2xl">Add your first service</h1><p className="text-sm text-muted">Start from a template or from blank. Everything below is yours to change.</p></div>
       <div role="group" aria-label="Start from a template" className="grid gap-2 sm:grid-cols-2">{serviceTemplates.map(item => <button key={item.key} type="button" aria-pressed={item.key === key} onClick={() => setKey(item.key)} className={choiceVariants({ kind: "card", selected: item.key === key })}><span className="grid text-left"><span className="font-semibold">{item.label}</span><span className="text-sm text-muted">{item.hint}</span></span></button>)}</div>
+      {template?.pricePaise != null && <Notice tone="info">The price and advance are examples. Change them to your own before you save.</Notice>}
       <ServiceForm key={key} template={template} submitLabel="Save and continue" onSaved={onDone} />
     </div>
   );
@@ -118,8 +119,9 @@ function HoursStep({ dailyOnly = false, onDone, onSkip }: { dailyOnly?: boolean;
 }
 
 function PublishStep({ profile, onBack, onPublished }: { profile: Profile; onBack: (step: number) => void; onPublished: () => void }) {
-  // New vendors start on the Moderate rule, in words that match the refund tiers on their service; every box is theirs to edit.
-  const [policies, setPolicies] = useState({ terms: profile.terms || MODERATE_POLICIES.terms, cancellation_policy: profile.cancellation_policy || MODERATE_POLICIES.cancellation_policy, rescheduling_policy: profile.rescheduling_policy || MODERATE_POLICIES.rescheduling_policy, description: profile.description });
+  // The words of the rule chosen on their service (Moderate if it is a custom one), so the two agree; every box is theirs to edit.
+  const chosen = (presetForTiers(profile.services[0]?.cancellation_tiers ?? []) ?? defaultPreset).policies;
+  const [policies, setPolicies] = useState({ terms: profile.terms || chosen.terms, cancellation_policy: profile.cancellation_policy || chosen.cancellation_policy, rescheduling_policy: profile.rescheduling_policy || chosen.rescheduling_policy, description: profile.description });
   const [busy, setBusy] = useState(false); const [missing, setMissing] = useState<string[]>([]); const [error, setError] = useState("");
   if (profile.published) return (
     <div className="grid justify-items-center gap-4 py-4 text-center">
@@ -138,7 +140,7 @@ function PublishStep({ profile, onBack, onPublished }: { profile: Profile; onBac
   const stepFor: Record<string, number> = { active_service: 1, valid_advance_rules: 1, availability: 2 };
   return (
     <form onSubmit={publish} className="grid gap-4">
-      <div className="grid gap-1"><h1 className="text-2xl">Your terms, then publish</h1><p className="text-sm text-muted">Clients read these before they pay. We've started you on a moderate cancellation rule, which matches your service's refunds. Change anything you like.</p></div>
+      <div className="grid gap-1"><h1 className="text-2xl">Your terms, then publish</h1><p className="text-sm text-muted">Clients read these before they pay. These start from the cancellation rule on your service. Change anything you like.</p></div>
       <Field label="Short description">{p => <Textarea {...p} value={policies.description} onChange={event => setPolicies({ ...policies, description: event.target.value })} />}</Field>
       <Field label="Booking terms">{p => <Textarea {...p} value={policies.terms} onChange={event => setPolicies({ ...policies, terms: event.target.value })} placeholder="The advance confirms your date. The balance is due on the day." />}</Field>
       <Field label="Cancellation policy">{p => <Textarea {...p} value={policies.cancellation_policy} onChange={event => setPolicies({ ...policies, cancellation_policy: event.target.value })} placeholder="Full refund of the advance up to 7 days before." />}</Field>

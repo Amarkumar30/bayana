@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
-import { addLocalDays, dailyTotalPaise, localDateOf, localDateTimeToUtc, localDayRange, localDaysBetween, sessionCount, sessionTotalPaise, startOfLocalDay, withinOneLocalDay } from "@bayana/shared";
+import { TIME_TAKEN_AFTER_DEADLINE, addLocalDays, dailyTotalPaise, localDateOf, localDateTimeToUtc, localDayRange, localDaysBetween, sessionCount, sessionTotalPaise, startOfLocalDay, withinOneLocalDay } from "@bayana/shared";
 import { writeAudit } from "./audit.js";
 import { tokenHash } from "./booking-routes.js";
 import { awaitsOfflineSql, deadlineKeySql, expireOverdueHolds, lockVendorSchedule, recordChange, recordCreated, transitionBooking } from "./booking-transition.js";
@@ -70,7 +70,9 @@ export async function vendorCancel(actor: Actor, bookingId: string, reason: stri
  */
 export async function vendorExtendDeadline(actor: Actor, bookingId: string, input: { hours: number } | { until: string }) {
   return transaction(async db => {
+    // Same order as hold creation: schedule lock, lazy expiry, then the row.
     await lockVendorSchedule(db, actor.vendorId);
+    await expireOverdueHolds(db, actor.vendorId);
     const booking = await ownBooking(db, actor, bookingId);
     const found = await db.query<{ hold_expires_at: Date; extendable: boolean }>(`SELECT b.hold_expires_at,b.status IN ('PENDING','EXPIRED') AND b.advance_paise > ${paidSql("b.id")} AND ${awaitsOfflineSql("b")} AS extendable FROM bookings b WHERE b.id=$1`, [bookingId]);
     const from = found.rows[0].hold_expires_at, now = new Date();
@@ -85,7 +87,7 @@ export async function vendorExtendDeadline(actor: Actor, bookingId: string, inpu
       const off = await db.query("SELECT 1 FROM blocked_periods WHERE vendor_id=$1 AND tstzrange(starts_at,ends_at,'[)') && tstzrange($2::timestamptz,$3::timestamptz,'[)') LIMIT 1", [actor.vendorId, booking.block_start, booking.block_end]);
       if (off.rowCount) throw new AppError(409, "BOOKING_CONFLICT", "That time is in a period you blocked off. Remove the time off first.");
       try { await transitionBooking(db, bookingId, "PENDING", "vendor", "deadline extended", { by_user: actor.userId, from_deadline: from.toISOString(), to_deadline: until.toISOString() }); }
-      catch (error) { if ((error as { code?: string }).code === "23P01") throw new AppError(409, "SLOT_TAKEN", "That time has been taken since the deadline passed, so this booking can't come back."); throw error; }
+      catch (error) { if ((error as { code?: string }).code === "23P01") throw new AppError(409, "SLOT_TAKEN", TIME_TAKEN_AFTER_DEADLINE); throw error; }
     } else await recordChange(db, bookingId, "vendor", "deadline extended", { by_user: actor.userId, from_deadline: from.toISOString(), to_deadline: until.toISOString() });
     await writeAudit(db, actor.userId, "booking.deadline_extended", "booking", bookingId, { from_deadline: from.toISOString(), to_deadline: until.toISOString() });
     const key = (await db.query<{ key: string }>(`SELECT ${deadlineKeySql("b")} AS key FROM bookings b WHERE b.id=$1`, [bookingId])).rows[0].key;

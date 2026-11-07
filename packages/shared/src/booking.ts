@@ -5,9 +5,14 @@ import type { CancellationTier } from "./vendor.js";
 export function tiersInWords(tiers: CancellationTier[]) {
   if (!tiers.length) return "The advance is not refundable.";
   const sorted = [...tiers].sort((a, b) => b.min_hours_before - a.min_hours_before);
-  return sorted.map(tier => `Cancel at least ${tier.min_hours_before} hours before the start: ${tier.refund_percent}% of the advance is refunded.`).join(" ")
-    + (sorted.at(-1)?.min_hours_before ? ` Later than ${sorted.at(-1)?.min_hours_before} hours before the start: no refund.` : "");
+  // Notice of 15 days or more reads in days, as the cancellation presets do; a shorter one stays in hours.
+  const notice = (hours: number) => hours >= 360 && hours % 24 === 0 ? `${hours / 24} days` : `${hours} hours`;
+  return sorted.map(tier => `Cancel at least ${notice(tier.min_hours_before)} before the start: ${tier.refund_percent}% of the advance is refunded.`).join(" ")
+    + (sorted.at(-1)?.min_hours_before ? ` Later than ${notice(sorted.at(-1)!.min_hours_before)} before the start: no refund.` : "");
 }
+
+/** Vendor-facing: an expired booking cannot come back because someone else holds or booked its time. */
+export const TIME_TAKEN_AFTER_DEADLINE = "This time was taken after the deadline passed.";
 
 /**
  * Refund for cancelling now under the snapshotted tiers: the first tier whose notice is met applies, else nothing.
