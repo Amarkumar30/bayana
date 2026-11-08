@@ -61,6 +61,26 @@ const sample: { [K in keyof TemplateData]: TemplateData[K] } = (() => {
 })();
 
 describe("templates (SPEC 15.2)", () => {
+  it("every email shares one layout: the header, a 600 px column, at most one button, the footer, and a plain-text part that starts the same way", () => {
+    for (const name of Object.keys(templates) as (keyof TemplateData)[]) {
+      const email = renderTemplate(name, sample[name] as never), business = (sample[name] as { businessName?: string }).businessName;
+      expect(email.html, name).toContain("max-width:600px");
+      expect(email.html, name).toContain("@media (max-width:620px)");
+      expect(email.html.match(/class="btn"/g)?.length ?? 0, name).toBeLessThanOrEqual(1);
+      expect(email.html, name).toContain("Bayana never asks for your card details by email.");
+      expect(email.text.split(/\r?\n/)[0], name).toBe(business ? `${business} via Bayana` : "Bayana");
+      expect(email.text, name).toContain("Bayana never asks for your card details by email.");
+      if (business) expect(email.html, name).toContain(`${business.replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" })[char]!)}<span`);
+    }
+  });
+  it("times say IST, never a raw zone name", () => {
+    for (const name of Object.keys(templates) as (keyof TemplateData)[]) {
+      const email = renderTemplate(name, sample[name] as never);
+      expect(email.text, name).not.toContain("Asia/Kolkata");
+      expect(email.html, name).not.toContain("Asia/Kolkata");
+    }
+    expect(renderTemplate("hold_started", sample.hold_started).text).toMatch(/\d{1,2}:\d{2} [ap]m IST/);
+  });
   it("every template has a subject, a plain-text part and escaped HTML with no images or tracking", () => {
     for (const name of Object.keys(templates) as (keyof TemplateData)[]) {
       const email = renderTemplate(name, sample[name] as never);

@@ -162,7 +162,8 @@ describe("when the deadline passes", () => {
     await settleDeadlines(v.id); await runTick("tick");
     await expect.poll(async () => (await emails(passed.id, "advance_deadline_expired")).length).toBe(2);
     expect(await emails(soon.id, "advance_deadline_reminder")).toHaveLength(2);
-  });
+    // runTick is global: it also sends every email the other test files queued in the shared database, so it can take seconds.
+  }, 20_000);
 });
 
 describe("extending the deadline", () => {
