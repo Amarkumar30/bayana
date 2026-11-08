@@ -32,7 +32,7 @@ export function CustomersView() {
       <PageHeader eyebrow="Customers" title="People who booked you" />
       <form onSubmit={search} role="search" aria-label="Search customers" className="mb-4 flex flex-wrap items-end gap-3"><Field label="Search" className="min-w-0 flex-1">{p => <Input {...p} name="q" type="search" placeholder="Name or email" defaultValue={q} />}</Field><Button type="submit" variant="secondary">Search</Button></form>
       <Gate state={state} skeleton={skeleton} retry={() => void reload()} next="/dashboard/customers">{({ customers, timezone }) => customers.length === 0
-        ? <EmptyState icon={<Users />} title={q ? "No customers match" : "No customers yet"} description={q ? "Try another name or email." : "Everyone who books you appears here with their booking history."} />
+        ? <EmptyState icon={<Users />} title={q ? "No customers match" : "No customers yet"} description={q ? "Try another name or email." : "Everyone who books you appears here with their booking history. Share your page link to get your first booking."} action={q ? undefined : <Button asChild variant="secondary"><Link href="/dashboard">Get your page link</Link></Button>} />
         : <>
           <ul className="grid gap-3 md:hidden" aria-label="Customers">{customers.map(customer => (
             <li key={customer.email} className="grid gap-2 rounded-card bg-surface p-4 shadow-soft ring-1 ring-border/70">

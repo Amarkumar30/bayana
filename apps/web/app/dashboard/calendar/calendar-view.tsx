@@ -128,7 +128,7 @@ function DayPanel({ date, data, onChanged }: { date: string; data: CalendarData;
   return (
     <div className="grid gap-5">
       <section aria-label="On this day" className="grid gap-2">
-        {items.length === 0 ? <p className="text-sm text-muted">Nothing booked or blocked.</p> : <ul className="grid gap-2">{items.map(item => (
+        {items.length === 0 ? <p className="text-sm text-muted">Nothing booked or blocked on this day. Add a booking or block time below.</p> : <ul className="grid gap-2">{items.map(item => (
           <li key={item.key} className={cn("flex min-h-11 items-center justify-between gap-2 rounded-input px-3 py-2 text-sm", kindStyle[item.kind])}>
             {item.href ? <Link href={item.href} className="grid min-w-0 text-inherit no-underline"><span className="truncate font-medium">{item.label}</span><span className="text-xs">{item.status ? <StatusBadge status={item.status} className="bg-transparent px-0" /> : kindWord[item.kind]}</span></Link> : <span className="grid"><span className="font-medium">{item.label}</span><span className="text-xs">{kindWord[item.kind]}</span></span>}
             {item.blockedId && <Button variant="ghost" size="icon" aria-label="Remove this time off" loading={busy === item.blockedId} onClick={() => void unblock(item.blockedId!)}><Trash2 aria-hidden /></Button>}

@@ -63,7 +63,7 @@ export function BookingDetailView({ id }: { id: string }) {
               </Card>
 
               <section aria-labelledby="ledger" className="grid gap-3"><h2 id="ledger" className="text-lg">Payments and refunds</h2>
-                {booking.payments.length === 0 && booking.refunds.length === 0 ? <p className="rounded-card bg-surface-muted px-4 py-3 text-sm text-muted">No payments yet.</p> :
+                {booking.payments.length === 0 && booking.refunds.length === 0 ? <p className="rounded-card bg-surface-muted px-4 py-3 text-sm text-muted">No payments yet. When the customer pays, it appears here with a receipt.</p> :
                   <ul className="grid divide-y divide-border rounded-card bg-surface ring-1 ring-border/70">
                     {booking.payments.map(payment => <li key={payment.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
                       <span className="grid min-w-0"><span className="font-medium">{payment.kind === "advance" ? "Advance" : "Balance"} · {payment.provider === "offline" ? `offline${payment.method ? ` (${payment.method.replace("_", " ")})` : ""}` : `${ONLINE_PAYMENT_LABEL}${payment.method ? ` (${payment.method})` : ""}`}</span><span className="text-muted">{paymentStatus[payment.status] ?? payment.status} · {formatDateTime(payment.verified_at ?? payment.created_at, booking.timezone)}</span>{payment.note && <span className="text-muted">Note: {payment.note}</span>}</span>

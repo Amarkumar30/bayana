@@ -7,6 +7,7 @@ import { formatDate, formatDateTime } from "@/components/booking/time";
 import { bookingHref } from "@/components/dashboard/booking-list";
 import { Gate, useVendorData } from "@/components/dashboard/load";
 import type { PaymentsData } from "@/components/dashboard/types";
+import { Button } from "@/components/ui/button";
 import { Badge, Card, CardHeader, EmptyState, LoadingState, Money, Notice, Skeleton, Table, Td, Th } from "@/components/ui/display";
 
 const statusWord: Record<string, string> = { captured: "Received", refunded: "Refunded", partially_refunded: "Partly refunded", authorized: "Confirming", failed: "Failed" };
@@ -34,7 +35,7 @@ export function PaymentsView() {
           </Card>}
 
           <section aria-labelledby="ledger" className="grid gap-3"><h2 id="ledger" className="text-lg">Payments</h2>
-            {data.payments.length === 0 ? <EmptyState icon={<Wallet />} title="No payments recorded yet" description="Advances appear here when a customer pays online or when you record an offline payment on a booking." /> : <>
+            {data.payments.length === 0 ? <EmptyState icon={<Wallet />} title="No payments recorded yet" description="Advances appear here when a customer pays online, or when you record money you received on a booking." action={<Button asChild variant="secondary"><Link href="/dashboard/bookings?status=PENDING">See bookings awaiting an advance</Link></Button>} /> : <>
               <ul className="grid gap-3 md:hidden" aria-label="Payments">{data.payments.map(payment => <li key={payment.id}><Link href={bookingHref(payment.booking_id)} className="grid gap-1 rounded-card bg-surface p-4 text-sm text-ink no-underline shadow-soft ring-1 ring-border/70">
                 <span className="flex items-start justify-between gap-2"><span className="font-medium">{payment.client_name}</span><Money paise={payment.amount_paise} size="sm" className="font-semibold" /></span>
                 <span className="text-muted">{payment.kind === "advance" ? "Advance" : "Balance"} · {methodWord(payment.method, payment.provider)}</span>
