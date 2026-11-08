@@ -22,9 +22,7 @@ for (const route of [...routes, ...states]) {
 }
 
 for (const route of ["/design", "/", "/login", "/signup", "/forgot", "/dashboard", "/dashboard/bookings", "/dashboard/calendar", "/dashboard/settings", "/dashboard/bookings/7f3c2a10-0002-4000-8000-000000000002", "/admin", "/admin/bookings/7f3c2a10-0002-4000-8000-000000000002", "/b/x", "/b/7f3c2a10-0001-4000-8000-000000000001", "/studio-sunday/book", "/waking"]) {
-  test(`${route} renders without console errors or hydration mismatches`, async ({ page }, info) => {
-    // Known failure, reported as fixme rather than dropped.
-    test.fixme(route === "/design" && info.project.name === "mobile-375", "intermittent hydration mismatch and screenshot timeout on /design; fix in Batch 4");
+  test(`${route} renders without console errors or hydration mismatches`, async ({ page }) => {
     const errors: string[] = [];
     page.on("console", message => { if (message.type() === "error") errors.push(message.text().slice(0, 300)); });
     page.on("pageerror", error => errors.push(error.message.slice(0, 300)));
