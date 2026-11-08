@@ -208,6 +208,34 @@ describe("My bookings: only your own, in time order", () => {
 });
 
 describe("the private link in every booking email", () => {
+  it("confirm it's you on the link's own page: a masked hint, a code only to the booking's email, then the same page can change the booking", async () => {
+    const v = await vendor(); const me = await customer(); const made = await book(v, me.cookie, 22);
+    const token = await emailedToken(made.id, "booking_confirmed_customer", /^Confirmed:/);
+    const opened = await call("GET", `/v1/bookings/${made.id}`, { token });
+    expect(opened.body.email_hint).toBe(`${me.email[0]}***${me.email.slice(me.email.lastIndexOf("@"))}`);
+    // The hint is masked; the agreed contract on this page has always carried the full address (it is the customer's own evidence).
+    expect(opened.body.email_hint).not.toBe(me.email);
+    const from = ip(), since = capturedEmails().length;
+    const sent = await call("POST", `/v1/bookings/${made.id}/sign-in/code`, { token, from, body: {} });
+    expect(sent).toMatchObject({ status: 202, body: { sent_to: opened.body.email_hint } });
+    const code = await codeFor(me.email, since);
+    expect((await call("POST", `/v1/bookings/${made.id}/sign-in/verify`, { token, from, body: { code: code === "000000" ? "111111" : "000000" } })).status).toBe(400);
+    const verified = await call("POST", `/v1/bookings/${made.id}/sign-in/verify`, { token, from, body: { code } });
+    expect(verified.status).toBe(204);
+    const cookie = sessionCookie(verified)!;
+    const signedIn = await call("GET", `/v1/bookings/${made.id}`, { cookie });
+    expect(signedIn.body).toMatchObject({ read_only: false, can_cancel: true, email_hint: null });
+    // A used code cannot sign in again.
+    expect((await call("POST", `/v1/bookings/${made.id}/sign-in/verify`, { token, from, body: { code } })).status).toBe(400);
+  });
+  it("without a valid link, asking for a code is the same 404 as an unknown booking, and no email is sent", async () => {
+    const v = await vendor(); const me = await customer(); const made = await book(v, me.cookie, 24);
+    const before = capturedEmails().length;
+    for (const options of [{}, { token: "x".repeat(43) }]) expect((await call("POST", `/v1/bookings/${made.id}/sign-in/code`, { ...options, body: {} })).status).toBe(404);
+    expect((await call("POST", `/v1/bookings/${randomUUID()}/sign-in/code`, { token: "x".repeat(43), body: {} })).status).toBe(404);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    expect(capturedEmails().slice(before).filter(email => email.to === me.email && email.subject.startsWith("Your Bayana code"))).toHaveLength(0);
+  });
   it("opens that one booking read-only without signing in; changing it needs sign-in; a tampered or borrowed token is refused", async () => {
     const v = await vendor(); const me = await customer();
     const first = await book(v, me.cookie, 16), second = await book(v, me.cookie, 18);

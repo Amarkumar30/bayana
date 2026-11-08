@@ -93,14 +93,31 @@ test("a signed-in customer who opens the dashboard is told so, with My bookings,
   await expect(page).not.toHaveURL(/onboarding/);
 });
 
-test("an email's private link shows the booking view-only, with a way to sign in and to all bookings", async ({ page }) => {
+test("an email's private link is view-only until the customer confirms it's them on the same page with a code", async ({ page }) => {
   await mockApi(page);
   const id = "7f3c2a10-0001-4000-8000-000000000001";
+  let confirmed = false; const sent: string[] = [];
   await page.route(`${MOCK_API_URL}/v1/bookings/${id}`, route => {
-    return route.fulfill({ json: { id, status: "CONFIRMED", service_name: "Portrait session", duration_minutes: 90, starts_at: `${day}T04:30:00.000Z`, ends_at: `${day}T06:00:00.000Z`, hold_expires_at: null, timezone: "Asia/Kolkata", vendor: { slug: "studio-sunday", display_name: "Studio Sunday" }, client_name: "Asha Rao", total_paise: 800000, advance_paise: 200000, paid_paise: 200000, balance_due_paise: 600000, payments_enabled: false, viewer: "customer", can_pay: false, read_only: true, timeline: [], payments: [], refunds: [], contract: null, contract_preview: null, cancellation_tiers: [], can_cancel: false, refund_preview: null } });
+    const view = { id, status: "CONFIRMED", service_name: "Portrait session", duration_minutes: 90, starts_at: `${day}T04:30:00.000Z`, ends_at: `${day}T06:00:00.000Z`, hold_expires_at: null, timezone: "Asia/Kolkata", vendor: { slug: "studio-sunday", display_name: "Studio Sunday" }, client_name: "Asha Rao", total_paise: 800000, advance_paise: 200000, paid_paise: 200000, balance_due_paise: 600000, payments_enabled: false, viewer: "customer", can_pay: false, read_only: true, timeline: [], payments: [], refunds: [], contract: null, contract_preview: null, cancellation_tiers: [], can_cancel: false, refund_preview: null };
+    return route.fulfill({ json: { ...view, read_only: !confirmed, email_hint: confirmed ? null : "a***@example.in", can_cancel: confirmed, refund_preview: confirmed ? { refund_paise: 0, refund_percent: 0, paid_paise: 0 } : null } });
+  });
+  await page.route(`${MOCK_API_URL}/v1/bookings/${id}/sign-in/code`, route => { sent.push(route.request().headers()["x-booking-token"] ?? ""); return route.fulfill({ status: 202, json: { sent_to: "a***@example.in" } }); });
+  await page.route(`${MOCK_API_URL}/v1/bookings/${id}/sign-in/verify`, route => {
+    if (route.request().postDataJSON().code !== "123456") return route.fulfill({ status: 400, json: { error: { code: "OTP_INVALID", message: "x", details: {} } } });
+    confirmed = true; return route.fulfill({ status: 204 });
   });
   await page.goto(`/b/${id}?t=private-link-token`);
-  await expect(page.getByText("You opened this from an email link, so it is view-only.")).toBeVisible();
-  await expect(page.getByRole("link", { name: "See all my bookings" })).toHaveAttribute("href", "/my-bookings");
+  await expect(page.getByRole("heading", { name: "Confirm it's you" })).toBeVisible();
+  await expect(page.getByText("confirm with a code sent to a***@example.in")).toBeVisible();
   await expect(page.getByRole("button", { name: "Cancel booking" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Email me a code" }).click();
+  expect(sent).toEqual(["private-link-token"]);
+  await page.getByLabel("Six-digit code").fill("000000");
+  await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  await expect(page.getByText("That code is wrong or has expired.")).toBeVisible();
+  await page.getByLabel("Six-digit code").fill("123456");
+  await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Confirm it's you" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Cancel booking" })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/b/${id}`));
 });

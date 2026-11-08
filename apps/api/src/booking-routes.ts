@@ -2,13 +2,14 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import { z } from "zod";
 import { MAX_BLOCKS, MAX_BOOKING_DAYS, refundPreview } from "@bayana/shared";
 import { settleForRead } from "./advance-deadlines.js";
-import { currentUser, type SessionUser } from "./auth.js";
-import { cookieToken, perIp } from "./auth-routes.js";
+import { createOtp, currentUser, queueOtpEmail, type SessionUser } from "./auth.js";
+import { confirmBookingEmail, cookieToken, perIp } from "./auth-routes.js";
 import { tokenHash, tokenMatches } from "./booking-links.js";
 import { acceptTerms, createHold } from "./booking-service.js";
 import { transitionBooking } from "./booking-transition.js";
 import { loadContract, parseSnapshot } from "./contract.js";
 import { pool, transaction } from "./database.js";
+import { maskAddress } from "./email.js";
 import { AppError } from "./errors.js";
 import { notifyCancelled } from "./notifications/booking-mail.js";
 import { kickOutbox } from "./notifications/outbox.js";
@@ -57,6 +58,24 @@ bookingRouter.post("/", perIp(20), handle(async (req, res) => {
   const booking = await transaction(db => createHold(db, { slug: body.slug, date: body.date, name: body.name, email: user.email, clientUserId: user.id, phone: body.phone, notes: body.notes, referral: body.referral, serviceId: body.service_id, startsAt: body.starts_at, days: body.days, blocks: body.blocks, key }));
   res.status(201).json({ booking });
   kickOutbox();
+}));
+
+// ---- Confirm it's you, on the email link's own page (P17) ---------------------------------------------------------------
+// Whoever holds the private link can ask for a code, but it goes only to the email the booking was made with, and the page
+// never sees that address in full. A correct code signs that email in exactly as the booking flow's code does.
+const bookingEmail = async (id: string) => (await pool.query<{ email: string }>("SELECT client_email::text AS email FROM bookings WHERE id=$1", [id])).rows[0].email;
+bookingRouter.post("/:id/sign-in/code", perIp(10), handle(async (req, res) => {
+  const access = await bookingAccess(req);
+  const email = await bookingEmail(access.id);
+  await transaction(async db => queueOtpEmail(db, email, await createOtp(db, email, "booking_verify", req.ip), "booking_verify"));
+  res.status(202).json({ sent_to: maskAddress(email) });
+  kickOutbox();
+}));
+bookingRouter.post("/:id/sign-in/verify", perIp(10), handle(async (req, res) => {
+  const access = await bookingAccess(req);
+  const { code } = z.object({ code: z.string().regex(/^\d{6}$/, "Enter the six digits from the email.") }).strict().parse(req.body);
+  await confirmBookingEmail(req, res, await bookingEmail(access.id), code);
+  res.status(204).end();
 }));
 
 bookingRouter.get("/:id", perIp(120), handle(async (req, res) => {
@@ -126,12 +145,12 @@ bookingRouter.get("/:id/receipts/:paymentId", perIp(30), handle(async (req, res)
   res.set({ "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="bayana-receipt-${data.receiptNumber}.pdf"`, "Cache-Control": "private, no-store" }).send(Buffer.from(await receiptPdf(data)));
 }));
 
-type Row = { id: string; status: string; service_name: string | null; starts_at: Date; ends_at: Date; booking_mode: "hourly" | "daily"; days_count: number | null; blocks_count: number | null; block_minutes: number | null; first_date: string; hold_expires_at: Date | null; total_paise: string; advance_paise: string; paid_paise: string; client_name: string; terms_snapshot: string | null; slug: string; display_name: string; timezone: string; duration_minutes: number | null; online_payments: boolean };
+type Row = { client_email: string; id: string; status: string; service_name: string | null; starts_at: Date; ends_at: Date; booking_mode: "hourly" | "daily"; days_count: number | null; blocks_count: number | null; block_minutes: number | null; first_date: string; hold_expires_at: Date | null; total_paise: string; advance_paise: string; paid_paise: string; client_name: string; terms_snapshot: string | null; slug: string; display_name: string; timezone: string; duration_minutes: number | null; online_payments: boolean };
 type PaymentRow = { id: string; provider: string; kind: string; status: string; amount_paise: string; method: string | null; note: string | null; created_at: Date; verified_at: Date | null };
 /** readOnly: opened only by a private email link, so nothing can be changed from it (no paying, agreeing or cancelling). */
 export async function bookingView(id: string, forVendor: boolean, readOnly = false) {
   const [booking, events, payments, refunds, contract] = await Promise.all([
-    pool.query<Row>(`SELECT b.id,b.status,b.service_name,b.starts_at,b.ends_at,b.booking_mode,b.days_count,b.blocks_count,b.block_minutes,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.hold_expires_at,b.total_paise,b.advance_paise,${paidSql("b.id")} AS paid_paise,b.client_name,b.terms_snapshot,b.duration_minutes,v.slug::text AS slug,v.display_name,v.timezone,v.online_payments FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.id=$1`, [id]),
+    pool.query<Row>(`SELECT b.id,b.status,b.service_name,b.starts_at,b.ends_at,b.booking_mode,b.days_count,b.blocks_count,b.block_minutes,(b.starts_at AT TIME ZONE b.vendor_timezone)::date::text AS first_date,b.hold_expires_at,b.total_paise,b.advance_paise,${paidSql("b.id")} AS paid_paise,b.client_name,b.terms_snapshot,b.duration_minutes,b.client_email::text AS client_email,v.slug::text AS slug,v.display_name,v.timezone,v.online_payments FROM bookings b JOIN vendors v ON v.id=b.vendor_id WHERE b.id=$1`, [id]),
     pool.query<{ to_status: string; created_at: Date }>("SELECT to_status,created_at FROM booking_events WHERE booking_id=$1 ORDER BY created_at", [id]),
     pool.query<PaymentRow>("SELECT id,provider,kind,status,amount_paise,method,note,created_at,verified_at FROM payments WHERE booking_id=$1 ORDER BY created_at", [id]),
     pool.query("SELECT id,payment_id,amount_paise::int AS amount_paise,status,reason,created_at,processed_at FROM refunds WHERE booking_id=$1 ORDER BY created_at", [id]),
@@ -154,6 +173,8 @@ export async function bookingView(id: string, forVendor: boolean, readOnly = fal
     // The customer can pay online while the request is pending and the advance is not yet covered.
     can_pay: !readOnly && status === "PENDING" && online && advance > 0 && paid < advance,
     read_only: readOnly,
+    // Only on the read-only page, masked, so the person knows where "Confirm it's you" sends the code.
+    email_hint: readOnly ? maskAddress(b.client_email) : null,
     timeline: events.rows,
     // A receipt exists for every verified payment; the vendor also sees the notes on offline entries.
     payments: payments.rows.map(payment => ({ id: payment.id, provider: payment.provider, kind: payment.kind, status: payment.status, amount_paise: Number(payment.amount_paise), method: payment.method, note: forVendor ? payment.note : null, created_at: payment.created_at, verified_at: payment.verified_at, receipt: payment.verified_at !== null })),

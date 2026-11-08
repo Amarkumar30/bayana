@@ -8,6 +8,7 @@ import { env } from "@/env";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, EmptyState, LoadingState, Money, Notice, Skeleton, StatusBadge } from "@/components/ui/display";
+import { Field, Input } from "@/components/ui/field";
 import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { OfflinePaymentForm } from "@/components/booking/offline-payment-form";
 import { PaymentPanel } from "@/components/booking/payment-panel";
@@ -30,6 +31,38 @@ export function BookingSkeleton() {
 }
 
 /** SPEC 5.2 customer booking page: status, timeline, contract, payment history, cancel with a refund preview. */
+/**
+ * The email link opens the booking read-only. Instead of sending the customer to a sign-in page, the code is asked for here:
+ * it goes to the email the booking was made with, and once it is entered this same page can pay, agree or cancel.
+ */
+function ConfirmItsYou({ view, token, onConfirmed }: { view: BookingView; token: string | null; onConfirmed: () => void }) {
+  const [sentTo, setSentTo] = useState(""); const [code, setCode] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const send = async () => {
+    setBusy(true); setError("");
+    try { setSentTo((await api<{ sent_to: string }>(`/v1/bookings/${view.id}/sign-in/code`, { body: {}, headers: tokenHeaders(token) })).sent_to); }
+    catch (failure) { setError(humanMessage(failure)); } finally { setBusy(false); }
+  };
+  const verify = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!/^\d{6}$/.test(code)) { setError("Enter the six digits from the email."); return; }
+    setBusy(true); setError("");
+    try { await api(`/v1/bookings/${view.id}/sign-in/verify`, { body: { code }, headers: tokenHeaders(token) }); onConfirmed(); }
+    catch (failure) { setError(humanMessage(failure)); } finally { setBusy(false); }
+  };
+  return (
+    <Card className="grid gap-3">
+      <CardHeader title="Confirm it's you" description={`This page came from an email link, so it is view-only. To pay, agree to the terms or cancel, confirm with a code sent to ${view.email_hint ?? "the email you booked with"}.`} className="mb-0" />
+      {!sentTo ? <Button className="w-fit" loading={busy} loadingText="Sending…" onClick={() => void send()}>Email me a code</Button>
+        : <form onSubmit={verify} noValidate className="grid gap-3">
+          <p className="text-sm">We sent a code to <strong className="font-semibold">{sentTo}</strong>. It expires in 10 minutes.</p>
+          <Field label="Six-digit code">{p => <Input {...p} inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ""))} className="text-center text-lg tracking-[0.5em] tabular-nums" />}</Field>
+          <div className="flex flex-wrap gap-2"><Button loading={busy} loadingText="Checking…">Confirm</Button><Button type="button" variant="ghost" onClick={() => void send()}>Send a new code</Button></div>
+        </form>}
+      {error && <Notice tone="danger">{error}</Notice>}
+    </Card>
+  );
+}
+
 export function BookingPage() {
   const { id } = useParams<{ id: string }>(); const token = useSearchParams().get("t");
   const [view, setView] = useState<BookingView>(); const [error, setError] = useState<{ title: string; description: string }>();
@@ -54,7 +87,7 @@ export function BookingPage() {
       </div>
       {view.viewer === "customer" && <p className="-mt-3 text-sm"><Link href="/my-bookings" className="inline-flex min-h-11 items-center">See all my bookings</Link></p>}
       {/* An email's private link only shows the booking; paying, agreeing and cancelling need the customer signed in. */}
-      {view.read_only ? <Notice tone="info">You opened this from an email link, so it is view-only. To pay, agree to the terms or cancel, <Link href="/my-bookings">sign in with the email you booked with</Link>.</Notice>
+      {view.read_only ? <ConfirmItsYou view={view} token={token} onConfirmed={() => void load()} />
         : <StatusHelp view={view} token={token} finishHref={finishHref} onExpire={expire} onPaid={setView} />}
 
       <Card><CardHeader title="Payment summary" />

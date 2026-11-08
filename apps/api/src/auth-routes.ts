@@ -174,16 +174,19 @@ authRouter.delete("/sessions/:id", perIp(60), async (req, res, next) => {
 authRouter.post("/booking/otp/request", ...guard(20, 5), async (req, res, next) => {
   try { const body = schemas.bookingOtpRequest.parse(req.body); await transaction(async db => queueOtpEmail(db, body.email, await createOtp(db, body.email, "booking_verify", req.ip), "booking_verify")); res.status(202).json({ ok: true }); kickOutbox(); } catch (error) { next(error); }
 });
+/** A booking code proves the email: the one users row for it (a new CLIENT if none) and a fresh session. Its role never changes. */
+export async function confirmBookingEmail(req: Request, res: Response, email: string, code: string) {
+  const otpId = await checkOtp(pool, email, "booking_verify", code);
+  return transaction(async db => {
+    await consumeOtp(db, otpId);
+    const row = (await db.query<PublicUser>("INSERT INTO users(id,email,role,email_verified_at) VALUES(gen_random_uuid(),$1,'CLIENT',now()) ON CONFLICT(email) DO UPDATE SET email_verified_at=COALESCE(users.email_verified_at,now()) RETURNING id,email::text AS email,role", [email])).rows[0];
+    await rotateInto(req, res, db, row.id);
+    return row;
+  });
+}
 authRouter.post("/booking/otp/verify", ...guard(20, 10), async (req, res, next) => {
   try {
     const body = schemas.bookingOtpVerify.parse(req.body);
-    const otpId = await checkOtp(pool, body.email, "booking_verify", body.code);
-    const user = await transaction(async db => {
-      await consumeOtp(db, otpId);
-      const row = (await db.query<PublicUser>("INSERT INTO users(id,email,role,email_verified_at) VALUES(gen_random_uuid(),$1,'CLIENT',now()) ON CONFLICT(email) DO UPDATE SET email_verified_at=COALESCE(users.email_verified_at,now()) RETURNING id,email::text AS email,role", [body.email])).rows[0];
-      await rotateInto(req, res, db, row.id);
-      return row;
-    });
-    res.json({ user: publicUser(user) });
+    res.json({ user: publicUser(await confirmBookingEmail(req, res, body.email, body.code)) });
   } catch (error) { next(error); }
 });
