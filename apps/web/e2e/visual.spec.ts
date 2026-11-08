@@ -39,6 +39,8 @@ for (const { name, path: route, ready } of pages) {
     await page.waitForLoadState("networkidle");
     if (name === "design") await expectHydrated(page);
     await page.evaluate(() => document.fonts.ready);
+  // And every image (the share card's QR code comes from a route), so a capture never catches one half-loaded.
+  await page.waitForFunction(() => [...document.images].every(image => image.complete && image.naturalWidth > 0));
     await expect(page).toHaveScreenshot(`${name}.png`, { fullPage: true, stylePath });
   });
 }
@@ -52,5 +54,7 @@ test("design page in dark mode", async ({ page }) => {
   await page.waitForLoadState("networkidle");
   await expectHydrated(page);
   await page.evaluate(() => document.fonts.ready);
+  // And every image (the share card's QR code comes from a route), so a capture never catches one half-loaded.
+  await page.waitForFunction(() => [...document.images].every(image => image.complete && image.naturalWidth > 0));
   await expect(page).toHaveScreenshot("design-dark.png", { fullPage: true, stylePath });
 });

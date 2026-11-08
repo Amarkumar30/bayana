@@ -322,7 +322,7 @@ describe("every place shows the whole range", () => {
     expect(contract).toContain("Price per session: ₹1,500.00 x 3 sessions of 1 hour");
     expect(contract).toContain("Total price: ₹4,500.00");
     const mail = (await pool.query<{ text_body: string }>("SELECT text_body FROM email_outbox WHERE booking_id=$1 AND template='hold_started'", [booking.id])).rows[0];
-    expect(mail.text_body).toMatch(/10:00 am to 1:00 pm, 3 hours \(Asia\/Kolkata\)/);
+    expect(mail.text_body).toMatch(/10:00 am to 1:00 pm IST, 3 hours/);
     const single = await hold(v, ahead(51), "10:00");
     const singleContract = (await loadContract(pool, single.id))!.text;
     expect(singleContract).toMatch(/Date and time: .*, 10:00 am \(Asia\/Kolkata\)/); expect(singleContract).not.toContain("Price per session");
@@ -335,7 +335,7 @@ describe("every place shows the whole range", () => {
     expect(manual.status).toBe(201);
     expect(await row(manual.body.id)).toMatchObject({ blocks_count: 3, block_minutes: 60, total: 450_000 });
     const confirmed = (await pool.query<{ text_body: string }>("SELECT text_body FROM email_outbox WHERE booking_id=$1 AND template='booking_confirmed_customer'", [manual.body.id])).rows[0];
-    expect(confirmed.text_body).toMatch(/2:00 pm to 5:00 pm, 3 hours/);
+    expect(confirmed.text_body).toMatch(/2:00 pm to 5:00 pm IST, 3 hours/);
     const tooMany = await call("POST", "/v1/vendor/bookings", { cookie, key: randomUUID(), body: { service_id: v.serviceId, date: ahead(56), time: "09:00", blocks: 5, name: "Walk-in Band", email: "band@example.test" } });
     expect(tooMany.body.error.code).toBe("INVALID_BLOCKS");
     const pastMidnight = await call("POST", "/v1/vendor/bookings", { cookie, key: randomUUID(), body: { service_id: v.serviceId, date: ahead(56), time: "22:00", blocks: 3, name: "Late Band", email: "band@example.test" } });
@@ -350,7 +350,7 @@ describe("every place shows the whole range", () => {
     expect(iso(after.starts_at)).toBe(at(ahead(57), "09:00")); expect(iso(after.ends_at)).toBe(at(ahead(57), "12:00")); expect(after.blocks_count).toBe(3);
     // The email shows both whole ranges: the new one and the one it replaced.
     const rescheduled = (await pool.query<{ text_body: string }>("SELECT text_body FROM email_outbox WHERE booking_id=$1 AND template='booking_rescheduled'", [manual.body.id])).rows[0];
-    expect(rescheduled.text_body).toMatch(/9:00 am to 12:00 pm, 3 hours/); expect(rescheduled.text_body).toMatch(/2:00 pm to 5:00 pm, 3 hours/);
+    expect(rescheduled.text_body).toMatch(/9:00 am to 12:00 pm IST, 3 hours/); expect(rescheduled.text_body).toMatch(/2:00 pm to 5:00 pm IST, 3 hours/);
   });
   it("the public page lists the session limits and advances the shortest booking", async () => {
     const v = await vendor({ min: 2, max: 4 });
