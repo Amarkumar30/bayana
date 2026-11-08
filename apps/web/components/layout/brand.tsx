@@ -2,11 +2,11 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 /**
- * The Bayana symbol (public/brand/bayana-symbol.svg): a saffron circle with an upright bar, a lower-case "b".
- * Drawn inline so the bar follows the text colour (ink on light, light on dark); the circle is always brand saffron.
+ * The Bayana symbol (public/brand/bayana-symbol.svg): an amber circle with an upright bar, a lower-case "b".
+ * Drawn inline so the bar follows the text colour (ink on light, light on dark); the circle is always the amber accent.
  */
 export function BrandMark({ className }: { className?: string }) {
-  return <svg viewBox="0 20 56 80" className={cn("h-8 w-auto shrink-0", className)} aria-hidden focusable="false"><circle cx="28" cy="72" r="28" fill="var(--brand-saffron)" /><rect x="0" y="20" width="12" height="80" fill="currentColor" /></svg>;
+  return <svg viewBox="0 20 56 80" className={cn("h-8 w-auto shrink-0", className)} aria-hidden focusable="false"><circle cx="28" cy="72" r="28" fill="var(--accent)" /><rect x="0" y="20" width="12" height="80" fill="currentColor" /></svg>;
 }
 
 export function Brand({ className, compact, prefetch }: { className?: string; compact?: boolean; prefetch?: boolean }) {

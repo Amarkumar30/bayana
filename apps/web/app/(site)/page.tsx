@@ -23,7 +23,7 @@ export default function Home() {
       <section className="grid items-center gap-10 pt-2 md:grid-cols-[1.15fr_1fr] md:pt-8">
         <div className="grid gap-6">
           <Badge tone="accent" className="w-fit">For photographers, salons, tutors, trainers and more</Badge>
-          <h1 className="font-serif text-4xl font-medium leading-[1.1] sm:text-6xl">Get booked. <span className="text-primary">Get the advance.</span> Stay calm.</h1>
+          <h1 className="text-4xl font-semibold leading-[1.1] tracking-tight sm:text-6xl">Get booked. <span className="text-primary">Get the advance.</span> Stay calm.</h1>
           <p className="max-w-xl text-lg text-muted">Bayana gives independent professionals in India one link where clients choose a service, pick a time, accept your terms and pay an advance, all before you lift a finger.</p>
           <div className="flex flex-col gap-3 sm:flex-row">
             <Button asChild size="lg"><Link href="/dashboard">Set up your page</Link></Button>
@@ -54,12 +54,12 @@ export default function Home() {
       </section>
 
       <section aria-labelledby="trust" className="grid gap-6 rounded-card bg-surface p-6 shadow-soft ring-1 ring-border/70 sm:p-10 md:grid-cols-[1fr_2fr]">
-        <div className="grid content-start gap-2"><h2 id="trust" className="font-serif text-2xl font-medium sm:text-4xl">Built for trust on both sides</h2><p className="text-muted">Clients feel safe paying. You stop chasing.</p></div>
+        <div className="grid content-start gap-2"><h2 id="trust" className="text-2xl font-semibold tracking-tight sm:text-4xl">Built for trust on both sides</h2><p className="text-muted">Clients feel safe paying. You stop chasing.</p></div>
         <ul className="grid gap-5 sm:grid-cols-3">{promises.map(({ icon: Icon, title, body }) => <li key={title} className="grid content-start gap-2"><Icon className="size-6 text-success" aria-hidden /><h3 className="text-base">{title}</h3><p className="text-sm text-muted">{body}</p></li>)}</ul>
       </section>
 
       <section className="grid justify-items-center gap-4 text-center">
-        <h2 className="max-w-2xl font-serif text-2xl font-medium sm:text-4xl">Your next client is one link away</h2>
+        <h2 className="max-w-2xl text-2xl font-semibold tracking-tight sm:text-4xl">Your next client is one link away</h2>
         <Button asChild size="lg"><Link href="/dashboard">Create your booking page</Link></Button>
       </section>
     </div>

@@ -49,8 +49,8 @@ export function DesignGallery() {
 
       <Section id="type" title="Typography">
         <div className="grid gap-3">
-          <p className="font-serif text-6xl font-medium">Fraunces 48 · headlines</p>
-          <p className="text-4xl font-semibold">Inter 32 · page titles</p><p className="text-2xl font-semibold">Inter 24 · section titles</p><p className="text-lg">Inter 18 · lead text</p><p className="text-base">Inter 16 · body, line-height 1.5. Clients see the advance, the balance and the cancellation rules before they pay.</p><p className="text-sm text-muted">Inter 14 · secondary text</p><p className="text-xs text-muted">Inter 12 · captions</p>
+          <p className="text-6xl font-semibold tracking-tight">Plus Jakarta Sans 48 · headlines</p>
+          <p className="text-4xl font-semibold">Plus Jakarta Sans 32 · page titles</p><p className="text-2xl font-semibold">Plus Jakarta Sans 24 · section titles</p><p className="text-lg">Plus Jakarta Sans 18 · lead text</p><p className="text-base">Plus Jakarta Sans 16 · body, line-height 1.5. Clients see the advance, the balance and the cancellation rules before they pay.</p><p className="text-sm text-muted">Plus Jakarta Sans 14 · secondary text</p><p className="text-xs text-muted">Plus Jakarta Sans 12 · captions</p>
         </div>
       </Section>
 

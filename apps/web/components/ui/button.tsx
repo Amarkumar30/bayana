@@ -12,7 +12,7 @@ export const buttonVariants = cva(
         primary: "bg-primary text-primary-foreground shadow-soft hover:bg-primary-hover",
         secondary: "bg-surface text-ink shadow-soft ring-1 ring-border hover:bg-surface-muted",
         ghost: "text-ink hover:bg-surface-muted",
-        danger: "bg-danger text-white shadow-soft hover:opacity-90"
+        danger: "bg-danger text-danger-foreground shadow-soft hover:opacity-90"
       },
       size: { md: "", sm: "min-h-11 px-3 text-sm sm:min-h-9", lg: "min-h-12 px-6 text-base", icon: "size-11 px-0" },
       block: { true: "w-full" }

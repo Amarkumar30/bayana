@@ -21,7 +21,7 @@ export default function Pricing() {
       <div className="grid gap-6 md:grid-cols-2">{plans.map(plan => (
         <Card key={plan.name} className={plan.featured ? "ring-2 ring-primary" : ""}>
           <div className="mb-4 flex items-center justify-between"><h2 className="text-lg">{plan.name}</h2>{plan.featured && <Badge tone="primary">Most popular</Badge>}</div>
-          <p className="mb-1"><span className="font-serif text-4xl">{plan.price}</span> {plan.period && <span className="text-muted">{plan.period}</span>}</p>
+          <p className="mb-1"><span className="text-4xl">{plan.price}</span> {plan.period && <span className="text-muted">{plan.period}</span>}</p>
           <p className="mb-2 text-muted">{plan.blurb}</p>
           <p className="mb-6 text-sm text-ink">{plan.fee}</p>
           <ul className="mb-6 grid gap-2">{plan.features.map(feature => <li key={feature} className="flex items-start gap-2 text-sm"><Check className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />{feature}</li>)}</ul>
