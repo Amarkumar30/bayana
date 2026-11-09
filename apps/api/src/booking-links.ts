@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import { bookingPageUrl } from "@bayana/shared";
 import { config } from "./config.js";
 
 // Private "View your booking" links. A token is 32 random bytes; only its keyed SHA-256 is stored (the first in
@@ -7,7 +8,7 @@ import { config } from "./config.js";
 
 type Db = Pool | PoolClient;
 export const tokenHash = (token: string) => createHash("sha256").update(`${config.SESSION_SECRET}:booking:${token}`).digest("hex");
-export const bookingUrl = (bookingId: string, token?: string) => `${config.WEB_ORIGINS[0]}/b/${bookingId}${token ? `?t=${encodeURIComponent(token)}` : ""}`;
+export const bookingUrl = (bookingId: string, token?: string) => bookingPageUrl(config.SITE_URL, bookingId, token);
 
 /** SQL: does the token hash in `param` open the booking aliased `alias` (its first link, or a later one not revoked)? */
 export const tokenMatches = (alias: string, param: string) =>

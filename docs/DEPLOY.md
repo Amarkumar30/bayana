@@ -236,6 +236,7 @@ API variables are validated at startup (`apps/api/src/config-schema.ts`) and the
 | `TRUST_PROXY` | 0 | 1 (in render.yaml) | 1 (in render.yaml) | no |
 | `WEB_ORIGINS` | http://localhost:3000 | https://staging.bayana.in | https://bayana.in (add `,https://www.bayana.in` only if www is ever served instead of redirected) | no |
 | `SESSION_COOKIE_DOMAIN` | empty (host-only) | .staging.bayana.in | .bayana.in | no |
+| `SITE_URL` | empty (= first `WEB_ORIGINS` entry) | https://bayana.in (required; any other value refuses startup) | https://bayana.in (required; any other value refuses startup) | no |
 | `SESSION_COOKIE_NAME` | empty (= bayana_session) | bayana_staging_session (dashboard) | empty (= bayana_session) | no |
 | `DATABASE_URL` | Docker `bayana_dev` | Neon staging **pooled** | Neon prod **pooled** | yes |
 | `DATABASE_URL_DIRECT` | empty | Neon staging **direct** | Neon prod **direct** | yes |
@@ -265,7 +266,7 @@ API variables are validated at startup (`apps/api/src/config-schema.ts`) and the
 | Variable | Local | Staging | Production |
 |----------|-------|---------|------------|
 | `NEXT_PUBLIC_API_URL` | http://localhost:4000 | https://api.staging.bayana.in | https://api.bayana.in |
-| `NEXT_PUBLIC_SITE_URL` | http://localhost:3000 | https://staging.bayana.in | https://bayana.in |
+| `NEXT_PUBLIC_SITE_URL` | http://localhost:3000 | https://bayana.in (a build with `APP_ENV` staging or production refuses any other value) | https://bayana.in |
 | `NEXT_PUBLIC_RAZORPAY_KEY_ID` | empty or rzp_test_… | rzp_test_… | empty (the web build refuses live ids) |
 | `SESSION_COOKIE_NAME` (server-only, not `NEXT_PUBLIC_`) | empty (= bayana_session) | bayana_staging_session | bayana_session |
 | `APP_ENV` (server-only) | empty (= local) | staging | production |

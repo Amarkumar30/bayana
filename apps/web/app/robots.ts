@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { siteUrl } from "@bayana/shared";
 import { env } from "@/env";
 import { loadServerEnv } from "@/env-schema";
 import { indexingAllowed } from "@/lib/site";
@@ -12,5 +13,5 @@ export const privatePaths = ["/dashboard", "/admin", "/onboarding", "/my-booking
  */
 export default function robots(): MetadataRoute.Robots {
   if (!indexingAllowed(loadServerEnv())) return { rules: { userAgent: "*", disallow: "/" } };
-  return { rules: { userAgent: "*", allow: "/", disallow: privatePaths }, sitemap: `${env.NEXT_PUBLIC_SITE_URL}/sitemap.xml`, host: env.NEXT_PUBLIC_SITE_URL };
+  return { rules: { userAgent: "*", allow: "/", disallow: privatePaths }, sitemap: siteUrl(env.NEXT_PUBLIC_SITE_URL, "/sitemap.xml"), host: siteUrl(env.NEXT_PUBLIC_SITE_URL) };
 }

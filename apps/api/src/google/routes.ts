@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
-import { bookingSlugFrom, googleIntent, isAllowedReturnPath, landingPath, type GoogleIntent } from "@bayana/shared";
+import { bookingSlugFrom, googleIntent, isAllowedReturnPath, landingPath, siteUrl, type GoogleIntent } from "@bayana/shared";
 import { currentUser, event, findUserByEmail, hashPassword, invalidCredentials, validatePassword, verifyPassword, type PublicUser, type SessionUser } from "../auth.js";
 import { cookieOptions, cookieToken, meta, perIp, readCookie, rotateInto } from "../auth-routes.js";
 import { config } from "../config.js";
@@ -16,7 +16,7 @@ import { decodeGoogleCookie, encodeGoogleCookie, GOOGLE_COOKIE, GOOGLE_COOKIE_MI
 
 type Handler = (req: Request, res: Response) => Promise<unknown>;
 const handle = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => { fn(req, res).catch(next); };
-const web = (path: string) => `${config.WEB_ORIGINS[0]}${path}`;
+const web = (path: string) => siteUrl(config.SITE_URL, path);
 /** The one-time cookie is sent only to the callback path, never to the rest of the API. */
 const googleCookieOptions = () => ({ ...cookieOptions(), path: "/v1/auth/google", maxAge: GOOGLE_COOKIE_MINUTES * 60_000 });
 const disabled = () => new AppError(404, "GOOGLE_DISABLED", "Google sign-in is not available");

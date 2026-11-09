@@ -4,9 +4,10 @@ import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
 import {
   blockedPeriodSchema, bookingWindowSchema, missingPublishRequirements, onboardingSteps, overrideSchema, serviceCreateSchema, serviceReorderSchema, serviceUpdateSchema,
-  vendorCreateSchema, vendorProfileSchema, weeklyScheduleSchema, weeklyWindowSchema, type ChecklistInput, type ServiceInput
+  vendorCreateSchema, vendorPageUrl, vendorProfileSchema, weeklyScheduleSchema, weeklyWindowSchema, type ChecklistInput, type ServiceInput
 , offlinePaymentSchema
 } from "@bayana/shared";
+import { config } from "./config.js";
 import { settleDeadlines } from "./advance-deadlines.js";
 import { currentUser, type SessionUser } from "./auth.js";
 import { cookieToken } from "./auth-routes.js";
@@ -82,7 +83,8 @@ vendorRouter.post("/me", requireVendorUser, handle(async (req, res) => {
 vendorRouter.get("/me", requireVendor, handle(async (_req, res) => {
   const id = vendorOf(res).id;
   const [profile, categories, services] = await Promise.all([pool.query(`SELECT ${profileColumns} FROM vendors WHERE id=$1`, [id]), pool.query("SELECT category_slug FROM vendor_categories WHERE vendor_id=$1 ORDER BY category_slug", [id]), pool.query(`SELECT ${serviceColumns} FROM services WHERE vendor_id=$1 ORDER BY sort_order,created_at`, [id])]);
-  res.json({ ...profile.rows[0], categories: categories.rows.map(row => row.category_slug), services: services.rows });
+  // page_url: the address the share card hands out, from the same builder and SITE_URL as every emailed link.
+  res.json({ ...profile.rows[0], page_url: vendorPageUrl(config.SITE_URL, profile.rows[0].slug), categories: categories.rows.map(row => row.category_slug), services: services.rows });
 }));
 vendorRouter.patch("/me", requireVendor, handle(async (req, res) => {
   const body = vendorProfileSchema.parse(req.body); const vendor = vendorOf(res);

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { addLocalDays, bookingListQuerySchema, extendDeadlineSchema, calendarQuerySchema, localDateOf, manualBookingSchema, missingPublishRequirements, notifyPrefsSchema, onlineRefundSchema, rescheduleSchema, vendorCancelSchema } from "@bayana/shared";
+import { addLocalDays, bookingListQuerySchema, extendDeadlineSchema, calendarQuerySchema, localDateOf, manualBookingSchema, missingPublishRequirements, notifyPrefsSchema, onlineRefundSchema, rescheduleSchema, siteUrl, vendorCancelSchema } from "@bayana/shared";
 import type { SessionUser } from "./auth.js";
 import { closeLogin } from "./privacy.js";
 import { settleForRead } from "./advance-deadlines.js";
@@ -261,7 +261,7 @@ icalRouter.get("/:file", perIp(60), handle(async (req, res) => {
   if (!vendor) throw new AppError(404, "NOT_FOUND", "Not found");
   const bookings = await pool.query<{ id: string; status: string; service_name: string | null; client_name: string; starts_at: Date; ends_at: Date; created_at: Date; booking_mode: string; days_count: number | null; vendor_timezone: string }>(
     "SELECT id,status,service_name,client_name,starts_at,ends_at,created_at,booking_mode,days_count,blocks_count,vendor_timezone FROM bookings WHERE vendor_id=$1 AND status IN ('PENDING','CONFIRMED','COMPLETED') AND (status<>'PENDING' OR hold_expires_at IS NULL OR hold_expires_at > now()) AND ends_at > now() - interval '30 days' AND starts_at < now() + interval '400 days' ORDER BY starts_at", [vendor.id]);
-  const dashboard = `${config.WEB_ORIGINS[0]}/dashboard/bookings`;
+  const dashboard = siteUrl(config.SITE_URL, "/dashboard/bookings");
   const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Bayana//Bookings//EN", "CALSCALE:GREGORIAN", `X-WR-CALNAME:${icsText(`${vendor.display_name} (Bayana)`)}`,
     ...bookings.rows.flatMap(booking => ["BEGIN:VEVENT", `UID:${booking.id}@bayana`, `DTSTAMP:${icsStamp(booking.created_at)}`, ...icsWhen(booking),
       `SUMMARY:${icsText(`${booking.service_name ?? "Booking"}: ${booking.client_name}${booking.status === "PENDING" ? " (awaiting advance)" : ""}`)}`, `STATUS:${booking.status === "PENDING" ? "TENTATIVE" : "CONFIRMED"}`, `URL:${dashboard}/${booking.id}`, "END:VEVENT"]),

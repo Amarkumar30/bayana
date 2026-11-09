@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { renderSVG } from "uqr";
 import { MOCK_API_URL, MOCK_CODE, MOCK_NOW, establishedVendor, mockApi } from "./mock-api";
 
 // Phase 9 dashboard and admin flows against the mocked API (the real routes are covered in apps/api/test/integration/dashboard-admin.test.ts).
@@ -97,7 +98,8 @@ test("gate: an admin finds a stuck booking, reads why, and fixes it without SQL"
   await expect(page.getByText("Nothing looks stuck. Status CONFIRMED.")).toBeVisible();
 });
 
-test("home puts today's work first: action, then upcoming, then the month's money, then the share card", async ({ page, baseURL }) => {
+test("home puts today's work first: action, then upcoming, then the month's money, then the share card", async ({ page, context, baseURL }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await mockApi(page);
   await page.goto("/dashboard");
   await expect(page.getByRole("heading", { name: "Needs your action" })).toBeVisible();
@@ -108,16 +110,23 @@ test("home puts today's work first: action, then upcoming, then the month's mone
   expect(at("Next 7 days")).toBeLessThan(at("This month's money"));
   expect(at("This month's money")).toBeLessThan(at("Share your page"));
   await expect(page.getByText("Hold ends").first()).toBeVisible();
+  // One URL, from NEXT_PUBLIC_SITE_URL (this test server's origin): shown, copied, sent on WhatsApp and drawn as the QR code.
+  const shareUrl = `${baseURL}/studio-sunday`;
+  await expect(page.getByText(`${new URL(shareUrl).host}/studio-sunday`, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Copy link" }).click();
+  await expect(page.getByText("Link copied")).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(shareUrl);
   const whatsapp = page.getByRole("link", { name: "Share on WhatsApp" });
   const message = new URL((await whatsapp.getAttribute("href"))!);
   expect(message.origin).toBe("https://wa.me");
-  expect(message.searchParams.get("text")).toBe(`Book Studio Sunday here: ${baseURL}/studio-sunday`);
+  expect(message.searchParams.get("text")).toBe(`Book Studio Sunday here: ${shareUrl}`);
   const qr = page.getByRole("img", { name: "QR code for Studio Sunday's booking page" });
   await expect(qr).toBeVisible();
-  // Drawn on the server, for the public page's address only.
+  // Drawn on the server, for the public page's address only: the same SVG as a QR code of the share URL drawn here.
   const svg = await page.request.get((await qr.getAttribute("src"))!);
   expect(svg.headers()["content-type"]).toBe("image/svg+xml");
-  expect(await svg.text()).toContain("<svg");
+  expect(await svg.text()).toBe(renderSVG(shareUrl, { ecc: "M", border: 2, pixelSize: 8, whiteColor: "#fff", blackColor: "#000" }));
+  expect(await svg.text()).not.toBe(renderSVG(`https://staging.bayana.in/studio-sunday`, { ecc: "M", border: 2, pixelSize: 8, whiteColor: "#fff", blackColor: "#000" }));
   expect((await page.request.get("/api/qr/login")).status()).toBe(404);
 });
 

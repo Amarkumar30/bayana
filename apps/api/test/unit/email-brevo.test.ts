@@ -81,7 +81,7 @@ describe("Brevo HTTPS transport", () => {
 });
 
 describe("EMAIL_TRANSPORT=brevo_api config", () => {
-  const base = { NODE_ENV: "production", WEB_ORIGINS: "https://bayana.in", DATABASE_URL: "postgres://u:p@db.example.test/bayana", DATABASE_URL_DIRECT: "postgres://u:p@db.example.test/bayana", SESSION_SECRET: "s".repeat(32), OTP_PEPPER: "p".repeat(32), TICK_SECRET: "t".repeat(32) };
+  const base = { NODE_ENV: "production", WEB_ORIGINS: "https://bayana.in", SITE_URL: "https://bayana.in", DATABASE_URL: "postgres://u:p@db.example.test/bayana", DATABASE_URL_DIRECT: "postgres://u:p@db.example.test/bayana", SESSION_SECRET: "s".repeat(32), OTP_PEPPER: "p".repeat(32), TICK_SECRET: "t".repeat(32) };
   it("needs BREVO_API_KEY and EMAIL_FROM, not SMTP_URL", () => {
     const config = loadConfig({ ...base, EMAIL_TRANSPORT: "brevo_api", BREVO_API_KEY: apiKey, EMAIL_FROM: "Bayana <bookings@bayana.in>" });
     expect(config.EMAIL_TRANSPORT).toBe("brevo_api");

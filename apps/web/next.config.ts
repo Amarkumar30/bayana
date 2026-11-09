@@ -2,15 +2,16 @@ import type { NextConfig } from "next";
 import { loadServerEnv, loadWebEnv } from "./env-schema";
 import { assertBusinessDetailsReady } from "./lib/business-details";
 import { BOOKING_REFERRER_POLICY, securityHeaders as createSecurityHeaders } from "./security-headers";
-import { NOINDEX_HEADER, indexingAllowed, productionWebProblems, wwwRedirects } from "./lib/site";
+import { NOINDEX_HEADER, deployedWebProblems, indexingAllowed, wwwRedirects } from "./lib/site";
 
 // Fail `next dev` and `next build` early, with variable names only, when the public env is missing or invalid, and refuse a
 // production build (NODE_ENV=production with APP_ENV=production) while lib/business-details.ts still has placeholders.
-// APP_ENV=production also requires public https origins for the site and the API (lib/site.ts productionWebProblems).
+// A deployment (APP_ENV staging or production) must link to https://bayana.in, never a staging host, and APP_ENV=production
+// also requires a public https API origin (lib/site.ts deployedWebProblems).
 try {
   loadWebEnv();
-  const problems = productionWebProblems({ APP_ENV: loadServerEnv().APP_ENV, NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL, NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL });
-  if (problems.length) throw new Error(["Invalid web environment for APP_ENV=production:", ...problems.map(problem => `  - ${problem}`)].join("\n"));
+  const problems = deployedWebProblems({ APP_ENV: loadServerEnv().APP_ENV, NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL, NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL });
+  if (problems.length) throw new Error([`Invalid web environment for APP_ENV=${loadServerEnv().APP_ENV}:`, ...problems.map(problem => `  - ${problem}`)].join("\n"));
   assertBusinessDetailsReady({ nodeEnv: process.env.NODE_ENV, appEnv: loadServerEnv().APP_ENV });
 } catch (error) { process.stderr.write(`${error instanceof Error ? error.message : "Invalid web environment"}\n`); process.exit(1); }
 const securityHeaders = createSecurityHeaders(process.env.NODE_ENV === "production", process.env.NEXT_PUBLIC_SITE_URL);

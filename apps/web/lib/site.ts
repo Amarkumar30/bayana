@@ -1,17 +1,7 @@
-// Every public URL the web app shows or links to comes from NEXT_PUBLIC_SITE_URL (validated in env-schema.ts), never from a
-// hard-coded host, so the same build serves staging, a local run or https://bayana.in by configuration alone. No imports, so
-// node --test loads it directly (site.test.mjs) and next.config.ts can use it.
-
-const trimmed = (siteUrl: string) => siteUrl.replace(/\/+$/, "");
-
-/** The vendor's public page: `${SITE_URL}/<slug>`. */
-export const vendorUrl = (siteUrl: string, slug: string) => `${trimmed(siteUrl)}/${encodeURIComponent(slug)}`;
-
-/** The site's host as people type it ("bayana.in", "staging.bayana.in", "localhost:3000"). */
-export const siteHost = (siteUrl: string) => new URL(siteUrl).host;
-
-/** The vendor link as shown in text: "bayana.in/studio-sunday". */
-export const vendorLinkLabel = (siteUrl: string, slug: string) => `${siteHost(siteUrl)}/${slug}`;
+// Indexing, the www redirect and the build guard for the public site URL. Every URL itself is built by @bayana/shared's
+// site.ts from NEXT_PUBLIC_SITE_URL (validated in env-schema.ts). next.config.ts uses this file, and its config loader resolves
+// only CommonJS, so the shared rule is imported from its source file (which has no imports), not from the ESM package.
+import { deployedSiteUrlProblem } from "../../../packages/shared/src/site.ts";
 
 /**
  * Search engines may index the site only in production AND after a lawyer has reviewed the legal pages. Everything else
@@ -35,11 +25,15 @@ export function wwwRedirects(siteUrl: string | undefined) {
   return [{ source: "/:path*", has: [{ type: "host" as const, value: `www.${url.hostname}` }], destination: `${url.origin}/:path*`, permanent: true }];
 }
 
-/** APP_ENV=production: the site and API must be public https origins. Names only in the result, never values. */
-export function productionWebProblems(env: { APP_ENV?: string; NEXT_PUBLIC_SITE_URL?: string; NEXT_PUBLIC_API_URL?: string }) {
-  if (env.APP_ENV !== "production") return [];
-  const problems: string[] = [];
-  for (const name of ["NEXT_PUBLIC_SITE_URL", "NEXT_PUBLIC_API_URL"] as const) {
+/**
+ * The build guard. APP_ENV staging or production (a deployment): NEXT_PUBLIC_SITE_URL must be the live site, never a staging
+ * or preview host. APP_ENV=production: the API must also be a public https origin. Names only in the result, never values.
+ */
+export function deployedWebProblems(env: { APP_ENV?: string; NEXT_PUBLIC_SITE_URL?: string; NEXT_PUBLIC_API_URL?: string }) {
+  const site = deployedSiteUrlProblem(env.APP_ENV, env.NEXT_PUBLIC_SITE_URL);
+  const problems: string[] = site ? [`NEXT_PUBLIC_SITE_URL: ${site}`] : [];
+  if (env.APP_ENV !== "production") return problems;
+  for (const name of site ? ["NEXT_PUBLIC_API_URL"] as const : ["NEXT_PUBLIC_SITE_URL", "NEXT_PUBLIC_API_URL"] as const) {
     const value = env[name];
     let ok = false;
     try { const url = new URL(value ?? ""); ok = url.protocol === "https:" && !isLocalHost(url.hostname); } catch { ok = false; }

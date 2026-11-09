@@ -3,7 +3,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/layout/brand";
 import { Card } from "@/components/ui/display";
 import { businessDetails as business } from "@/lib/business-details";
-import { siteHost } from "@/lib/site";
+import { siteHost } from "@bayana/shared";
 import { env } from "@/env";
 
 export const metadata: Metadata = { title: "About | Bayana", description: "Why Bayana exists and how it works: advance bookings for independent service professionals in India." };
