@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { DEPLOYED_SITE_URL, bookingPageUrl, deployedSiteUrlProblem, siteHost, siteUrl, vendorPageUrl, vendorShareLinks } from "@bayana/shared";
 import { loadConfig } from "../../src/config-schema.js";
@@ -37,10 +38,11 @@ describe("deployed site URL rule", () => {
 });
 
 // A deployed API with every other setting valid (fakes, never real secrets), so only SITE_URL decides.
+const random = () => randomBytes(32).toString("hex");
 const deployed = {
   NODE_ENV: "production", APP_ENV: "production", TRUST_PROXY: "1", WEB_ORIGINS: "https://bayana.in", SESSION_COOKIE_DOMAIN: ".bayana.in", SITE_URL: "https://bayana.in",
   DATABASE_URL: "postgres://app:pw@ep-fake-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require", DATABASE_URL_DIRECT: "postgres://app:pw@ep-fake.ap-southeast-1.aws.neon.tech/neondb?sslmode=require",
-  SESSION_SECRET: "9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a3928", OTP_PEPPER: "0a1b2c3d4e5f60718293a4b5c6d7e8f9", TICK_SECRET: "f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4", EMAIL_TRANSPORT: "brevo_api", BREVO_API_KEY: "k".repeat(40), EMAIL_FROM: "Bayana <bookings@bayana.in>"
+  SESSION_SECRET: random(), OTP_PEPPER: random(), TICK_SECRET: random(), EMAIL_TRANSPORT: "brevo_api", BREVO_API_KEY: "k".repeat(40), EMAIL_FROM: "Bayana <bookings@bayana.in>"
 };
 const refusal = (overrides: Record<string, string | undefined>) => { try { loadConfig({ ...deployed, ...overrides }); return ""; } catch (error) { return (error as Error).message; } };
 
