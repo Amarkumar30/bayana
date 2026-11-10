@@ -98,8 +98,9 @@ test("gate: an admin finds a stuck booking, reads why, and fixes it without SQL"
   await expect(page.getByText("Nothing looks stuck. Status CONFIRMED.")).toBeVisible();
 });
 
-test("home puts today's work first: action, then upcoming, then the month's money, then the share card", async ({ page, context, baseURL }) => {
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+test("home puts today's work first: action, then upcoming, then the month's money, then the share card", async ({ page, baseURL }) => {
+  // Record what Copy link writes: the real clipboard is shared with tests running in parallel, so reading it back can race.
+  await page.addInitScript(() => { const copied: string[] = []; Object.assign(window, { copied }); Object.defineProperty(navigator, "clipboard", { value: { writeText: async (text: string) => { copied.push(text); } } }); });
   await mockApi(page);
   await page.goto("/dashboard");
   await expect(page.getByRole("heading", { name: "Needs your action" })).toBeVisible();
@@ -114,8 +115,9 @@ test("home puts today's work first: action, then upcoming, then the month's mone
   const shareUrl = `${baseURL}/studio-sunday`;
   await expect(page.getByText(`${new URL(shareUrl).host}/studio-sunday`, { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Copy link" }).click();
-  await expect(page.getByText("Link copied")).toBeVisible();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(shareUrl);
+  // The toast and its screen-reader announcement can both carry the words.
+  await expect(page.getByText("Link copied").first()).toBeVisible();
+  expect(await page.evaluate(() => (window as unknown as { copied: string[] }).copied)).toEqual([shareUrl]);
   const whatsapp = page.getByRole("link", { name: "Share on WhatsApp" });
   const message = new URL((await whatsapp.getAttribute("href"))!);
   expect(message.origin).toBe("https://wa.me");
