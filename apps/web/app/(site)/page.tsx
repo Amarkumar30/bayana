@@ -3,7 +3,7 @@ import { BadgeCheck, CalendarCheck2, FileText, IndianRupee, Link2, ShieldCheck }
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Badge, Card, Money } from "@/components/ui/display";
-import { siteHost } from "@/lib/site";
+import { siteHost } from "@bayana/shared";
 import { env } from "@/env";
 
 const steps = [

@@ -2,21 +2,20 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { CalendarCheck, ChevronRight, Clock, Mail, MapPin, Phone, ShieldCheck } from "lucide-react";
-import { formatAmount, tiersInWords, timezoneLabel } from "@bayana/shared";
+import { formatAmount, tiersInWords, timezoneLabel, vendorPageUrl } from "@bayana/shared";
 import { env } from "@/env";
 import { fetchPublicVendor, type PublicVendor } from "@/lib/public-vendor";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Badge, Card, EmptyState, Money } from "@/components/ui/display";
 import { priceUnit, serviceLength } from "@/lib/service-label";
-import { vendorUrl } from "@/lib/site";
 
 // Incremental Static Regeneration: rendered on first visit, cached, refreshed in the background every 5 minutes.
 export const revalidate = 300;
 export const dynamicParams = true;
 export function generateStaticParams() { return []; }
 
-const pageUrl = (slug: string) => vendorUrl(env.NEXT_PUBLIC_SITE_URL, slug);
+const pageUrl = (slug: string) => vendorPageUrl(env.NEXT_PUBLIC_SITE_URL, slug);
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
   const vendor = await fetchPublicVendor(slug);

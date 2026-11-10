@@ -35,6 +35,9 @@ services:
       # SESSION_COOKIE_DOMAIN: covers both the web and API hosts, e.g. .bayana.in. Before/after values: docs/DOMAIN_SWITCH.md.
       - key: WEB_ORIGINS
         sync: false
+      # SITE_URL: the public site every link is built on; must be exactly https://bayana.in (the API refuses to start otherwise).
+      - key: SITE_URL
+        sync: false
       - key: SESSION_COOKIE_DOMAIN
         sync: false
       # Empty means bayana_session (the Google state cookie is then bayana_google). Same value in Vercel. Set in the dashboard,

@@ -91,7 +91,7 @@ describe("configuration", () => {
 // APP_ENV=production is the public site on bayana.in (docs/DOMAIN_SWITCH.md). Values here are fakes, never real secrets.
 const random = () => randomBytes(32).toString("hex");
 const site = {
-  NODE_ENV: "production", APP_ENV: "production", TRUST_PROXY: "1", WEB_ORIGINS: "https://bayana.in", SESSION_COOKIE_DOMAIN: ".bayana.in",
+  NODE_ENV: "production", APP_ENV: "production", TRUST_PROXY: "1", WEB_ORIGINS: "https://bayana.in", SITE_URL: "https://bayana.in", SESSION_COOKIE_DOMAIN: ".bayana.in",
   DATABASE_URL: "postgres://app:pw@ep-fake-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require", DATABASE_URL_DIRECT: "postgres://app:pw@ep-fake.ap-southeast-1.aws.neon.tech/neondb?sslmode=require",
   SESSION_SECRET: random(), OTP_PEPPER: random(), TICK_SECRET: random(), EMAIL_TRANSPORT: "brevo_api", BREVO_API_KEY: "k".repeat(40), EMAIL_FROM: "Bayana <bookings@bayana.in>",
   GOOGLE_CLIENT_ID: "123-abc.apps.googleusercontent.com", GOOGLE_CLIENT_SECRET: "fake-google-client-value", GOOGLE_REDIRECT_URI: "https://api.bayana.in/v1/auth/google/callback"
@@ -99,10 +99,12 @@ const site = {
 const refusal = (overrides: Record<string, string | undefined>) => { try { loadConfig({ ...site, ...overrides }); return ""; } catch (error) { return (error as Error).message; } };
 
 describe("APP_ENV=production startup guard", () => {
-  it("accepts the bayana.in settings, and staging and local settings are unchanged", () => {
+  it("accepts the bayana.in settings, and staging and local settings are unchanged apart from SITE_URL", () => {
     expect(loadConfig(site).WEB_ORIGINS).toEqual(["https://bayana.in"]);
-    const staging = { ...site, APP_ENV: "staging", WEB_ORIGINS: "https://staging.bayana.in", SESSION_COOKIE_DOMAIN: ".staging.bayana.in", SESSION_COOKIE_NAME: "bayana_staging_session", GOOGLE_REDIRECT_URI: "https://api.staging.bayana.in/v1/auth/google/callback" };
+    // A deployed staging API still links only to the live site (SITE_URL rule, test/unit/site-url.test.ts).
+    const staging = { ...site, APP_ENV: "staging", SESSION_COOKIE_NAME: "bayana_staging_session" };
     expect(loadConfig(staging).SESSION_COOKIE_NAME).toBe("bayana_staging_session");
+    expect(() => loadConfig({ ...staging, WEB_ORIGINS: "https://staging.bayana.in", SITE_URL: "https://staging.bayana.in" })).toThrow("SITE_URL: must be https://bayana.in when APP_ENV=staging");
     // Staging is not held to the production rules (for example a copied secret or no cookie domain still loads).
     expect(() => loadConfig({ ...staging, SESSION_COOKIE_DOMAIN: undefined, TICK_SECRET: "t".repeat(32) })).not.toThrow();
     expect(loadConfig(base).APP_ENV).toBe("local");

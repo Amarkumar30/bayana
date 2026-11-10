@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { deployedSiteUrlProblem } from "@bayana/shared";
 
 // Pure environment rules: no dotenv, no process exit. config.ts applies them to process.env; scripts apply them to a parsed file.
 const optional = <T extends z.ZodTypeAny>(schema: T) => z.preprocess(value => value === "" ? undefined : value, schema.optional());
@@ -10,6 +11,7 @@ const shape = {
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"), APP_ENV: z.enum(["local", "staging", "production"]).default("local"),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000), TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
   WEB_ORIGINS: optional(origins), WEB_ORIGIN: optional(origins), SESSION_COOKIE_DOMAIN: optional(z.string().min(1)),
+  SITE_URL: optional(z.string().url().refine(origin => new URL(origin).origin === origin)),
   SESSION_COOKIE_NAME: z.preprocess(value => value === "" ? undefined : value, z.string().regex(cookieNamePattern).default(DEFAULT_SESSION_COOKIE_NAME)),
   DATABASE_URL: optional(z.string().url()), DATABASE_URL_DIRECT: optional(z.string().url()), DATABASE_URL_TEST: optional(z.string().url()),
   HOLD_MINUTES: z.coerce.number().int().min(1).default(15), REQUEST_HOLD_HOURS: z.coerce.number().int().min(1).max(168).default(48), MIN_ADVANCE_PAISE: z.coerce.number().int().positive().default(10000),
@@ -22,12 +24,13 @@ const shape = {
 type Shape = typeof shape;
 type Parsed = { [K in keyof Shape]: z.infer<Shape[K]> };
 export type EmailTransport = "smtp" | "brevo_api" | "log" | "capture";
-export type Config = Omit<Parsed, "WEB_ORIGIN" | "WEB_ORIGINS" | "DATABASE_URL" | "DATABASE_URL_DIRECT" | "EMAIL_TRANSPORT"> & { EMAIL_TRANSPORT: EmailTransport; WEB_ORIGINS: string[]; DATABASE_URL: string; DATABASE_URL_DIRECT: string; OTP_PEPPER: string };
+export type Config = Omit<Parsed, "WEB_ORIGIN" | "WEB_ORIGINS" | "SITE_URL" | "DATABASE_URL" | "DATABASE_URL_DIRECT" | "EMAIL_TRANSPORT"> & { EMAIL_TRANSPORT: EmailTransport; WEB_ORIGINS: string[]; SITE_URL: string;DATABASE_URL: string; DATABASE_URL_DIRECT: string; OTP_PEPPER: string };
 
 /** What each variable accepts, in words. Shown instead of the (possibly secret) value that was rejected. */
 export const allowedValues: Record<keyof Shape, string> = {
   NODE_ENV: "one of development, test, production", APP_ENV: "one of local, staging, production", PORT: "a port number from 1 to 65535 (4000 locally)", TRUST_PROXY: "a whole number of proxy hops from 0 to 10 (0 locally, 1 on Render)",
   WEB_ORIGINS: "comma-separated exact origins with no path or trailing slash, e.g. http://localhost:3000", WEB_ORIGIN: "an origin like http://localhost:3000 (old name; use WEB_ORIGINS)", SESSION_COOKIE_DOMAIN: "empty locally, or a domain like .bayana.in",
+  SITE_URL: "the public site origin every emailed link, Google return and page URL is built from: https://bayana.in when APP_ENV is staging or production; empty locally (the first WEB_ORIGINS entry)",
   SESSION_COOKIE_NAME: "empty (bayana_session), or letters, digits and _ only (a separate deployment on the same domain needs its own name)",
   DATABASE_URL: "a postgres:// URL, e.g. postgres://bayana:bayana@localhost:5433/bayana_dev", DATABASE_URL_DIRECT: "a postgres:// URL for migrations (may be empty outside production)", DATABASE_URL_TEST: "a postgres:// URL whose database name ends in _test, e.g. .../bayana_test",
   HOLD_MINUTES: "a whole number of minutes, at least 1", REQUEST_HOLD_HOURS: "a whole number of hours from 1 to 168", MIN_ADVANCE_PAISE: "a positive whole number of paise",
@@ -123,6 +126,12 @@ export function loadConfig(input: NodeJS.ProcessEnv = process.env, envFile = "ap
   // WEB_ORIGIN is the pre-Phase-1 name; it is accepted outside production until local .env files are migrated.
   const webOrigins = v.WEB_ORIGINS ?? (production ? undefined : v.WEB_ORIGIN);
   if (!webOrigins && !problems.some(item => item.name === "WEB_ORIGINS" || item.name === "WEB_ORIGIN")) problem("WEB_ORIGINS", `is missing; set it to ${allowedValues.WEB_ORIGINS}`);
+  // SITE_URL is the one origin every absolute link is built from (@bayana/shared site.ts). A deployment must set it to the live
+  // site; locally it defaults to the first WEB_ORIGINS entry. Either way the site must be allowed to call the API.
+  const siteRule = deployedSiteUrlProblem(v.APP_ENV, v.SITE_URL);
+  if (siteRule && !problems.some(item => item.name === "SITE_URL")) problem("SITE_URL", siteRule);
+  const siteUrl = v.SITE_URL ?? webOrigins?.[0];
+  if (siteUrl && webOrigins && !webOrigins.includes(siteUrl)) problem("SITE_URL", "must also be listed in WEB_ORIGINS, so pages on the site can call the API");
   const databaseName = v.NODE_ENV === "test" ? "DATABASE_URL_TEST" : "DATABASE_URL";
   const databaseUrl = v.NODE_ENV === "test" ? v.DATABASE_URL_TEST : v.DATABASE_URL;
   if (!databaseUrl && !problems.some(item => item.name === databaseName)) problem(databaseName, `is missing; set it to ${allowedValues[databaseName]}`);
@@ -156,7 +165,7 @@ export function loadConfig(input: NodeJS.ProcessEnv = process.env, envFile = "ap
   // Google sign-in is optional: without a client id it is simply off. With one, the secret and callback URL must be set too.
   if (v.GOOGLE_CLIENT_ID) for (const name of ["GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"] as const) if (!v[name]) problem(name, `is required when GOOGLE_CLIENT_ID is set; set it to ${allowedValues[name]}`);
   for (const item of productionProblems(v, webOrigins)) problem(item.name, item.rule);
-  if (problems.length || !webOrigins || !databaseUrl) throw new ConfigError(problems, envFile);
-  const { WEB_ORIGIN: _legacyOrigin, WEB_ORIGINS: _origins, DATABASE_URL: _database, DATABASE_URL_DIRECT: direct, ...rest } = v as Parsed;
-  return { ...rest, EMAIL_TRANSPORT: transport, WEB_ORIGINS: webOrigins, DATABASE_URL: databaseUrl, DATABASE_URL_DIRECT: v.NODE_ENV === "test" ? databaseUrl : direct ?? databaseUrl, OTP_PEPPER: v.OTP_PEPPER ?? (v as Parsed).SESSION_SECRET };
+  if (problems.length || !webOrigins || !siteUrl || !databaseUrl) throw new ConfigError(problems, envFile);
+  const { WEB_ORIGIN: _legacyOrigin, WEB_ORIGINS: _origins, SITE_URL: _site, DATABASE_URL: _database, DATABASE_URL_DIRECT: direct, ...rest } = v as Parsed;
+  return { ...rest, EMAIL_TRANSPORT: transport, WEB_ORIGINS: webOrigins, SITE_URL: siteUrl,DATABASE_URL: databaseUrl, DATABASE_URL_DIRECT: v.NODE_ENV === "test" ? databaseUrl : direct ?? databaseUrl, OTP_PEPPER: v.OTP_PEPPER ?? (v as Parsed).SESSION_SECRET };
 }

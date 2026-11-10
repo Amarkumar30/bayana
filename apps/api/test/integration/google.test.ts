@@ -18,7 +18,7 @@ beforeAll(async () => { server = await new Promise(resolve => { const s = app.li
 beforeEach(async () => { fake = await new FakeGoogleProvider().init(); useTestGoogle(fake); });
 afterAll(async () => { useTestGoogle(undefined); await new Promise<void>(resolve => server.close(() => resolve())); await pool.end(); });
 
-const web = config.WEB_ORIGINS[0];
+const web = config.SITE_URL;
 const ip = () => `10.55.${Math.floor(Math.random() * 250)}.${Math.floor(Math.random() * 250) + 1}`;
 const cookieValue = (setCookie: string, name: string) => new RegExp(`${name}=([^;]*)`).exec(setCookie)?.[1];
 type Raw = { status: number; location: string; setCookie: string; body: Record<string, any> };

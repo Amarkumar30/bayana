@@ -80,7 +80,7 @@ export async function createHold(db: PoolClient, input: HoldInput) {
     throw error;
   }
   await recordCreated(db, id, "HELD", "client", "slot held");
-  // The first WEB_ORIGINS entry is the canonical public site used in emailed links.
+  // Emailed links are built on SITE_URL, the canonical public site (booking-links.ts).
   const { facts } = await bookingFacts(db, id);
   await enqueue(db, "hold_started", input.email, { ...facts, link: bookingUrl(id, accessToken), holdUntil: expires, online: onlinePaymentsFor(p.online_payments) }, { bookingId: id, priority: PRIORITY.urgent, dedupeKey: `hold:${id}`, senderName: facts.businessName });
   // The raw token is returned once, to the customer who created the hold; only its hash is stored.

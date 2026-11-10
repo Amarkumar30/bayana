@@ -29,6 +29,7 @@ Nothing here prints or stores a secret. Secret variables keep their current valu
 |---|---|---|
 | `APP_ENV` | staging | production |
 | `WEB_ORIGINS` | https://staging.bayana.in | https://bayana.in |
+| `SITE_URL` | (new) | https://bayana.in (required: the API refuses to start without it or with any other value) |
 | `SESSION_COOKIE_DOMAIN` | .staging.bayana.in | .bayana.in |
 | `SESSION_COOKIE_NAME` | bayana_staging_session | empty (= bayana_session; Google cookie bayana_google) |
 | `GOOGLE_REDIRECT_URI` | https://api.staging.bayana.in/v1/auth/google/callback | https://api.bayana.in/v1/auth/google/callback |

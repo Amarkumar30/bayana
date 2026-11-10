@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { siteUrl } from "@bayana/shared";
 import { env } from "@/env";
 import { footerLinks } from "@/components/layout/site-footer";
 
@@ -6,5 +7,5 @@ import { footerLinks } from "@/components/layout/site-footer";
 export const sitemapPaths = ["/", ...[...footerLinks.product, ...footerLinks.legal].map(link => link.href).filter(href => !href.startsWith("/login"))];
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  return sitemapPaths.map(path => ({ url: `${env.NEXT_PUBLIC_SITE_URL}${path === "/" ? "" : path}`, changeFrequency: "monthly", priority: path === "/" ? 1 : 0.5 }));
+  return sitemapPaths.map(path => ({ url: siteUrl(env.NEXT_PUBLIC_SITE_URL, path === "/" ? "" : path), changeFrequency: "monthly", priority: path === "/" ? 1 : 0.5 }));
 }

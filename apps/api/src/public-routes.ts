@@ -1,8 +1,9 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import { addLocalDays, advancePaise, dailyTotalPaise, isLocalDate, localDaysBetween, sessionTotalPaise } from "@bayana/shared";
+import { addLocalDays, advancePaise, dailyTotalPaise, isLocalDate, localDaysBetween, sessionTotalPaise, vendorPageUrl } from "@bayana/shared";
 import { dayCalendar, monthSummary, slotsForDate } from "./availability.js";
+import { config } from "./config.js";
 import { onlinePaymentsFor } from "./payments/runtime.js";
 import { pool } from "./database.js";
 import { AppError } from "./errors.js";
@@ -32,7 +33,7 @@ publicRouter.get("/:slug", limit(120), handle(async (req, res) => {
   ]);
   // The switch itself stays private; the page only learns whether this vendor takes online (test) payments.
   const { online_payments: online, ...profile } = vendor.rows[0] as { online_payments: boolean } & Record<string, unknown>;
-  res.json({ ...profile, payments_enabled: onlinePaymentsFor(online), services: services.rows.map(service => { // The advance shown on a card is for the shortest booking: the minimum days or sessions.
+  res.json({ ...profile, page_url: vendorPageUrl(config.SITE_URL, String(profile.canonical_slug)), payments_enabled: onlinePaymentsFor(online), services: services.rows.map(service => { // The advance shown on a card is for the shortest booking: the minimum days or sessions.
     const price = service.booking_mode === "daily" ? dailyTotalPaise(Number(service.price_paise), service.min_days ?? 1) : sessionTotalPaise(Number(service.price_paise), service.min_blocks ?? 1); const advance = advancePaise(price, service.advance_type, service.advance_value); return { ...service, advance_paise: advance, remaining_paise: price - advance }; }) });
 }));
 publicRouter.get("/:slug/availability/month", limit(60), handle(async (req, res) => {

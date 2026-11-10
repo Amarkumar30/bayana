@@ -1,6 +1,7 @@
 import "./globals.css";
 import type { Metadata, Viewport } from "next";
 import { Plus_Jakarta_Sans } from "next/font/google";
+import { siteUrl } from "@bayana/shared";
 import { ToastProvider } from "@/components/ui/toast";
 import { env } from "@/env";
 import { loadServerEnv } from "@/env-schema";
@@ -12,7 +13,7 @@ import { indexingAllowed } from "@/lib/site";
 // latin-ext carries the rupee sign: without it, ₹ came from whichever fallback font the browser picked.
 const jakarta = Plus_Jakarta_Sans({ subsets: ["latin", "latin-ext"], variable: "--font-jakarta", display: "optional" });
 
-export const metadata: Metadata = { metadataBase: new URL(env.NEXT_PUBLIC_SITE_URL), title: "Bayana", description: "Advance bookings for independent service businesses", applicationName: "Bayana", openGraph: { siteName: "Bayana", type: "website", locale: "en_IN" },
+export const metadata: Metadata = { metadataBase: new URL(siteUrl(env.NEXT_PUBLIC_SITE_URL)), title: "Bayana", description: "Advance bookings for independent service businesses", applicationName: "Bayana", openGraph: { siteName: "Bayana", type: "website", locale: "en_IN" },
   // Pages that do not set robots themselves inherit this: noindex until production and the legal review (lib/site.ts).
   ...(indexingAllowed(loadServerEnv()) ? {} : { robots: { index: false, follow: false } }) };
 export const viewport: Viewport = { themeColor: [{ media: "(prefers-color-scheme: light)", color: "#f7f8fa" }, { media: "(prefers-color-scheme: dark)", color: "#0b1220" }] };
